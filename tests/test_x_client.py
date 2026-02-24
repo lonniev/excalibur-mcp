@@ -11,6 +11,7 @@ from excaliber_mcp.x_client import (
     XClient,
     XCredentials,
     TWEET_MAX_LENGTH,
+    _build_oauth1_header,
 )
 
 
@@ -27,6 +28,15 @@ def creds():
 @pytest.fixture
 def client(creds):
     return XClient(creds)
+
+
+def _mock_response(status_code: int, body: dict) -> MagicMock:
+    """Create a mock httpx response with sync .json()."""
+    resp = MagicMock()
+    resp.status_code = status_code
+    resp.json.return_value = body
+    resp.text = json.dumps(body)
+    return resp
 
 
 # ---------------------------------------------------------------------------
@@ -55,6 +65,28 @@ class TestXCredentials:
 
 
 # ---------------------------------------------------------------------------
+# OAuth 1.0a header
+# ---------------------------------------------------------------------------
+
+
+class TestOAuth1Header:
+    def test_header_format(self):
+        header = _build_oauth1_header(
+            "POST", "https://api.x.com/2/tweets",
+            "key", "secret", "token", "token_secret",
+        )
+        assert header.startswith("OAuth ")
+        assert "oauth_consumer_key" in header
+        assert "oauth_signature" in header
+        assert "oauth_nonce" in header
+
+    def test_different_nonces(self):
+        h1 = _build_oauth1_header("POST", "https://example.com", "k", "s", "t", "ts")
+        h2 = _build_oauth1_header("POST", "https://example.com", "k", "s", "t", "ts")
+        assert h1 != h2  # nonce is random each time
+
+
+# ---------------------------------------------------------------------------
 # Tweet length validation
 # ---------------------------------------------------------------------------
 
@@ -69,19 +101,16 @@ class TestTweetLength:
 
     @pytest.mark.asyncio
     async def test_exact_limit_ok(self, client):
-        """280 chars should not raise TweetTooLongError (may fail on API mock)."""
+        """280 chars should not raise TweetTooLongError."""
         text = "x" * TWEET_MAX_LENGTH
+        mock_resp = _mock_response(201, {"data": {"id": "123", "text": text}})
 
-        mock_response = MagicMock()
-        mock_response.status_code = 201
-        mock_response.json.return_value = {
-            "data": {"id": "123", "text": text}
-        }
-
-        with patch.object(client, "_make_oauth_client") as mock_oauth:
-            mock_client = AsyncMock()
-            mock_client.post.return_value = mock_response
-            mock_oauth.return_value = mock_client
+        with patch("excaliber_mcp.x_client.httpx.AsyncClient") as MockClient:
+            mock_instance = AsyncMock()
+            mock_instance.post.return_value = mock_resp
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = mock_instance
 
             result = await client.post_tweet(text)
             assert result["tweet_id"] == "123"
@@ -95,16 +124,16 @@ class TestTweetLength:
 class TestPostTweet:
     @pytest.mark.asyncio
     async def test_success(self, client):
-        mock_response = MagicMock()
-        mock_response.status_code = 201
-        mock_response.json.return_value = {
+        mock_resp = _mock_response(201, {
             "data": {"id": "1234567890", "text": "Hello world"}
-        }
+        })
 
-        with patch.object(client, "_make_oauth_client") as mock_oauth:
-            mock_client = AsyncMock()
-            mock_client.post.return_value = mock_response
-            mock_oauth.return_value = mock_client
+        with patch("excaliber_mcp.x_client.httpx.AsyncClient") as MockClient:
+            mock_instance = AsyncMock()
+            mock_instance.post.return_value = mock_resp
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = mock_instance
 
             result = await client.post_tweet("Hello world")
 
@@ -114,14 +143,14 @@ class TestPostTweet:
 
     @pytest.mark.asyncio
     async def test_rate_limit_429(self, client):
-        mock_response = MagicMock()
-        mock_response.status_code = 429
-        mock_response.json.return_value = {"detail": "Too Many Requests"}
+        mock_resp = _mock_response(429, {"detail": "Too Many Requests"})
 
-        with patch.object(client, "_make_oauth_client") as mock_oauth:
-            mock_client = AsyncMock()
-            mock_client.post.return_value = mock_response
-            mock_oauth.return_value = mock_client
+        with patch("excaliber_mcp.x_client.httpx.AsyncClient") as MockClient:
+            mock_instance = AsyncMock()
+            mock_instance.post.return_value = mock_resp
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = mock_instance
 
             with pytest.raises(XAPIError) as exc_info:
                 await client.post_tweet("test")
@@ -129,14 +158,14 @@ class TestPostTweet:
 
     @pytest.mark.asyncio
     async def test_auth_error_401(self, client):
-        mock_response = MagicMock()
-        mock_response.status_code = 401
-        mock_response.json.return_value = {"detail": "Unauthorized"}
+        mock_resp = _mock_response(401, {"detail": "Unauthorized"})
 
-        with patch.object(client, "_make_oauth_client") as mock_oauth:
-            mock_client = AsyncMock()
-            mock_client.post.return_value = mock_response
-            mock_oauth.return_value = mock_client
+        with patch("excaliber_mcp.x_client.httpx.AsyncClient") as MockClient:
+            mock_instance = AsyncMock()
+            mock_instance.post.return_value = mock_resp
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = mock_instance
 
             with pytest.raises(XAPIError) as exc_info:
                 await client.post_tweet("test")
@@ -144,14 +173,14 @@ class TestPostTweet:
 
     @pytest.mark.asyncio
     async def test_forbidden_403(self, client):
-        mock_response = MagicMock()
-        mock_response.status_code = 403
-        mock_response.json.return_value = {"title": "Forbidden", "detail": "App-only"}
+        mock_resp = _mock_response(403, {"title": "Forbidden", "detail": "App-only"})
 
-        with patch.object(client, "_make_oauth_client") as mock_oauth:
-            mock_client = AsyncMock()
-            mock_client.post.return_value = mock_response
-            mock_oauth.return_value = mock_client
+        with patch("excaliber_mcp.x_client.httpx.AsyncClient") as MockClient:
+            mock_instance = AsyncMock()
+            mock_instance.post.return_value = mock_resp
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = mock_instance
 
             with pytest.raises(XAPIError) as exc_info:
                 await client.post_tweet("test")
@@ -159,18 +188,37 @@ class TestPostTweet:
 
     @pytest.mark.asyncio
     async def test_unexpected_status(self, client):
-        mock_response = MagicMock()
-        mock_response.status_code = 500
-        mock_response.json.return_value = {"error": "Internal Server Error"}
+        mock_resp = _mock_response(500, {"error": "Internal Server Error"})
 
-        with patch.object(client, "_make_oauth_client") as mock_oauth:
-            mock_client = AsyncMock()
-            mock_client.post.return_value = mock_response
-            mock_oauth.return_value = mock_client
+        with patch("excaliber_mcp.x_client.httpx.AsyncClient") as MockClient:
+            mock_instance = AsyncMock()
+            mock_instance.post.return_value = mock_resp
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = mock_instance
 
             with pytest.raises(XAPIError) as exc_info:
                 await client.post_tweet("test")
             assert exc_info.value.status_code == 500
+
+    @pytest.mark.asyncio
+    async def test_sends_authorization_header(self, client):
+        """Verify OAuth header is sent with the request."""
+        mock_resp = _mock_response(201, {"data": {"id": "999", "text": "hi"}})
+
+        with patch("excaliber_mcp.x_client.httpx.AsyncClient") as MockClient:
+            mock_instance = AsyncMock()
+            mock_instance.post.return_value = mock_resp
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = mock_instance
+
+            await client.post_tweet("hi")
+
+            call_kwargs = mock_instance.post.call_args
+            headers = call_kwargs.kwargs.get("headers", {})
+            assert "Authorization" in headers
+            assert headers["Authorization"].startswith("OAuth ")
 
 
 # ---------------------------------------------------------------------------

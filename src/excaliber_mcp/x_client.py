@@ -1,17 +1,26 @@
 """X (Twitter) API v2 client with OAuth 1.0a authentication.
 
-Handles tweet posting via the v2 endpoint. Credentials come from
-environment variables for Task 1; multi-tenant vault in Task 2.
+Handles tweet posting via the v2 endpoint. Uses manual OAuth 1.0a
+header signing (not authlib's AsyncOAuth1Client) because the X API v2
+requires JSON bodies, and authlib mangles them during signature computation.
+
+Credentials come from environment variables for Task 1; multi-tenant
+vault planned for a future task.
 """
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import logging
 import os
+import secrets
+import time
+import urllib.parse
 from dataclasses import dataclass
 
 import httpx
-from authlib.integrations.httpx_client import AsyncOAuth1Client
 
 logger = logging.getLogger(__name__)
 
@@ -64,17 +73,72 @@ class XCredentials:
         )
 
 
+def _build_oauth1_header(
+    method: str,
+    url: str,
+    consumer_key: str,
+    consumer_secret: str,
+    token: str,
+    token_secret: str,
+) -> str:
+    """Build an OAuth 1.0a Authorization header (HMAC-SHA1, header-only).
+
+    This produces a header-based OAuth signature that does NOT include
+    the request body in the signature base string. Required for X API v2
+    which uses JSON bodies (OAuth 1.0a body signing only works with
+    application/x-www-form-urlencoded).
+    """
+    oauth_params = {
+        "oauth_consumer_key": consumer_key,
+        "oauth_nonce": secrets.token_hex(16),
+        "oauth_signature_method": "HMAC-SHA1",
+        "oauth_timestamp": str(int(time.time())),
+        "oauth_token": token,
+        "oauth_version": "1.0",
+    }
+
+    # Build signature base string (RFC 5849 §3.4.1)
+    param_str = "&".join(
+        f"{k}={urllib.parse.quote(v, safe='')}"
+        for k, v in sorted(oauth_params.items())
+    )
+    base_str = (
+        f"{method}&"
+        f"{urllib.parse.quote(url, safe='')}&"
+        f"{urllib.parse.quote(param_str, safe='')}"
+    )
+
+    # Sign with HMAC-SHA1
+    signing_key = (
+        f"{urllib.parse.quote(consumer_secret, safe='')}&"
+        f"{urllib.parse.quote(token_secret, safe='')}"
+    )
+    signature = base64.b64encode(
+        hmac.new(signing_key.encode(), base_str.encode(), hashlib.sha1).digest()
+    ).decode()
+
+    oauth_params["oauth_signature"] = signature
+
+    # Format as Authorization header
+    return "OAuth " + ", ".join(
+        f'{k}="{urllib.parse.quote(v, safe="")}"'
+        for k, v in sorted(oauth_params.items())
+    )
+
+
 class XClient:
-    """Async X API v2 client with OAuth 1.0a signing."""
+    """Async X API v2 client with OAuth 1.0a header signing."""
 
     def __init__(self, credentials: XCredentials) -> None:
         self._creds = credentials
 
-    def _make_oauth_client(self) -> AsyncOAuth1Client:
-        """Create a fresh OAuth1 client for a request."""
-        return AsyncOAuth1Client(
-            client_id=self._creds.api_key,
-            client_secret=self._creds.api_secret,
+    def _auth_header(self, method: str, url: str) -> str:
+        """Generate OAuth 1.0a Authorization header for a request."""
+        return _build_oauth1_header(
+            method=method,
+            url=url,
+            consumer_key=self._creds.api_key,
+            consumer_secret=self._creds.api_secret,
             token=self._creds.access_token,
             token_secret=self._creds.access_token_secret,
         )
@@ -95,15 +159,15 @@ class XClient:
         if len(text) > TWEET_MAX_LENGTH:
             raise TweetTooLongError(len(text))
 
-        client = self._make_oauth_client()
-        try:
+        url = f"{X_API_BASE}/tweets"
+        auth_header = self._auth_header("POST", url)
+
+        async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"{X_API_BASE}/tweets",
+                url,
                 json={"text": text},
-                headers={"Content-Type": "application/json"},
+                headers={"Authorization": auth_header},
             )
-        finally:
-            await client.aclose()
 
         if response.status_code == 429:
             raise XAPIError(429, "Rate limited — try again later", response.json())
