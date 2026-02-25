@@ -25,7 +25,10 @@ import httpx
 logger = logging.getLogger(__name__)
 
 X_API_BASE = "https://api.x.com/2"
-TWEET_MAX_LENGTH = 280
+X_UPLOAD_BASE = "https://upload.twitter.com/1.1"
+ALLOWED_IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB (X limit for images)
+IMAGE_DOWNLOAD_TIMEOUT_SECONDS = 30
 
 
 class XAPIError(Exception):
@@ -38,15 +41,10 @@ class XAPIError(Exception):
         super().__init__(f"X API {status_code}: {detail}")
 
 
-class TweetTooLongError(ValueError):
-    """Raised when converted tweet text exceeds 280 characters."""
+class MediaUploadError(XAPIError):
+    """Raised when image download or media upload to X fails."""
 
-    def __init__(self, length: int):
-        self.length = length
-        super().__init__(
-            f"Tweet is {length} characters (max {TWEET_MAX_LENGTH}). "
-            f"Shorten by {length - TWEET_MAX_LENGTH} characters."
-        )
+    pass
 
 
 @dataclass(frozen=True)
@@ -143,29 +141,123 @@ class XClient:
             token_secret=self._creds.access_token_secret,
         )
 
-    async def post_tweet(self, text: str) -> dict:
+    async def download_image(self, image_url: str) -> tuple[bytes, str]:
+        """Download an image from a URL.
+
+        Args:
+            image_url: The URL to download from.
+
+        Returns:
+            Tuple of (image_bytes, content_type).
+
+        Raises:
+            MediaUploadError: If download fails, content type is unsupported,
+                or image exceeds size limit.
+        """
+        async with httpx.AsyncClient(
+            follow_redirects=True,
+            timeout=IMAGE_DOWNLOAD_TIMEOUT_SECONDS,
+        ) as client:
+            try:
+                response = await client.get(image_url)
+            except httpx.HTTPError as exc:
+                raise MediaUploadError(
+                    0, f"Failed to download image from {image_url}: {exc}"
+                )
+
+        if response.status_code != 200:
+            raise MediaUploadError(
+                response.status_code,
+                f"Image download returned {response.status_code}",
+            )
+
+        content_type = response.headers.get("content-type", "").split(";")[0].strip()
+        if content_type not in ALLOWED_IMAGE_CONTENT_TYPES:
+            raise MediaUploadError(
+                0,
+                f"Unsupported image type: {content_type}. "
+                f"Allowed: {ALLOWED_IMAGE_CONTENT_TYPES}",
+            )
+
+        image_bytes = response.content
+        if len(image_bytes) > MAX_IMAGE_SIZE_BYTES:
+            raise MediaUploadError(
+                0,
+                f"Image too large: {len(image_bytes)} bytes "
+                f"(max {MAX_IMAGE_SIZE_BYTES} bytes / 5 MB)",
+            )
+
+        return image_bytes, content_type
+
+    async def upload_media(self, image_bytes: bytes, content_type: str) -> str:
+        """Upload image bytes to X via v1.1 media/upload.
+
+        Args:
+            image_bytes: Raw image data.
+            content_type: MIME type (e.g., "image/jpeg").
+
+        Returns:
+            media_id_string from the X response.
+
+        Raises:
+            MediaUploadError: If the upload fails.
+        """
+        url = f"{X_UPLOAD_BASE}/media/upload.json"
+        auth_header = self._auth_header("POST", url)
+
+        # Multipart upload — body excluded from OAuth signature (correct for multipart)
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                url,
+                files={"media": ("image.jpg", image_bytes, content_type)},
+                headers={"Authorization": auth_header},
+            )
+
+        if response.status_code not in (200, 202):
+            try:
+                body = response.json()
+            except Exception:
+                body = {"raw": response.text}
+            raise MediaUploadError(
+                response.status_code,
+                f"Media upload failed: {response.status_code}",
+                body,
+            )
+
+        data = response.json()
+        media_id = data.get("media_id_string")
+        if not media_id:
+            raise MediaUploadError(0, "Media upload response missing media_id_string", data)
+
+        return media_id
+
+    async def post_tweet(
+        self, text: str, *, media_ids: list[str] | None = None
+    ) -> dict:
         """Post a tweet to X.
 
         Args:
-            text: The tweet text (already Unicode-converted). Max 280 chars.
+            text: The tweet text (already Unicode-converted).
+                Length enforced by X API based on account tier.
+            media_ids: Optional list of media IDs to attach.
 
         Returns:
             dict with tweet_id, tweet_url, text_posted.
 
         Raises:
-            TweetTooLongError: If text exceeds 280 characters.
             XAPIError: If the X API returns an error.
         """
-        if len(text) > TWEET_MAX_LENGTH:
-            raise TweetTooLongError(len(text))
-
         url = f"{X_API_BASE}/tweets"
         auth_header = self._auth_header("POST", url)
+
+        payload: dict = {"text": text}
+        if media_ids:
+            payload["media"] = {"media_ids": media_ids}
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 url,
-                json={"text": text},
+                json=payload,
                 headers={"Authorization": auth_header},
             )
 
@@ -196,3 +288,19 @@ class XClient:
             "tweet_url": f"https://x.com/i/status/{tweet_id}",
             "text_posted": text,
         }
+
+    async def post_tweet_with_image(self, text: str, image_url: str) -> dict:
+        """Download image, upload to X, and post tweet with media attached.
+
+        Args:
+            text: Tweet text (Unicode-converted).
+            image_url: URL of image to attach.
+
+        Returns:
+            dict with tweet_id, tweet_url, text_posted, media_id.
+        """
+        image_bytes, content_type = await self.download_image(image_url)
+        media_id = await self.upload_media(image_bytes, content_type)
+        result = await self.post_tweet(text, media_ids=[media_id])
+        result["media_id"] = media_id
+        return result

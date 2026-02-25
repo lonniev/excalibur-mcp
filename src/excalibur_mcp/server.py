@@ -35,7 +35,8 @@ TOOL_COSTS: dict[str, int] = {
     "check_payment": ToolTier.FREE,
     "account_statement": ToolTier.FREE,
     # Paid
-    "post_tweet": ToolTier.READ,  # 1 api_sat
+    "post_tweet": ToolTier.READ,  # 1 api_sat (text only)
+    "post_tweet_image": ToolTier.WRITE,  # 2 api_sats (with image)
 }
 
 
@@ -658,7 +659,7 @@ async def account_statement(days: int = 30) -> dict[str, Any]:
 
 
 @mcp.tool()
-async def post_tweet(text: str) -> dict:
+async def post_tweet(text: str, image_url: str | None = None) -> dict:
     """Post a tweet with markdown formatting converted to Unicode rich text.
 
     Accepts standard markdown inline formatting and converts it to Unicode
@@ -672,29 +673,37 @@ async def post_tweet(text: str) -> dict:
     Non-alphanumeric characters pass through unchanged. Unmatched
     delimiters are left as-is.
 
+    Supports long-form posts — character limit depends on your X account
+    tier (280 for free, up to 25,000 for Premium).
+
     Args:
         text: Tweet content with optional markdown formatting.
-              Max 280 characters after Unicode conversion.
+              Max length depends on X account tier after Unicode conversion.
+        image_url: Optional URL of an image to attach to the tweet.
+                   Supported formats: JPEG, PNG, GIF, WebP. Max 5 MB.
 
     Returns:
         tweet_id: The posted tweet's ID.
         tweet_url: Direct link to the tweet on X.
         text_posted: The Unicode-converted text that was actually sent.
+        media_id: The uploaded media ID (only when image_url provided).
     """
+    cost_key = "post_tweet_image" if image_url else "post_tweet"
+
     # Credit gating
-    gate = await _debit_or_error("post_tweet")
+    gate = await _debit_or_error(cost_key)
     if gate is not None:
         return gate
 
     from excalibur_mcp.formatter import markdown_to_unicode
-    from excalibur_mcp.x_client import TweetTooLongError, XAPIError, XClient
+    from excalibur_mcp.x_client import XAPIError, XClient
 
     converted = markdown_to_unicode(text)
 
     try:
         creds = _get_x_credentials()
     except KeyError as exc:
-        await _rollback_debit("post_tweet")
+        await _rollback_debit(cost_key)
         return {
             "error": f"Missing X API credential: {exc}. "
             "Set X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET "
@@ -704,12 +713,12 @@ async def post_tweet(text: str) -> dict:
     client = XClient(creds)
 
     try:
-        result = await client.post_tweet(converted)
-    except TweetTooLongError as exc:
-        await _rollback_debit("post_tweet")
-        return {"error": str(exc), "length": exc.length, "text_converted": converted}
+        if image_url:
+            result = await client.post_tweet_with_image(converted, image_url)
+        else:
+            result = await client.post_tweet(converted)
     except XAPIError as exc:
-        await _rollback_debit("post_tweet")
+        await _rollback_debit(cost_key)
         return {
             "error": str(exc),
             "status_code": exc.status_code,

@@ -3,6 +3,8 @@
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from tollbooth.constants import ToolTier
+
 import pytest
 
 from excalibur_mcp.vault import _sessions, _dpyc_sessions
@@ -44,6 +46,15 @@ class TestToolCosts:
     def test_post_tweet_is_paid(self):
         from excalibur_mcp.server import TOOL_COSTS
         assert TOOL_COSTS["post_tweet"] > 0
+
+    def test_post_tweet_image_costs_more(self):
+        from excalibur_mcp.server import TOOL_COSTS
+        assert TOOL_COSTS["post_tweet_image"] > TOOL_COSTS["post_tweet"]
+
+    def test_post_tweet_image_is_write_tier(self):
+        from excalibur_mcp.server import TOOL_COSTS
+        from tollbooth.constants import ToolTier
+        assert TOOL_COSTS["post_tweet_image"] == ToolTier.WRITE
 
     def test_health_is_free(self):
         from excalibur_mcp.server import TOOL_COSTS
@@ -233,6 +244,124 @@ class TestPostTweetGated:
 
         assert "Insufficient" in result.get("error", "")
         assert result["success"] is False
+
+
+# ---------------------------------------------------------------------------
+# Settings
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# post_tweet with image — cost key and rollback
+# ---------------------------------------------------------------------------
+
+
+class TestPostTweetImageGated:
+    @pytest.mark.asyncio
+    async def test_image_uses_higher_cost_key(self, monkeypatch):
+        """post_tweet with image_url debits post_tweet_image (2 sats)."""
+        from excalibur_mcp.server import post_tweet
+
+        monkeypatch.setenv("X_API_KEY", "k")
+        monkeypatch.setenv("X_API_SECRET", "s")
+        monkeypatch.setenv("X_ACCESS_TOKEN", "t")
+        monkeypatch.setenv("X_ACCESS_TOKEN_SECRET", "ts")
+
+        mock_cache = MagicMock()
+        mock_cache.debit = AsyncMock(return_value=True)
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 201
+        mock_resp.json.return_value = {"data": {"id": "888", "text": "img"}}
+
+        # Mock image download
+        mock_dl_resp = MagicMock()
+        mock_dl_resp.status_code = 200
+        mock_dl_resp.headers = {"content-type": "image/jpeg"}
+        mock_dl_resp.content = b"\xff\xd8\x00"
+
+        # Mock media upload
+        mock_up_resp = MagicMock()
+        mock_up_resp.status_code = 200
+        mock_up_resp.json.return_value = {"media_id_string": "m1"}
+        mock_up_resp.text = '{"media_id_string": "m1"}'
+
+        call_count = {"n": 0}
+
+        async def mock_get(*args, **kwargs):
+            return mock_dl_resp
+
+        async def mock_post(*args, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return mock_up_resp  # media upload
+            return mock_resp  # tweet post
+
+        with _mock_user_id(None), \
+             patch("excalibur_mcp.server._get_ledger_cache", return_value=mock_cache), \
+             patch("excalibur_mcp.x_client.httpx.AsyncClient") as MockClient:
+            mock_instance = AsyncMock()
+            mock_instance.get = mock_get
+            mock_instance.post = mock_post
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = mock_instance
+
+            result = await post_tweet("img", image_url="https://example.com/img.jpg")
+
+        assert result["tweet_id"] == "888"
+        # Should debit post_tweet_image at WRITE tier cost
+        mock_cache.debit.assert_called_once_with("stdio:0", "post_tweet_image", ToolTier.WRITE)
+
+    @pytest.mark.asyncio
+    async def test_rollback_on_upload_failure(self, monkeypatch):
+        """If image upload fails, credits are rolled back."""
+        from excalibur_mcp.server import post_tweet
+
+        monkeypatch.setenv("X_API_KEY", "k")
+        monkeypatch.setenv("X_API_SECRET", "s")
+        monkeypatch.setenv("X_ACCESS_TOKEN", "t")
+        monkeypatch.setenv("X_ACCESS_TOKEN_SECRET", "ts")
+
+        mock_ledger = MagicMock()
+        mock_cache = MagicMock()
+        mock_cache.debit = AsyncMock(return_value=True)
+        mock_cache.get = AsyncMock(return_value=mock_ledger)
+
+        # Mock image download succeeds
+        mock_dl_resp = MagicMock()
+        mock_dl_resp.status_code = 200
+        mock_dl_resp.headers = {"content-type": "image/jpeg"}
+        mock_dl_resp.content = b"\xff\xd8\x00"
+
+        # Mock media upload fails
+        mock_up_resp = MagicMock()
+        mock_up_resp.status_code = 400
+        mock_up_resp.json.return_value = {"error": "Upload failed"}
+        mock_up_resp.text = '{"error": "Upload failed"}'
+
+        with _mock_user_id(None), \
+             patch("excalibur_mcp.server._get_ledger_cache", return_value=mock_cache), \
+             patch("excalibur_mcp.x_client.httpx.AsyncClient") as MockClient:
+            mock_instance = AsyncMock()
+
+            async def mock_get(*a, **k):
+                return mock_dl_resp
+
+            async def mock_post(*a, **k):
+                return mock_up_resp  # always returns upload failure
+
+            mock_instance.get = mock_get
+            mock_instance.post = mock_post
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = mock_instance
+
+            result = await post_tweet("fail", image_url="https://example.com/img.jpg")
+
+        assert "error" in result
+        # Rollback should have been called
+        mock_ledger.rollback_debit.assert_called_once_with("post_tweet_image", ToolTier.WRITE)
 
 
 # ---------------------------------------------------------------------------
