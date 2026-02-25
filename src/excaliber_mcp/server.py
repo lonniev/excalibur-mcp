@@ -11,12 +11,50 @@ from typing import Any
 
 from fastmcp import FastMCP
 
+from tollbooth.constants import ToolTier
+
 logger = logging.getLogger(__name__)
 
 mcp = FastMCP("eXcaliber")
 
 # Default vault directory (operator can override via EXCALIBER_VAULT_DIR)
 _DEFAULT_VAULT_DIR = os.path.join(os.path.expanduser("~"), ".excaliber", "vault")
+
+# ---------------------------------------------------------------------------
+# Tool cost table
+# ---------------------------------------------------------------------------
+
+TOOL_COSTS: dict[str, int] = {
+    # Free
+    "health": ToolTier.FREE,
+    "register_credentials": ToolTier.FREE,
+    "activate_session": ToolTier.FREE,
+    "session_status": ToolTier.FREE,
+    "check_balance": ToolTier.FREE,
+    "purchase_credits": ToolTier.FREE,
+    "check_payment": ToolTier.FREE,
+    "account_statement": ToolTier.FREE,
+    # Paid
+    "post_tweet": ToolTier.READ,  # 1 api_sat
+}
+
+
+# ---------------------------------------------------------------------------
+# Settings singleton
+# ---------------------------------------------------------------------------
+
+_settings = None
+
+
+def get_settings():
+    """Get or create the Settings singleton."""
+    global _settings
+    if _settings is not None:
+        return _settings
+    from excaliber_mcp.config import Settings
+
+    _settings = Settings()
+    return _settings
 
 
 # ---------------------------------------------------------------------------
@@ -49,8 +87,29 @@ def _require_user_id() -> str:
     return user_id
 
 
+def _get_effective_user_id() -> str:
+    """Return the npub for the current user. Required for credit operations.
+
+    Returns "stdio:0" in STDIO mode for local dev.
+    Raises ValueError if no DPYC session is active in cloud mode.
+    """
+    from excaliber_mcp.vault import get_dpyc_npub
+
+    horizon_id = _get_current_user_id()
+    if not horizon_id:
+        return "stdio:0"
+
+    npub = get_dpyc_npub(horizon_id)
+    if not npub:
+        raise ValueError(
+            "No DPYC identity active. Credit operations require an npub. "
+            "Call register_credentials (first time) or activate_session (returning user)."
+        )
+    return npub
+
+
 # ---------------------------------------------------------------------------
-# Vault singleton
+# Credential vault singleton
 # ---------------------------------------------------------------------------
 
 _vault_instance = None
@@ -63,9 +122,96 @@ def _get_vault():
         return _vault_instance
     from excaliber_mcp.vault import FileVault
 
-    vault_dir = os.environ.get("EXCALIBER_VAULT_DIR", _DEFAULT_VAULT_DIR)
+    settings = get_settings()
+    vault_dir = settings.excaliber_vault_dir or os.environ.get(
+        "EXCALIBER_VAULT_DIR", _DEFAULT_VAULT_DIR
+    )
     _vault_instance = FileVault(vault_dir)
     return _vault_instance
+
+
+# ---------------------------------------------------------------------------
+# Commerce vault + LedgerCache + BTCPay singletons
+# ---------------------------------------------------------------------------
+
+_commerce_vault = None
+_ledger_cache = None
+_btcpay_client = None
+
+
+def _get_commerce_vault():
+    """Singleton commerce vault for ledger persistence.
+
+    Primary: NeonVault (if NEON_DATABASE_URL is set).
+    Raises if not configured (credit features unavailable).
+    """
+    global _commerce_vault
+    if _commerce_vault is not None:
+        return _commerce_vault
+
+    settings = get_settings()
+
+    if settings.neon_database_url:
+        from tollbooth.vaults import NeonVault
+
+        vault = NeonVault(database_url=settings.neon_database_url)
+        import asyncio
+
+        try:
+            asyncio.ensure_future(vault.ensure_schema())
+        except RuntimeError:
+            pass
+        logger.info("NeonVault initialized for ledger persistence.")
+    else:
+        raise ValueError(
+            "Commerce vault not configured. Set NEON_DATABASE_URL to enable credits."
+        )
+
+    _commerce_vault = vault
+    return _commerce_vault
+
+
+def _get_ledger_cache():
+    """Get or create the LedgerCache singleton."""
+    global _ledger_cache
+    if _ledger_cache is not None:
+        return _ledger_cache
+
+    from tollbooth.ledger_cache import LedgerCache
+
+    vault = _get_commerce_vault()
+    _ledger_cache = LedgerCache(vault)
+
+    import asyncio
+
+    try:
+        asyncio.ensure_future(_ledger_cache.start_background_flush())
+    except RuntimeError:
+        pass
+
+    return _ledger_cache
+
+
+def _get_btcpay():
+    """Get or create the BTCPayClient singleton."""
+    global _btcpay_client
+    if _btcpay_client is not None:
+        return _btcpay_client
+
+    from tollbooth.btcpay_client import BTCPayClient
+
+    settings = get_settings()
+    if not settings.btcpay_host or not settings.btcpay_store_id or not settings.btcpay_api_key:
+        raise ValueError(
+            "BTCPay not configured. Set BTCPAY_HOST, BTCPAY_STORE_ID, BTCPAY_API_KEY."
+        )
+
+    _btcpay_client = BTCPayClient(
+        host=settings.btcpay_host,
+        api_key=settings.btcpay_api_key,
+        store_id=settings.btcpay_store_id,
+    )
+    return _btcpay_client
 
 
 # ---------------------------------------------------------------------------
@@ -74,10 +220,7 @@ def _get_vault():
 
 
 def _get_x_credentials():
-    """Get X API credentials: per-user session first, env vars as fallback.
-
-    Returns XCredentials.
-    """
+    """Get X API credentials: per-user session first, env vars as fallback."""
     from excaliber_mcp.vault import get_session
     from excaliber_mcp.x_client import XCredentials
 
@@ -92,12 +235,109 @@ def _get_x_credentials():
                 access_token_secret=session.x_access_token_secret,
             )
 
-    # Fallback to env vars (operator's credentials or STDIO mode)
     return XCredentials.from_env()
 
 
 # ---------------------------------------------------------------------------
-# MCP Tools
+# Credit gating helpers
+# ---------------------------------------------------------------------------
+
+
+async def _debit_or_error(tool_name: str) -> dict[str, Any] | None:
+    """Check balance and debit credits for a paid tool call.
+
+    Returns None to proceed, or an error dict to short-circuit.
+    Free tools and STDIO mode skip gating.
+    """
+    cost = TOOL_COSTS.get(tool_name, 0)
+    if cost == 0:
+        return None
+
+    horizon_id = _get_current_user_id()
+    if not horizon_id:
+        return None  # STDIO mode — no gating
+
+    try:
+        user_id = _get_effective_user_id()
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+
+    try:
+        cache = _get_ledger_cache()
+        ledger = await cache.get(user_id)
+    except Exception:
+        return None  # Vault not configured — skip gating
+
+    if not ledger.debit(tool_name, cost):
+        return {
+            "success": False,
+            "error": (
+                f"Insufficient balance ({ledger.balance_api_sats} api_sats) "
+                f"for {tool_name} ({cost} api_sats). "
+                f"Use purchase_credits to add funds."
+            ),
+        }
+
+    cache.mark_dirty(user_id)
+    return None
+
+
+async def _rollback_debit(tool_name: str) -> None:
+    """Undo a debit when the downstream API call fails."""
+    cost = TOOL_COSTS.get(tool_name, 0)
+    if cost == 0:
+        return
+
+    try:
+        user_id = _get_effective_user_id()
+        cache = _get_ledger_cache()
+        ledger = await cache.get(user_id)
+    except Exception:
+        return
+
+    ledger.rollback_debit(tool_name, cost)
+    cache.mark_dirty(user_id)
+
+
+async def _with_warning(result: dict[str, Any]) -> dict[str, Any]:
+    """Attach a low-balance warning to a paid tool result if balance is low."""
+    try:
+        from tollbooth.tools.credits import compute_low_balance_warning
+
+        user_id = _get_effective_user_id()
+        cache = _get_ledger_cache()
+        ledger = await cache.get(user_id)
+        settings = get_settings()
+        warning = compute_low_balance_warning(ledger, settings.seed_balance_sats)
+        if warning:
+            result = dict(result)
+            result["low_balance_warning"] = warning
+    except Exception:
+        pass
+    return result
+
+
+async def _seed_balance(npub: str) -> bool:
+    """Apply seed balance for a new user (idempotent via sentinel)."""
+    settings = get_settings()
+    if settings.seed_balance_sats <= 0:
+        return False
+    try:
+        cache = _get_ledger_cache()
+        ledger = await cache.get(npub)
+        sentinel = "seed_balance_v1"
+        if sentinel not in ledger.credited_invoices:
+            ledger.credit_deposit(settings.seed_balance_sats, sentinel)
+            cache.mark_dirty(npub)
+            await cache.flush_user(npub)
+            return True
+    except Exception:
+        pass
+    return False
+
+
+# ---------------------------------------------------------------------------
+# MCP Tools — Free
 # ---------------------------------------------------------------------------
 
 
@@ -106,189 +346,9 @@ async def health() -> dict:
     """Health check — returns service version and status. Free, no credits consumed."""
     return {
         "service": "excaliber-mcp",
-        "version": "0.2.0",
+        "version": "0.3.0",
         "status": "ok",
     }
-
-
-@mcp.tool()
-async def post_tweet(text: str) -> dict:
-    """Post a tweet with markdown formatting converted to Unicode rich text.
-
-    Accepts standard markdown inline formatting and converts it to Unicode
-    Mathematical Alphanumeric Symbols that render as styled text on X:
-
-        **bold**          → 𝗯𝗼𝗹𝗱
-        *italic*          → 𝘪𝘵𝘢𝘭𝘪𝘤
-        ***bold italic*** → 𝙗𝙤𝙡𝙙 𝙞𝙩𝙖𝙡𝙞𝙘
-        `monospace`       → 𝚖𝚘𝚗𝚘𝚜𝚙𝚊𝚌𝚎
-
-    Non-alphanumeric characters pass through unchanged. Unmatched
-    delimiters are left as-is.
-
-    Args:
-        text: Tweet content with optional markdown formatting.
-              Max 280 characters after Unicode conversion.
-
-    Returns:
-        tweet_id: The posted tweet's ID.
-        tweet_url: Direct link to the tweet on X.
-        text_posted: The Unicode-converted text that was actually sent.
-    """
-    from excaliber_mcp.formatter import markdown_to_unicode
-    from excaliber_mcp.x_client import TweetTooLongError, XAPIError, XClient
-
-    converted = markdown_to_unicode(text)
-
-    try:
-        creds = _get_x_credentials()
-    except KeyError as exc:
-        return {
-            "error": f"Missing X API credential: {exc}. "
-            "Set X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET "
-            "or call register_credentials to store your personal credentials."
-        }
-
-    client = XClient(creds)
-
-    try:
-        result = await client.post_tweet(converted)
-    except TweetTooLongError as exc:
-        return {"error": str(exc), "length": exc.length, "text_converted": converted}
-    except XAPIError as exc:
-        return {
-            "error": str(exc),
-            "status_code": exc.status_code,
-            "detail": exc.detail,
-        }
-
-    return result
-
-
-@mcp.tool()
-async def register_credentials(
-    x_api_key: str,
-    x_api_secret: str,
-    x_access_token: str,
-    x_access_token_secret: str,
-    passphrase: str,
-    npub: str,
-) -> dict[str, Any]:
-    """Register your X API credentials for multi-tenant access.
-
-    First-time setup: encrypts your X API OAuth credentials with your
-    passphrase and stores the encrypted blob in the operator's credential
-    vault. The passphrase is never stored — you will need it each session
-    to activate access.
-
-    Your DPYC npub (Nostr public key) is required — it serves as your
-    persistent identity for credit operations. Obtain one from the
-    dpyc-oracle's how_to_join() tool if you don't have one yet.
-
-    Args:
-        x_api_key: Your X API consumer key
-        x_api_secret: Your X API consumer secret
-        x_access_token: Your X API access token
-        x_access_token_secret: Your X API access token secret
-        passphrase: A passphrase to encrypt your credentials (remember this!)
-        npub: Your Nostr public key in bech32 format (npub1...). Required for
-            credit operations. Get one via the dpyc-oracle's how_to_join() tool.
-    """
-    from excaliber_mcp.vault import encrypt_credentials, set_session
-
-    # Validate npub format
-    if not npub.startswith("npub1") or len(npub) < 60:
-        return {
-            "success": False,
-            "error": (
-                "Invalid npub format. Must start with 'npub1' and be at least 60 characters. "
-                "Get your npub from the dpyc-oracle's how_to_join() tool."
-            ),
-        }
-
-    try:
-        user_id = _require_user_id()
-    except ValueError as e:
-        return {"success": False, "error": str(e)}
-
-    try:
-        vault = _get_vault()
-    except Exception as e:
-        return {"success": False, "error": f"Vault not available: {e}"}
-
-    # Encrypt and store
-    blob = encrypt_credentials(
-        x_api_key, x_api_secret, x_access_token, x_access_token_secret,
-        passphrase, npub=npub,
-    )
-    await vault.store(user_id, blob)
-
-    # Activate session immediately
-    set_session(user_id, x_api_key, x_api_secret, x_access_token, x_access_token_secret, npub=npub)
-
-    return {
-        "success": True,
-        "message": "Credentials registered and session activated.",
-        "userId": user_id,
-        "dpyc_npub": npub,
-    }
-
-
-@mcp.tool()
-async def activate_session(passphrase: str) -> dict[str, Any]:
-    """Activate your personal X API session by decrypting stored credentials.
-
-    Call this at the start of each session. Provide the same passphrase you
-    used during register_credentials.
-
-    Args:
-        passphrase: The passphrase you used when registering credentials
-    """
-    from excaliber_mcp.vault import (
-        CredentialNotFoundError,
-        DecryptionError,
-        VaultNotConfiguredError,
-        decrypt_credentials,
-        set_session,
-    )
-
-    try:
-        user_id = _require_user_id()
-        vault = _get_vault()
-        blob = await vault.fetch(user_id)
-        creds = decrypt_credentials(blob, passphrase)
-    except ValueError as e:
-        return {"success": False, "error": str(e)}
-    except VaultNotConfiguredError as e:
-        return {"success": False, "error": str(e)}
-    except CredentialNotFoundError as e:
-        return {"success": False, "error": str(e)}
-    except DecryptionError as e:
-        return {"success": False, "error": str(e)}
-
-    # Activate session in-memory
-    npub = creds.get("npub")
-    set_session(
-        user_id,
-        creds["x_api_key"],
-        creds["x_api_secret"],
-        creds["x_access_token"],
-        creds["x_access_token_secret"],
-        npub=npub,
-    )
-
-    result: dict[str, Any] = {
-        "success": True,
-        "message": "Session activated. post_tweet now uses your personal credentials.",
-    }
-    if npub:
-        result["dpyc_npub"] = npub
-    else:
-        result["dpyc_warning"] = (
-            "Your vault credentials were registered before npub was required. "
-            "Credit operations will not work until you re-register with an npub."
-        )
-    return result
 
 
 @mcp.tool()
@@ -332,6 +392,330 @@ async def session_status() -> dict[str, Any]:
             "Falling back to operator's default credentials."
         ),
     }
+
+
+# ---------------------------------------------------------------------------
+# MCP Tools — Credential Management (Free)
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def register_credentials(
+    x_api_key: str,
+    x_api_secret: str,
+    x_access_token: str,
+    x_access_token_secret: str,
+    passphrase: str,
+    npub: str,
+) -> dict[str, Any]:
+    """Register your X API credentials for multi-tenant access.
+
+    First-time setup: encrypts your X API OAuth credentials with your
+    passphrase and stores the encrypted blob in the operator's credential
+    vault. The passphrase is never stored — you will need it each session
+    to activate access.
+
+    Your DPYC npub (Nostr public key) is required — it serves as your
+    persistent identity for credit operations. Obtain one from the
+    dpyc-oracle's how_to_join() tool if you don't have one yet.
+
+    Args:
+        x_api_key: Your X API consumer key
+        x_api_secret: Your X API consumer secret
+        x_access_token: Your X API access token
+        x_access_token_secret: Your X API access token secret
+        passphrase: A passphrase to encrypt your credentials (remember this!)
+        npub: Your Nostr public key in bech32 format (npub1...). Required for
+            credit operations. Get one via the dpyc-oracle's how_to_join() tool.
+    """
+    from excaliber_mcp.vault import encrypt_credentials, set_session
+
+    if not npub.startswith("npub1") or len(npub) < 60:
+        return {
+            "success": False,
+            "error": (
+                "Invalid npub format. Must start with 'npub1' and be at least 60 characters. "
+                "Get your npub from the dpyc-oracle's how_to_join() tool."
+            ),
+        }
+
+    try:
+        user_id = _require_user_id()
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+
+    try:
+        vault = _get_vault()
+    except Exception as e:
+        return {"success": False, "error": f"Vault not available: {e}"}
+
+    blob = encrypt_credentials(
+        x_api_key, x_api_secret, x_access_token, x_access_token_secret,
+        passphrase, npub=npub,
+    )
+    await vault.store(user_id, blob)
+
+    set_session(
+        user_id, x_api_key, x_api_secret, x_access_token, x_access_token_secret, npub=npub
+    )
+
+    result: dict[str, Any] = {
+        "success": True,
+        "message": "Credentials registered and session activated.",
+        "userId": user_id,
+        "dpyc_npub": npub,
+    }
+
+    # Seed starter balance (idempotent)
+    seed_applied = await _seed_balance(npub)
+    if seed_applied:
+        result["seed_applied"] = True
+        result["seed_balance_api_sats"] = get_settings().seed_balance_sats
+
+    return result
+
+
+@mcp.tool()
+async def activate_session(passphrase: str) -> dict[str, Any]:
+    """Activate your personal X API session by decrypting stored credentials.
+
+    Call this at the start of each session. Provide the same passphrase you
+    used during register_credentials.
+
+    Args:
+        passphrase: The passphrase you used when registering credentials
+    """
+    from excaliber_mcp.vault import (
+        CredentialNotFoundError,
+        DecryptionError,
+        VaultNotConfiguredError,
+        decrypt_credentials,
+        set_session,
+    )
+
+    try:
+        user_id = _require_user_id()
+        vault = _get_vault()
+        blob = await vault.fetch(user_id)
+        creds = decrypt_credentials(blob, passphrase)
+    except (ValueError, VaultNotConfiguredError, CredentialNotFoundError, DecryptionError) as e:
+        return {"success": False, "error": str(e)}
+
+    npub = creds.get("npub")
+    set_session(
+        user_id,
+        creds["x_api_key"],
+        creds["x_api_secret"],
+        creds["x_access_token"],
+        creds["x_access_token_secret"],
+        npub=npub,
+    )
+
+    result: dict[str, Any] = {
+        "success": True,
+        "message": "Session activated. post_tweet now uses your personal credentials.",
+    }
+    if npub:
+        result["dpyc_npub"] = npub
+        seed_applied = await _seed_balance(npub)
+        if seed_applied:
+            result["seed_applied"] = True
+            result["seed_balance_api_sats"] = get_settings().seed_balance_sats
+    else:
+        result["dpyc_warning"] = (
+            "Your vault credentials were registered before npub was required. "
+            "Credit operations will not work until you re-register with an npub."
+        )
+    return result
+
+
+# ---------------------------------------------------------------------------
+# MCP Tools — Credit Management (Free)
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def purchase_credits(amount_sats: int, certificate: str) -> dict[str, Any]:
+    """Create a BTCPay Lightning invoice to purchase credits for tool calls.
+
+    Every credit purchase requires an Authority-signed certificate. Obtain one
+    by calling the Tollbooth Authority's certify_credits tool first, then pass
+    the JWT here.
+
+    Args:
+        amount_sats: Number of satoshis to purchase (minimum 1, maximum 1,000,000).
+        certificate: Authority-signed JWT from certify_credits. Required.
+    """
+    from tollbooth.tools import credits
+
+    try:
+        user_id = _get_effective_user_id()
+        btcpay = _get_btcpay()
+        cache = _get_ledger_cache()
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+
+    settings = get_settings()
+    if not settings.authority_public_key:
+        return {
+            "success": False,
+            "error": "Operator misconfigured: AUTHORITY_PUBLIC_KEY not set.",
+        }
+
+    return await credits.purchase_credits_tool(
+        btcpay, cache, user_id, amount_sats,
+        certificate=certificate,
+        tier_config_json=settings.btcpay_tier_config,
+        user_tiers_json=settings.btcpay_user_tiers,
+        default_credit_ttl_seconds=settings.credit_ttl_seconds,
+    )
+
+
+@mcp.tool()
+async def check_payment(invoice_id: str) -> dict[str, Any]:
+    """Verify that a Lightning invoice has settled and credit the payment to your balance.
+
+    Call this after paying the invoice from purchase_credits. Safe to call
+    multiple times — credits are only granted once per invoice (idempotent).
+
+    Args:
+        invoice_id: The BTCPay invoice ID returned by purchase_credits
+    """
+    from tollbooth.tools import credits
+
+    try:
+        user_id = _get_effective_user_id()
+        btcpay = _get_btcpay()
+        cache = _get_ledger_cache()
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+
+    settings = get_settings()
+    return await credits.check_payment_tool(
+        btcpay, cache, user_id, invoice_id,
+        tier_config_json=settings.btcpay_tier_config,
+        user_tiers_json=settings.btcpay_user_tiers,
+        default_credit_ttl_seconds=settings.credit_ttl_seconds,
+        royalty_address=settings.tollbooth_royalty_address,
+        royalty_percent=settings.tollbooth_royalty_percent,
+        royalty_min_sats=settings.tollbooth_royalty_min_sats,
+    )
+
+
+@mcp.tool()
+async def check_balance() -> dict[str, Any]:
+    """Check your current credit balance, tier info, usage summary, and cache health.
+
+    Read-only — no side effects. Call anytime to check your funding level,
+    review today's per-tool usage breakdown, or inspect invoice history.
+    """
+    from tollbooth.tools import credits
+
+    try:
+        user_id = _get_effective_user_id()
+        cache = _get_ledger_cache()
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+
+    settings = get_settings()
+    return await credits.check_balance_tool(
+        cache, user_id,
+        tier_config_json=settings.btcpay_tier_config,
+        user_tiers_json=settings.btcpay_user_tiers,
+        default_credit_ttl_seconds=settings.credit_ttl_seconds,
+    )
+
+
+@mcp.tool()
+async def account_statement(days: int = 30) -> dict[str, Any]:
+    """Generate a customer-facing account statement with purchase history and usage.
+
+    Free — no credits consumed.
+
+    Args:
+        days: Number of days of daily usage history to include (default 30).
+    """
+    from tollbooth.tools import credits
+
+    try:
+        user_id = _get_effective_user_id()
+        cache = _get_ledger_cache()
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+
+    return await credits.account_statement_tool(cache, user_id, days=days)
+
+
+# ---------------------------------------------------------------------------
+# MCP Tools — Paid
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def post_tweet(text: str) -> dict:
+    """Post a tweet with markdown formatting converted to Unicode rich text.
+
+    Accepts standard markdown inline formatting and converts it to Unicode
+    Mathematical Alphanumeric Symbols that render as styled text on X:
+
+        **bold**          → 𝗯𝗼𝗹𝗱
+        *italic*          → 𝘪𝘵𝘢𝘭𝘪𝘤
+        ***bold italic*** → 𝙗𝙤𝙡𝙙 𝙞𝙩𝙖𝙡𝙞𝙘
+        `monospace`       → 𝚖𝚘𝚗𝚘𝚜𝚙𝚊𝚌𝚎
+
+    Non-alphanumeric characters pass through unchanged. Unmatched
+    delimiters are left as-is.
+
+    Args:
+        text: Tweet content with optional markdown formatting.
+              Max 280 characters after Unicode conversion.
+
+    Returns:
+        tweet_id: The posted tweet's ID.
+        tweet_url: Direct link to the tweet on X.
+        text_posted: The Unicode-converted text that was actually sent.
+    """
+    # Credit gating
+    gate = await _debit_or_error("post_tweet")
+    if gate is not None:
+        return gate
+
+    from excaliber_mcp.formatter import markdown_to_unicode
+    from excaliber_mcp.x_client import TweetTooLongError, XAPIError, XClient
+
+    converted = markdown_to_unicode(text)
+
+    try:
+        creds = _get_x_credentials()
+    except KeyError as exc:
+        await _rollback_debit("post_tweet")
+        return {
+            "error": f"Missing X API credential: {exc}. "
+            "Set X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET "
+            "or call register_credentials to store your personal credentials."
+        }
+
+    client = XClient(creds)
+
+    try:
+        result = await client.post_tweet(converted)
+    except TweetTooLongError as exc:
+        await _rollback_debit("post_tweet")
+        return {"error": str(exc), "length": exc.length, "text_converted": converted}
+    except XAPIError as exc:
+        await _rollback_debit("post_tweet")
+        return {
+            "error": str(exc),
+            "status_code": exc.status_code,
+            "detail": exc.detail,
+        }
+
+    return await _with_warning(result)
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
 
 
 def main() -> None:
