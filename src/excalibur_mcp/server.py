@@ -17,6 +17,18 @@ logger = logging.getLogger(__name__)
 
 mcp = FastMCP("eXcalibur")
 
+# Structured onboarding guidance — included in error responses so Claude
+# can self-guide a first-time user through Secure Courier registration
+# without the user needing to explain the process.
+_ONBOARDING_NEXT_STEPS = {
+    "action": "secure_courier_onboarding",
+    "step_1": "Ask the user for their Nostr npub (public key). They can get one from the dpyc-oracle's how_to_join() tool.",
+    "step_2": "Call request_credential_channel(recipient_npub=<npub>) to send a welcome DM to the user's Nostr client.",
+    "step_3": "Tell the user to open their Nostr client (Primal, Damus, etc.) and reply to the welcome DM with their X API credentials in the JSON format shown. Credentials must NEVER appear in this chat.",
+    "step_4": "Once the user confirms they replied, call receive_credentials(sender_npub=<npub>) to vault the credentials.",
+    "step_5": "Call activate_session(passphrase=<user's chosen passphrase>) to start the session.",
+}
+
 # Default vault directory (operator can override via EXCALIBUR_VAULT_DIR)
 _DEFAULT_VAULT_DIR = os.path.join(os.path.expanduser("~"), ".excalibur", "vault")
 
@@ -108,7 +120,11 @@ def _get_effective_user_id() -> str:
     if not npub:
         raise ValueError(
             "No DPYC identity active. Credit operations require an npub. "
-            "Call register_credentials (first time) or activate_session (returning user)."
+            "Call activate_session (returning user) or follow the Secure Courier "
+            "onboarding flow: ask the user for their npub, call "
+            "request_credential_channel(recipient_npub=<npub>), wait for them to "
+            "reply via Nostr DM, then call receive_credentials(sender_npub=<npub>). "
+            "Credentials must NEVER appear in this chat."
         )
     return npub
 
@@ -481,7 +497,7 @@ async def health() -> dict:
     """Health check — returns service version and status. Free, no credits consumed."""
     return {
         "service": "excalibur-mcp",
-        "version": "0.3.0",
+        "version": "0.4.0",
         "status": "ok",
     }
 
@@ -492,6 +508,11 @@ async def session_status() -> dict[str, Any]:
 
     Shows whether you have an active personal session or are using
     the operator's default credentials. Also shows DPYC identity state.
+
+    If no credentials are registered, the response includes a next_steps
+    guide for the Secure Courier onboarding flow — follow it to register
+    the user's X API credentials via encrypted Nostr DM (credentials
+    never appear in chat).
     """
     from excalibur_mcp.vault import get_dpyc_npub, get_session
 
@@ -522,10 +543,12 @@ async def session_status() -> dict[str, Any]:
         "mode": "cloud",
         "personal_session": False,
         "message": (
-            "No active session. Call register_credentials (first time) "
-            "or activate_session (returning user) to use your personal X API credentials. "
-            "Falling back to operator's default credentials."
+            "No active session. If the user has registered before, call "
+            "activate_session(passphrase) to resume. Otherwise, follow "
+            "the next_steps to onboard via Secure Courier — credentials "
+            "travel via encrypted Nostr DM and never appear in this chat."
         ),
+        "next_steps": _ONBOARDING_NEXT_STEPS,
     }
 
 
@@ -617,6 +640,11 @@ async def activate_session(passphrase: str) -> dict[str, Any]:
     Call this at the start of each session. Provide the same passphrase you
     used during register_credentials.
 
+    If no credentials are found (first-time user), the error response
+    includes next_steps for the Secure Courier onboarding flow — follow
+    those steps to register credentials via encrypted Nostr DM instead.
+    Credentials must NEVER appear in this chat.
+
     Args:
         passphrase: The passphrase you used when registering credentials
     """
@@ -634,7 +662,10 @@ async def activate_session(passphrase: str) -> dict[str, Any]:
         blob = await vault.fetch(user_id)
         creds = decrypt_credentials(blob, passphrase)
     except (ValueError, VaultNotConfiguredError, CredentialNotFoundError, DecryptionError) as e:
-        return {"success": False, "error": str(e)}
+        result: dict[str, Any] = {"success": False, "error": str(e)}
+        if isinstance(e, CredentialNotFoundError):
+            result["next_steps"] = _ONBOARDING_NEXT_STEPS
+        return result
 
     npub = creds.get("npub")
     set_session(
@@ -945,6 +976,12 @@ async def account_statement_infographic(days: int = 30) -> dict[str, Any]:
 @mcp.tool()
 async def post_tweet(text: str, image_url: str | None = None) -> dict:
     """Post a tweet with markdown formatting converted to Unicode rich text.
+
+    Requires an active session with X API credentials. If you see a
+    "No DPYC identity" error, the user hasn't registered yet — follow
+    the Secure Courier onboarding flow: ask for their npub, call
+    request_credential_channel, have them reply via Nostr DM, then
+    call receive_credentials. Credentials must NEVER appear in chat.
 
     Accepts standard markdown inline formatting and converts it to Unicode
     Mathematical Alphanumeric Symbols that render as styled text on X:
