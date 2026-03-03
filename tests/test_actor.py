@@ -66,9 +66,10 @@ async def test_delegation_stub_returns_error():
     assert "Authority" in result["error"]
 
 
-async def test_restore_credits_stub():
-    """restore_credits returns not-implemented since server.py lacks it."""
-    op = ExcaliburOperator()
-    result = await op.restore_credits(npub="npub1test", invoice_id="inv123")
-    assert result["success"] is False
-    assert "not yet implemented" in result["error"]
+def test_hot_path_count():
+    """5 hot-path tools (check_balance, account_statement, infographic, restore_credits, service_status)."""
+    from tollbooth.actor_types import ToolPath
+
+    catalog = ExcaliburOperator.tool_catalog()
+    hot = [e for e in catalog if e.path == ToolPath.HOT]
+    assert len(hot) == 5

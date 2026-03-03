@@ -181,12 +181,9 @@ class ExcaliburOperator:
     async def restore_credits(
         self, npub: str, invoice_id: str
     ) -> dict[str, Any]:
-        """(hot) Not yet implemented — restore_credits not in server.py."""
-        return {  # DELEGATION_STUB
-            "success": False,
-            "error": "restore_credits not yet implemented for eXcalibur. "
-            "Use check_payment to re-credit a settled invoice.",
-        }
+        from excalibur_mcp.server import restore_credits
+
+        return await restore_credits(invoice_id=invoice_id)
 
     async def service_status(self) -> dict[str, Any]:
         from excalibur_mcp.server import service_status
