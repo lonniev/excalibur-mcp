@@ -12,10 +12,12 @@ from typing import Any
 from fastmcp import FastMCP
 
 from tollbooth.constants import ToolTier
+from tollbooth.slug_tools import make_slug_tool
 
 logger = logging.getLogger(__name__)
 
 mcp = FastMCP("eXcalibur")
+tool = make_slug_tool(mcp, "excalibur")
 
 # Structured onboarding guidance — included in error responses so Claude
 # can self-guide a first-time user through Secure Courier registration
@@ -581,7 +583,7 @@ async def _seed_balance(npub: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@tool
 async def health() -> dict:
     """Health check — returns service version and status. Free, no credits consumed."""
     import importlib.metadata as _meta
@@ -602,7 +604,7 @@ async def health() -> dict:
     }
 
 
-@mcp.tool()
+@tool
 async def service_status() -> dict[str, Any]:
     """Check BTCPay configuration, connectivity, courier status, and versions.
 
@@ -677,7 +679,7 @@ async def service_status() -> dict[str, Any]:
     return result
 
 
-@mcp.tool()
+@tool
 async def session_status() -> dict[str, Any]:
     """Check the status of your current session.
 
@@ -732,7 +734,7 @@ async def session_status() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@tool
 async def register_credentials(
     x_api_key: str,
     x_api_secret: str,
@@ -808,7 +810,7 @@ async def register_credentials(
     return result
 
 
-@mcp.tool()
+@tool
 async def activate_session(passphrase: str) -> dict[str, Any]:
     """Activate your personal X API session by decrypting stored credentials.
 
@@ -880,7 +882,7 @@ async def activate_session(passphrase: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@tool
 async def request_credential_channel(
     service: str = "x",
     recipient_npub: str | None = None,
@@ -927,7 +929,7 @@ async def request_credential_channel(
         return {"success": False, "error": str(e)}
 
 
-@mcp.tool()
+@tool
 async def receive_credentials(
     sender_npub: str,
     service: str = "x",
@@ -998,7 +1000,7 @@ async def receive_credentials(
     return result
 
 
-@mcp.tool()
+@tool
 async def forget_credentials(sender_npub: str, service: str = "x") -> dict[str, Any]:
     """Delete vaulted credentials so you can re-deliver via Secure Courier.
 
@@ -1022,7 +1024,7 @@ async def forget_credentials(sender_npub: str, service: str = "x") -> dict[str, 
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@tool
 async def purchase_credits(amount_sats: int, certificate: str) -> dict[str, Any]:
     """Create a BTCPay Lightning invoice to purchase credits for tool calls.
 
@@ -1059,7 +1061,7 @@ async def purchase_credits(amount_sats: int, certificate: str) -> dict[str, Any]
     )
 
 
-@mcp.tool()
+@tool
 async def check_payment(invoice_id: str) -> dict[str, Any]:
     """Verify that a Lightning invoice has settled and credit the payment to your balance.
 
@@ -1090,7 +1092,7 @@ async def check_payment(invoice_id: str) -> dict[str, Any]:
     )
 
 
-@mcp.tool()
+@tool
 async def restore_credits(invoice_id: str) -> dict[str, Any]:
     """Restore credits from a paid invoice that was lost due to cache or vault issues.
 
@@ -1125,7 +1127,7 @@ async def restore_credits(invoice_id: str) -> dict[str, Any]:
     )
 
 
-@mcp.tool()
+@tool
 async def check_balance() -> dict[str, Any]:
     """Check your current credit balance, tier info, usage summary, and cache health.
 
@@ -1149,7 +1151,7 @@ async def check_balance() -> dict[str, Any]:
     )
 
 
-@mcp.tool()
+@tool
 async def account_statement(days: int = 30) -> dict[str, Any]:
     """Generate a customer-facing account statement with purchase history and usage.
 
@@ -1179,7 +1181,7 @@ async def account_statement(days: int = 30) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@tool
 async def account_statement_infographic(days: int = 30) -> dict[str, Any]:
     """Generate a visual SVG infographic of your account statement.
 
@@ -1236,7 +1238,7 @@ async def account_statement_infographic(days: int = 30) -> dict[str, Any]:
         raise
 
 
-@mcp.tool()
+@tool
 async def post_tweet(text: str, image_url: str | None = None) -> dict:
     """Post a tweet with markdown formatting converted to Unicode rich text.
 
