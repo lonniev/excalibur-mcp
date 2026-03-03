@@ -45,6 +45,7 @@ TOOL_COSTS: dict[str, int] = {
     "check_balance": ToolTier.FREE,
     "purchase_credits": ToolTier.FREE,
     "check_payment": ToolTier.FREE,
+    "restore_credits": ToolTier.FREE,
     "account_statement": ToolTier.FREE,
     "request_credential_channel": ToolTier.FREE,
     "receive_credentials": ToolTier.FREE,
@@ -1086,6 +1087,41 @@ async def check_payment(invoice_id: str) -> dict[str, Any]:
         royalty_address=settings.tollbooth_royalty_address,
         royalty_percent=settings.tollbooth_royalty_percent,
         royalty_min_sats=settings.tollbooth_royalty_min_sats,
+    )
+
+
+@mcp.tool()
+async def restore_credits(invoice_id: str) -> dict[str, Any]:
+    """Restore credits from a paid invoice that was lost due to cache or vault issues.
+
+    Emergency recovery tool. Call when you paid an invoice but your balance
+    didn't update — typically caused by a cache eviction or vault flush failure.
+    Checks vault records first, falls back to BTCPay API verification. Safe to
+    call multiple times; will never double-credit.
+
+    Args:
+        invoice_id: The BTCPay invoice ID from a purchase_credits call you already paid
+
+    Returns:
+        source: 'vault_record' or 'btcpay' — where settlement was confirmed.
+        credits_granted: api_sats credited (0 if already credited).
+        balance_api_sats: Updated balance after restoration.
+    """
+    from tollbooth.tools import credits
+
+    try:
+        user_id = _get_effective_user_id()
+        btcpay = _get_btcpay()
+        cache = _get_ledger_cache()
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+
+    settings = get_settings()
+    return await credits.restore_credits_tool(
+        btcpay, cache, user_id, invoice_id,
+        tier_config_json=settings.btcpay_tier_config,
+        user_tiers_json=settings.btcpay_user_tiers,
+        default_credit_ttl_seconds=settings.credit_ttl_seconds,
     )
 
 
