@@ -2,7 +2,7 @@
 
 **Sword-swift posting of pretty tweets to X (Twitter) via AI agents, monetized with Bitcoin Lightning.**
 
-[![Version](https://img.shields.io/badge/version-0.6.0-blue)](https://github.com/lonniev/excalibur-mcp)
+[![Version](https://img.shields.io/badge/version-0.6.6-blue)](https://github.com/lonniev/excalibur-mcp)
 [![Python](https://img.shields.io/badge/python-3.10+-green)](https://python.org)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -41,6 +41,7 @@ https://www.fastmcp.cloud/mcp/lonniev/excalibur-mcp
 | `forget_credentials` | Delete vaulted credentials for re-delivery |
 | `purchase_credits` | Create a Lightning invoice to fund your balance |
 | `check_payment` | Poll invoice settlement and credit balance |
+| `restore_credits` | Emergency recovery — re-credit from a paid invoice lost to cache/vault issues |
 | `check_balance` | Balance, tier info, and usage summary |
 | `account_statement` | 30-day purchase and usage ledger history |
 
@@ -81,6 +82,30 @@ When you include a `passphrase` in `receive_credentials`, your credentials are s
 2. **Passphrase vault** (keyed by Horizon user_id, PBKDF2+Fernet) — for `activate_session(passphrase)`
 
 This means you go through the Secure Courier flow once, then just call `activate_session("your passphrase")` in every future session.
+
+## Actor Protocol
+
+The `ExcaliburOperator` class (in `actor.py`) satisfies `OperatorProtocol` from [tollbooth-dpyc](https://github.com/lonniev/tollbooth-dpyc). It's a thin delegation layer over existing `server.py` tool functions.
+
+```python
+from excalibur_mcp.actor import ExcaliburOperator
+from tollbooth import OperatorProtocol
+
+assert isinstance(ExcaliburOperator(), OperatorProtocol)
+```
+
+The actor exposes:
+
+- **`slug`** — returns `"excalibur"` for tool-name prefixing
+- **`tool_catalog()`** — returns `list[ToolPathInfo]` metadata for all 15 protocol tools
+
+| Path | Tools | Status |
+|------|-------|--------|
+| Hot (local ledger) | `check_balance`, `account_statement`, `account_statement_infographic`, `restore_credits`, `service_status` | Implemented — delegates to server.py |
+| Delegation (Authority) | `purchase_credits`, `check_payment`, `certify_credits`, `register_operator`, `operator_status` | Stub — connect to the Authority MCP directly |
+| Delegation (Oracle) | `lookup_member`, `how_to_join`, `get_tax_rate`, `about`, `network_advisory` | Stub — connect to the Oracle MCP directly |
+
+Payment processing (`purchase_credits`, `check_payment`) is delegated to the Tollbooth Authority rather than handled locally. Delegation stubs are marked with `# DELEGATION_STUB` for easy grep when the MCP-to-MCP wiring task lands.
 
 ## Self-Hosting
 
@@ -134,7 +159,7 @@ This means you go through the Secure Courier flow once, then just call `activate
 
 ```
 src/excalibur_mcp/
-  server.py        FastMCP server — 14 tools, Tollbooth credit gating
+  server.py        FastMCP server — 15 tools, Tollbooth credit gating
   config.py        Pydantic settings from environment variables
   vault.py         PBKDF2+Fernet credential vault (OWASP 2023, 600k iterations)
   x_client.py      X API v2 client with OAuth 1.0a manual signing
