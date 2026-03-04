@@ -6,7 +6,7 @@
 [![Python](https://img.shields.io/badge/python-3.10+-green)](https://python.org)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-eXcalibur is a [FastMCP](https://github.com/jlowin/fastmcp) server that lets AI agents post to X (Twitter) with rich Unicode formatting and optional images. Credentials are delivered via encrypted Nostr DMs (the "Secure Courier") so they never appear in chat. Tool calls are metered with [Tollbooth](https://github.com/lonniev/tollbooth-dpyc) pre-funded Lightning balances — no per-request payment ceremonies.
+eXcalibur is a [FastMCP](https://github.com/jlowin/fastmcp) server that lets AI agents post to X (Twitter) with rich Unicode formatting and optional images. Credentials are delivered via encrypted Nostr DMs (the "Secure Courier") so they never appear in chat. Tool calls are metered with [Tollbooth DPYC™](https://github.com/lonniev/tollbooth-dpyc) pre-funded Lightning balances — no per-request payment ceremonies.
 
 Part of the [DPYC Honor Chain](https://github.com/lonniev/dpyc-community).
 
@@ -192,6 +192,10 @@ mypy src/excalibur_mcp/
 black src/ tests/
 ruff check src/ tests/
 ```
+
+## Trademarks
+
+DPYC, Tollbooth DPYC, and Don't Pester Your Customer are trademarks of Lonnie VanZandt. See the [TRADEMARKS.md](https://github.com/lonniev/dpyc-community/blob/main/TRADEMARKS.md) in the dpyc-community repository for usage guidelines.
 
 ## License
 
