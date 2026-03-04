@@ -214,6 +214,9 @@ def _get_effective_user_id() -> str:
 
     Returns "stdio:0" in STDIO mode for local dev.
     Raises ValueError if no DPYC session is active in cloud mode.
+
+    NOTE: Prefer ``_ensure_dpyc_session()`` in async contexts — it
+    auto-restores the session from vault on cold start.
     """
     from excalibur_mcp.vault import get_dpyc_npub
 
@@ -232,6 +235,33 @@ def _get_effective_user_id() -> str:
             "Credentials must NEVER appear in this chat."
         )
     return npub
+
+
+async def _ensure_dpyc_session() -> str:
+    """Return the npub for the current user, auto-restoring on cold start.
+
+    Delegates to ``SecureCourierService.ensure_identity()`` which manages
+    the in-memory session cache and vault-based cold-start restoration.
+
+    Falls back to ``_get_effective_user_id()`` in STDIO mode where the
+    courier service is not available.
+
+    Raises ValueError if restoration fails (first-time user or forgotten creds).
+    """
+    horizon_id = _get_current_user_id()
+    if not horizon_id:
+        return "stdio:0"
+
+    try:
+        courier = _get_courier_service()
+        return await courier.ensure_identity(horizon_id, service="x")
+    except ValueError:
+        raise
+    except Exception:
+        pass
+
+    # Fallback to sync path if courier unavailable
+    return _get_effective_user_id()
 
 
 # ---------------------------------------------------------------------------
@@ -384,13 +414,19 @@ def _get_courier_service():
         ),
     }
 
-    # Credential vault for persistence across sessions
-    from excalibur_mcp.vault import FileCredentialVault
+    # Credential vault backed by the same NeonVault used for commerce.
+    # NeonCredentialVault implements both CredentialVaultBackend and
+    # SessionBindingBackend, enabling auto-restore on cold start.
+    from tollbooth.vaults import NeonCredentialVault
 
-    vault_dir = settings.excalibur_vault_dir or os.environ.get(
-        "EXCALIBUR_VAULT_DIR", _DEFAULT_VAULT_DIR
-    )
-    credential_vault = FileCredentialVault(vault_dir)
+    commerce_vault = _get_commerce_vault()
+    credential_vault = NeonCredentialVault(neon_vault=commerce_vault)
+
+    import asyncio
+    try:
+        asyncio.ensure_future(credential_vault.ensure_schema())
+    except RuntimeError:
+        pass
 
     _courier_service = SecureCourierService(
         operator_nsec=nsec,
@@ -542,7 +578,7 @@ async def _debit_or_error(tool_name: str) -> dict[str, Any] | None:
         return None
 
     try:
-        user_id = _get_effective_user_id()
+        user_id = await _ensure_dpyc_session()
     except ValueError as e:
         return {"success": False, "error": str(e)}
 
@@ -582,7 +618,7 @@ async def _rollback_debit(tool_name: str) -> None:
         return
 
     try:
-        user_id = _get_effective_user_id()
+        user_id = await _ensure_dpyc_session()
         cache = _get_ledger_cache()
         ledger = await cache.get(user_id)
     except Exception:
@@ -597,7 +633,7 @@ async def _with_warning(result: dict[str, Any]) -> dict[str, Any]:
     try:
         from tollbooth.tools.credits import compute_low_balance_warning
 
-        user_id = _get_effective_user_id()
+        user_id = await _ensure_dpyc_session()
         cache = _get_ledger_cache()
         ledger = await cache.get(user_id)
         settings = get_settings()
@@ -1015,7 +1051,9 @@ async def receive_credentials(
         return {"success": False, "error": str(e)}
 
     try:
-        result = await courier.receive(sender_npub, service=service)
+        result = await courier.receive(
+            sender_npub, service=service, caller_id=_get_current_user_id(),
+        )
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -1067,7 +1105,9 @@ async def forget_credentials(sender_npub: str, service: str = "x") -> dict[str, 
     except (ValueError, RuntimeError) as e:
         return {"success": False, "error": str(e)}
 
-    return await courier.forget(sender_npub, service=service)
+    return await courier.forget(
+        sender_npub, service=service, caller_id=_get_current_user_id(),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1095,7 +1135,7 @@ async def purchase_credits(amount_sats: int) -> dict[str, Any]:
     from tollbooth.tools import credits
 
     try:
-        user_id = _get_effective_user_id()
+        user_id = await _ensure_dpyc_session()
         btcpay = _get_btcpay()
         cache = _get_ledger_cache()
     except ValueError as e:
@@ -1141,7 +1181,7 @@ async def check_payment(invoice_id: str) -> dict[str, Any]:
     from tollbooth.tools import credits
 
     try:
-        user_id = _get_effective_user_id()
+        user_id = await _ensure_dpyc_session()
         btcpay = _get_btcpay()
         cache = _get_ledger_cache()
     except ValueError as e:
@@ -1179,7 +1219,7 @@ async def restore_credits(invoice_id: str) -> dict[str, Any]:
     from tollbooth.tools import credits
 
     try:
-        user_id = _get_effective_user_id()
+        user_id = await _ensure_dpyc_session()
         btcpay = _get_btcpay()
         cache = _get_ledger_cache()
     except ValueError as e:
@@ -1204,7 +1244,7 @@ async def check_balance() -> dict[str, Any]:
     from tollbooth.tools import credits
 
     try:
-        user_id = _get_effective_user_id()
+        user_id = await _ensure_dpyc_session()
         cache = _get_ledger_cache()
     except ValueError as e:
         return {"success": False, "error": str(e)}
@@ -1230,7 +1270,7 @@ async def account_statement(days: int = 30) -> dict[str, Any]:
     from tollbooth.tools import credits
 
     try:
-        user_id = _get_effective_user_id()
+        user_id = await _ensure_dpyc_session()
         cache = _get_ledger_cache()
     except ValueError as e:
         return {"success": False, "error": str(e)}
@@ -1273,7 +1313,7 @@ async def account_statement_infographic(days: int = 30) -> dict[str, Any]:
         return gate
 
     try:
-        user_id = _get_effective_user_id()
+        user_id = await _ensure_dpyc_session()
         cache = _get_ledger_cache()
     except ValueError as e:
         await _rollback_debit("account_statement_infographic")
