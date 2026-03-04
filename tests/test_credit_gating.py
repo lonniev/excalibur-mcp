@@ -51,10 +51,10 @@ class TestToolCosts:
         from excalibur_mcp.server import TOOL_COSTS
         assert TOOL_COSTS["post_tweet_image"] > TOOL_COSTS["post_tweet"]
 
-    def test_post_tweet_image_is_write_tier(self):
+    def test_post_tweet_image_is_heavy_tier(self):
         from excalibur_mcp.server import TOOL_COSTS
         from tollbooth.constants import ToolTier
-        assert TOOL_COSTS["post_tweet_image"] == ToolTier.WRITE
+        assert TOOL_COSTS["post_tweet_image"] == ToolTier.HEAVY
 
     def test_health_is_free(self):
         from excalibur_mcp.server import TOOL_COSTS
@@ -310,8 +310,8 @@ class TestPostTweetImageGated:
             result = await post_tweet("img", image_url="https://example.com/img.jpg")
 
         assert result["tweet_id"] == "888"
-        # Should debit post_tweet_image at WRITE tier cost
-        mock_cache.debit.assert_called_once_with("stdio:0", "post_tweet_image", ToolTier.WRITE)
+        # Should debit post_tweet_image at HEAVY tier cost
+        mock_cache.debit.assert_called_once_with("stdio:0", "post_tweet_image", ToolTier.HEAVY)
 
     @pytest.mark.asyncio
     async def test_rollback_on_upload_failure(self, monkeypatch):
@@ -361,7 +361,7 @@ class TestPostTweetImageGated:
 
         assert "error" in result
         # Rollback should have been called
-        mock_ledger.rollback_debit.assert_called_once_with("post_tweet_image", ToolTier.WRITE)
+        mock_ledger.rollback_debit.assert_called_once_with("post_tweet_image", ToolTier.HEAVY)
 
 
 # ---------------------------------------------------------------------------

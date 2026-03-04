@@ -53,8 +53,8 @@ TOOL_COSTS: dict[str, int] = {
     "receive_credentials": ToolTier.FREE,
     "forget_credentials": ToolTier.FREE,
     # Paid
-    "post_tweet": ToolTier.READ,  # 1 api_sat (text only)
-    "post_tweet_image": ToolTier.WRITE,  # 2 api_sats (with image)
+    "post_tweet": ToolTier.WRITE,  # 5 api_sats (text only)
+    "post_tweet_image": ToolTier.HEAVY,  # 10 api_sats (with image upload)
     "account_statement_infographic": ToolTier.READ,  # 1 api_sat (SVG render)
 }
 
