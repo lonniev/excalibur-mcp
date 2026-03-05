@@ -50,3 +50,15 @@ class Settings(BaseSettings):
     # Secure Courier (Nostr DM credential exchange)
     tollbooth_nostr_operator_nsec: str | None = None
     tollbooth_nostr_relays: str | None = None  # Comma-separated relay URLs
+
+    # Constraint Engine (opt-in)
+    constraints_enabled: bool = False
+    constraints_config: str | None = None  # JSON string
+
+    def to_tollbooth_config(self):
+        """Build a TollboothConfig for passing to tollbooth library tools."""
+        from tollbooth.config import TollboothConfig
+        return TollboothConfig(
+            constraints_enabled=self.constraints_enabled,
+            constraints_config=self.constraints_config,
+        )
