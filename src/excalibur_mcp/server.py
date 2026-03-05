@@ -763,6 +763,10 @@ async def service_status() -> dict[str, Any]:
     except Exception:
         result["cache_health"] = None
 
+    # Ecosystem discoverability
+    from tollbooth.constants import ECOSYSTEM_LINKS
+    result["ecosystem_links"] = ECOSYSTEM_LINKS
+
     return result
 
 
