@@ -2,13 +2,13 @@
 
 **Sword-swift posting of pretty tweets to X (Twitter) via AI agents, monetized with Bitcoin Lightning.**
 
-[![Version](https://img.shields.io/badge/version-0.6.6-blue)](https://github.com/lonniev/excalibur-mcp)
+[![Version](https://img.shields.io/badge/version-0.6.9-blue)](https://github.com/lonniev/excalibur-mcp)
 [![Python](https://img.shields.io/badge/python-3.10+-green)](https://python.org)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-eXcalibur is a [FastMCP](https://github.com/jlowin/fastmcp) server that lets AI agents post to X (Twitter) with rich Unicode formatting and optional images. Credentials are delivered via encrypted Nostr DMs (the "Secure Courier") so they never appear in chat. Tool calls are metered with [Tollbooth DPYC™](https://github.com/lonniev/tollbooth-dpyc) pre-funded Lightning balances — no per-request payment ceremonies.
+eXcalibur is a [FastMCP](https://github.com/jlowin/fastmcp) server that lets AI agents post to X (Twitter) with rich Unicode formatting and optional images. Credentials are delivered via encrypted Nostr DMs (the "Secure Courier") so they never appear in chat. Tool calls are metered with [Tollbooth DPYC™](https://github.com/lonniev/tollbooth-dpyc) pre-funded Lightning balances — Don't Pester Your Customer™.
 
-Part of the [DPYC Honor Chain](https://github.com/lonniev/dpyc-community).
+Part of the [DPYC™ Honor Chain](https://github.com/lonniev/dpyc-community).
 
 ## Getting Started
 
@@ -23,7 +23,7 @@ https://www.fastmcp.cloud/mcp/lonniev/excalibur-mcp
 1. **Get your Nostr npub** — use the dpyc-oracle's `how_to_join()` tool, or any Nostr client.
 2. **Call `request_credential_channel(recipient_npub=<npub>)`** — a welcome DM arrives in your Nostr inbox.
 3. **Reply to the welcome DM** with your X API credentials in the JSON format shown. Credentials travel on an encrypted Nostr channel and never appear in this chat.
-4. **Call `receive_credentials(sender_npub=<npub>, passphrase=<passphrase>)`** — credentials are vaulted for future sessions. Use `activate_session(passphrase)` to reactivate in any new session.
+4. **Call `receive_credentials(sender_npub=<npub>)`** — credentials are vaulted. Returning users just call `receive_credentials` again — vault-first lookup activates instantly, no relay I/O needed.
 
 ## Available Tools
 
@@ -34,11 +34,11 @@ https://www.fastmcp.cloud/mcp/lonniev/excalibur-mcp
 | `health` | Version and runtime status |
 | `service_status` | BTCPay connectivity, Secure Courier status, component versions |
 | `session_status` | Current session state (active, expired, or missing) |
-| `register_credentials` | Store X API OAuth credentials encrypted with PBKDF2+Fernet |
-| `activate_session` | Decrypt stored credentials via passphrase |
-| `request_credential_channel` | Open Secure Courier Nostr DM channel |
-| `receive_credentials` | Pick up NIP-44 encrypted credentials from Nostr relay, with optional passphrase bridge |
-| `forget_credentials` | Delete vaulted credentials for re-delivery |
+| `request_credential_channel` | Open Secure Courier Nostr DM channel for credential delivery |
+| `receive_credentials` | Pick up NIP-44 encrypted credentials from Nostr relay or vault cache |
+| `forget_credentials` | Delete vaulted credentials for key rotation or re-delivery |
+| `register_credentials` | *(Legacy)* Store credentials via passphrase — prefer Secure Courier |
+| `activate_session` | *(Legacy)* Decrypt stored credentials via passphrase — prefer `receive_credentials` |
 | `purchase_credits` | Create a Lightning invoice to fund your balance |
 | `check_payment` | Poll invoice settlement and credit balance |
 | `restore_credits` | Emergency recovery — re-credit from a paid invoice lost to cache/vault issues |
@@ -72,20 +72,14 @@ You (Nostr client)              eXcalibur (Operator)           Claude (Chat)
 
 - **NIP-44** (AES-256-CBC) encryption between your Nostr key and the operator's key
 - Relay copy **deleted via NIP-09** after successful pickup
-- Subsequent sessions retrieve from the local vault — no relay I/O needed
+- Subsequent sessions retrieve from the vault — no relay I/O needed
+- On first-time receipt, a **credential card** (`ncred1...`) is DM'd back for scan-and-paste reuse
 
-### Passphrase Bridge
-
-When you include a `passphrase` in `receive_credentials`, your credentials are stored in *two* vaults:
-
-1. **Courier vault** (keyed by npub, NIP-04 encrypted) — for `receive_credentials` cache hits
-2. **Passphrase vault** (keyed by Horizon user_id, PBKDF2+Fernet) — for `activate_session(passphrase)`
-
-This means you go through the Secure Courier flow once, then just call `activate_session("your passphrase")` in every future session.
+The Secure Courier is provided by [Tollbooth DPYC™](https://github.com/lonniev/tollbooth-dpyc) — eXcalibur doesn't manage auth internally.
 
 ## Actor Protocol
 
-The `ExcaliburOperator` class (in `actor.py`) satisfies `OperatorProtocol` from [tollbooth-dpyc](https://github.com/lonniev/tollbooth-dpyc). It's a thin delegation layer over existing `server.py` tool functions.
+The `ExcaliburOperator` class (in `actor.py`) satisfies `OperatorProtocol` from [Tollbooth DPYC™](https://github.com/lonniev/tollbooth-dpyc). It's a thin delegation layer over existing `server.py` tool functions.
 
 ```python
 from excalibur_mcp.actor import ExcaliburOperator
@@ -97,15 +91,16 @@ assert isinstance(ExcaliburOperator(), OperatorProtocol)
 The actor exposes:
 
 - **`slug`** — returns `"excalibur"` for tool-name prefixing
-- **`tool_catalog()`** — returns `list[ToolPathInfo]` metadata for all 15 protocol tools
+- **`tool_catalog()`** — returns `list[ToolPathInfo]` metadata for all protocol tools
 
 | Path | Tools | Status |
 |------|-------|--------|
 | Hot (local ledger) | `check_balance`, `account_statement`, `account_statement_infographic`, `restore_credits`, `service_status` | Implemented — delegates to server.py |
-| Delegation (Authority) | `purchase_credits`, `check_payment`, `certify_credits`, `register_operator`, `operator_status` | Stub — connect to the Authority MCP directly |
-| Delegation (Oracle) | `lookup_member`, `how_to_join`, `get_tax_rate`, `about`, `network_advisory` | Stub — connect to the Oracle MCP directly |
+| Hot (Secure Courier) | `session_status`, `request_credential_channel`, `receive_credentials`, `forget_credentials` | Implemented — Tollbooth DPYC™ Secure Courier |
+| Delegation (Authority) | `purchase_credits`, `check_payment`, `certify_credits`, `register_operator`, `operator_status` | Live — MCP-to-MCP via Authority |
+| Delegation (Oracle) | `lookup_member`, `how_to_join`, `get_tax_rate`, `about`, `network_advisory` | Live — MCP-to-MCP via Oracle |
 
-Payment processing (`purchase_credits`, `check_payment`) is delegated to the Tollbooth Authority rather than handled locally. Delegation stubs are marked with `# DELEGATION_STUB` for easy grep when the MCP-to-MCP wiring task lands.
+Payment processing and certificate acquisition are delegated to the Tollbooth Authority via MCP-to-MCP calls. Community queries route directly to the DPYC™ Oracle.
 
 ## Self-Hosting
 
@@ -130,15 +125,25 @@ Payment processing (`purchase_credits`, `check_payment`) is delegated to the Tol
 | `BTCPAY_TIER_CONFIG` | No | JSON tier multiplier config |
 | `BTCPAY_USER_TIERS` | No | JSON mapping npubs to tier names |
 
-#### DPYC Identity & Commerce
+#### DPYC™ Identity & Commerce
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `DPYC_OPERATOR_NPUB` | Yes | Operator's Nostr public key |
-| `DPYC_AUTHORITY_NPUB` | Yes | Upstream Authority's npub for certificate verification |
 | `SEED_BALANCE_SATS` | No | Starter credits for new users (default: 0) |
 | `CREDIT_TTL_SECONDS` | No | Credit expiration (default: 604800 = 7 days) |
 | `NEON_DATABASE_URL` | No | Neon Postgres URL for persistent ledger |
+| `DPYC_REGISTRY_URL` | No | DPYC™ community registry URL (auto-resolved from GitHub) |
+| `DPYC_REGISTRY_CACHE_TTL_SECONDS` | No | Registry cache TTL (default: 300) |
+
+> **Note:** `DPYC_OPERATOR_NPUB` and `DPYC_AUTHORITY_NPUB` are no longer needed — Operator and Authority npubs are now resolved automatically from the [DPYC™ community registry](https://github.com/lonniev/dpyc-community).
+
+#### Royalty Payouts
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `TOLLBOOTH_ROYALTY_ADDRESS` | No | Lightning Address for royalty payouts |
+| `TOLLBOOTH_ROYALTY_PERCENT` | No | Royalty percentage (default: 0.02) |
+| `TOLLBOOTH_ROYALTY_MIN_SATS` | No | Minimum royalty payout in sats (default: 10) |
 
 #### Secure Courier
 
