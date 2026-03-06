@@ -191,6 +191,7 @@ def _clean_state():
     srv._commerce_vault = None
     srv._ledger_cache = None
     srv._btcpay_client = None
+    srv._courier_service = None
     yield
     _sessions.clear()
     _dpyc_sessions.clear()
@@ -199,10 +200,15 @@ def _clean_state():
     srv._commerce_vault = None
     srv._ledger_cache = None
     srv._btcpay_client = None
+    srv._courier_service = None
 
 
 def _mock_user_id(user_id):
     return patch("excalibur_mcp.server._get_current_user_id", return_value=user_id)
+
+
+def _mock_dpyc_session(npub=_SAMPLE_NPUB):
+    return patch("excalibur_mcp.server._ensure_dpyc_session", new_callable=AsyncMock, return_value=npub)
 
 
 class TestToolCostsInfographic:
@@ -237,6 +243,7 @@ class TestAccountStatementInfographicTool:
         _dpyc_sessions["user-1"] = _SAMPLE_NPUB
         with (
             _mock_user_id("user-1"),
+            _mock_dpyc_session(),
             patch("excalibur_mcp.server._get_ledger_cache", return_value=mock_cache),
         ):
             result = await account_statement_infographic()
@@ -257,6 +264,7 @@ class TestAccountStatementInfographicTool:
         _dpyc_sessions["user-1"] = _SAMPLE_NPUB
         with (
             _mock_user_id("user-1"),
+            _mock_dpyc_session(),
             patch("excalibur_mcp.server._get_ledger_cache", return_value=mock_cache),
             patch(
                 "tollbooth.tools.credits.account_statement_tool",
@@ -284,6 +292,7 @@ class TestAccountStatementInfographicTool:
         _dpyc_sessions["user-1"] = _SAMPLE_NPUB
         with (
             _mock_user_id("user-1"),
+            _mock_dpyc_session(),
             patch("excalibur_mcp.server._get_ledger_cache", return_value=mock_cache),
             patch(
                 "tollbooth.tools.credits.account_statement_tool",
@@ -310,6 +319,7 @@ class TestAccountStatementInfographicTool:
         _dpyc_sessions["user-1"] = _SAMPLE_NPUB
         with (
             _mock_user_id("user-1"),
+            _mock_dpyc_session(),
             patch("excalibur_mcp.server._get_ledger_cache", return_value=mock_cache),
             patch(
                 "tollbooth.tools.credits.account_statement_tool",

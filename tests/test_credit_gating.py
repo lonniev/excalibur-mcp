@@ -23,6 +23,7 @@ def _clean_state():
     srv._commerce_vault = None
     srv._ledger_cache = None
     srv._btcpay_client = None
+    srv._courier_service = None
     yield
     _sessions.clear()
     _dpyc_sessions.clear()
@@ -31,10 +32,15 @@ def _clean_state():
     srv._commerce_vault = None
     srv._ledger_cache = None
     srv._btcpay_client = None
+    srv._courier_service = None
 
 
 def _mock_user_id(user_id):
     return patch("excalibur_mcp.server._get_current_user_id", return_value=user_id)
+
+
+def _mock_dpyc_session(npub=_SAMPLE_NPUB):
+    return patch("excalibur_mcp.server._ensure_dpyc_session", new_callable=AsyncMock, return_value=npub)
 
 
 # ---------------------------------------------------------------------------
@@ -101,7 +107,9 @@ class TestDebitOrError:
         from excalibur_mcp.server import _debit_or_error
         # Cloud user with no DPYC session
         _dpyc_sessions.clear()
-        with _mock_user_id("user-no-dpyc"):
+        with _mock_user_id("user-no-dpyc"), \
+             patch("excalibur_mcp.server._ensure_dpyc_session", new_callable=AsyncMock,
+                   side_effect=ValueError("No DPYC identity — use receive_credentials to register your npub.")):
             result = await _debit_or_error("post_tweet")
         assert result is not None
         assert result["success"] is False
@@ -113,6 +121,7 @@ class TestDebitOrError:
         from excalibur_mcp.server import _debit_or_error
         _dpyc_sessions["user-1"] = _SAMPLE_NPUB
         with _mock_user_id("user-1"), \
+             _mock_dpyc_session(), \
              patch("excalibur_mcp.server._get_ledger_cache",
                    side_effect=ValueError("Commerce vault not configured. Set NEON_DATABASE_URL")):
             result = await _debit_or_error("post_tweet")
@@ -130,11 +139,12 @@ class TestDebitOrError:
 
         _dpyc_sessions["user-1"] = _SAMPLE_NPUB
         with _mock_user_id("user-1"), \
+             _mock_dpyc_session(), \
              patch("excalibur_mcp.server._get_ledger_cache", return_value=mock_cache):
             result = await _debit_or_error("post_tweet")
 
         assert result is None
-        mock_cache.debit.assert_called_once_with(_SAMPLE_NPUB, "post_tweet", 1)
+        mock_cache.debit.assert_called_once_with(_SAMPLE_NPUB, "post_tweet", ToolTier.WRITE)
 
     @pytest.mark.asyncio
     async def test_insufficient_balance_returns_error(self):
@@ -150,6 +160,7 @@ class TestDebitOrError:
 
         _dpyc_sessions["user-1"] = _SAMPLE_NPUB
         with _mock_user_id("user-1"), \
+             _mock_dpyc_session(), \
              patch("excalibur_mcp.server._get_ledger_cache", return_value=mock_cache):
             result = await _debit_or_error("post_tweet")
 
@@ -157,7 +168,7 @@ class TestDebitOrError:
         assert result["success"] is False
         assert "Insufficient" in result["error"]
         assert "purchase_credits" in result["error"]
-        mock_cache.debit.assert_called_once_with(_SAMPLE_NPUB, "post_tweet", 1)
+        mock_cache.debit.assert_called_once_with(_SAMPLE_NPUB, "post_tweet", ToolTier.WRITE)
 
 
 # ---------------------------------------------------------------------------
@@ -176,10 +187,11 @@ class TestRollbackDebit:
 
         _dpyc_sessions["user-1"] = _SAMPLE_NPUB
         with _mock_user_id("user-1"), \
+             _mock_dpyc_session(), \
              patch("excalibur_mcp.server._get_ledger_cache", return_value=mock_cache):
             await _rollback_debit("post_tweet")
 
-        mock_ledger.rollback_debit.assert_called_once_with("post_tweet", 1)
+        mock_ledger.rollback_debit.assert_called_once_with("post_tweet", ToolTier.WRITE)
 
     @pytest.mark.asyncio
     async def test_rollback_noop_for_free_tool(self):
@@ -239,6 +251,7 @@ class TestPostTweetGated:
 
         _dpyc_sessions["user-1"] = _SAMPLE_NPUB
         with _mock_user_id("user-1"), \
+             _mock_dpyc_session(), \
              patch("excalibur_mcp.server._get_ledger_cache", return_value=mock_cache):
             result = await post_tweet("blocked tweet")
 
