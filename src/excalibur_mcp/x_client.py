@@ -31,6 +31,58 @@ MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB (X limit for images)
 IMAGE_DOWNLOAD_TIMEOUT_SECONDS = 30
 
 
+POSTIMG_UPLOAD_URL = "https://postimg.cc/json"
+POSTIMG_UPLOAD_TIMEOUT_SECONDS = 30
+
+
+class PostImgUploadError(Exception):
+    """Raised when uploading to postimg.cc fails."""
+
+    def __init__(self, detail: str):
+        self.detail = detail
+        super().__init__(detail)
+
+
+async def upload_to_postimg(png_bytes: bytes, filename: str = "banner.png") -> str:
+    """Upload PNG to postimg.cc, return direct image URL.
+
+    Args:
+        png_bytes: Raw PNG image data.
+        filename: Filename for the upload.
+
+    Returns:
+        Direct URL to the uploaded image.
+
+    Raises:
+        PostImgUploadError: If the upload fails.
+    """
+    async with httpx.AsyncClient(timeout=POSTIMG_UPLOAD_TIMEOUT_SECONDS) as client:
+        try:
+            response = await client.post(
+                POSTIMG_UPLOAD_URL,
+                data={"numfiles": "1", "optsize": "0"},
+                files={"file": (filename, png_bytes, "image/png")},
+            )
+        except httpx.HTTPError as exc:
+            raise PostImgUploadError(f"PostImg upload failed: {exc}")
+
+    if response.status_code != 200:
+        raise PostImgUploadError(
+            f"PostImg returned {response.status_code}: {response.text[:200]}"
+        )
+
+    try:
+        data = response.json()
+    except Exception:
+        raise PostImgUploadError(f"PostImg returned non-JSON: {response.text[:200]}")
+
+    url = data.get("url")
+    if not url:
+        raise PostImgUploadError(f"PostImg response missing 'url': {data}")
+
+    return url
+
+
 class XAPIError(Exception):
     """Raised when the X API returns an error response."""
 
