@@ -13,4 +13,4 @@ environment:
 
 runtime:
   python: "3.12"
-# redeploy: 2026-03-05 tollbooth-dpyc 0.1.75 (surge pricing constraint + fire-and-forget flushes)
+# redeploy: 2026-03-06 v0.6.14 svglib+reportlab replaces Playwright for banner SVG→PNG
