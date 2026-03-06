@@ -560,6 +560,37 @@ def _get_btcpay():
 # ---------------------------------------------------------------------------
 
 
+def _resolve_banner_png(banner_svg_or_png: str) -> bytes:
+    """Convert banner input (SVG markup or base64 PNG) to raw PNG bytes.
+
+    Raises:
+        RuntimeError: If SVG is provided but cairosvg is not installed,
+            or if the input is not recognizable.
+    """
+    import base64 as b64
+
+    stripped = banner_svg_or_png.strip()
+
+    # Detect SVG by leading markup
+    if stripped.startswith("<svg") or stripped.startswith("<?xml"):
+        try:
+            import cairosvg  # type: ignore[import-untyped]
+        except ImportError:
+            raise RuntimeError(
+                "SVG banner requires cairosvg. "
+                "Install with: pip install excalibur-mcp[png]"
+            )
+        return cairosvg.svg2png(bytestring=stripped.encode("utf-8"))
+
+    # Otherwise treat as base64-encoded PNG
+    try:
+        return b64.b64decode(stripped)
+    except Exception as exc:
+        raise RuntimeError(
+            f"banner_svg_or_png must be SVG markup (<svg…) or base64-encoded PNG: {exc}"
+        )
+
+
 def _get_x_credentials():
     """Get X API credentials: per-user session first, env vars as fallback.
 
@@ -1425,7 +1456,11 @@ async def account_statement_infographic(days: int = 30) -> dict[str, Any]:
 
 
 @tool
-async def post_tweet(text: str, image_url: str | None = None) -> dict:
+async def post_tweet(
+    text: str,
+    image_url: str | None = None,
+    banner_svg_or_png: str | None = None,
+) -> dict:
     """Post a tweet with markdown formatting converted to Unicode rich text.
 
     Requires an active session with X API credentials. If you see a
@@ -1451,14 +1486,21 @@ async def post_tweet(text: str, image_url: str | None = None) -> dict:
     Args:
         text: Tweet content with optional markdown formatting.
               Max length depends on X account tier after Unicode conversion.
-        image_url: Optional URL of an image to attach to the tweet.
+        image_url: Optional URL of an image to attach to the tweet as a
+                   native Twitter media attachment.
                    Supported formats: JPEG, PNG, GIF, WebP. Max 5 MB.
+        banner_svg_or_png: Optional raw SVG markup (starts with ``<svg`` or
+                   ``<?xml``) or base64-encoded PNG bytes. The image is
+                   converted to PNG (if SVG), uploaded to postimg.cc, and the
+                   resulting URL is appended to the tweet text so it renders
+                   as a link card. Can be used together with image_url.
 
     Returns:
         tweet_id: The posted tweet's ID.
         tweet_url: Direct link to the tweet on X.
         text_posted: The Unicode-converted text that was actually sent.
         media_id: The uploaded media ID (only when image_url provided).
+        banner_url: The postimg.cc URL (only when banner_svg_or_png provided).
     """
     cost_key = "post_tweet_image" if image_url else "post_tweet"
 
@@ -1468,9 +1510,26 @@ async def post_tweet(text: str, image_url: str | None = None) -> dict:
         return gate
 
     from excalibur_mcp.formatter import markdown_to_unicode
-    from excalibur_mcp.x_client import XAPIError, XClient
+    from excalibur_mcp.x_client import PostImgUploadError, XAPIError, XClient, upload_to_postimg
 
     converted = markdown_to_unicode(text)
+
+    # --- Banner processing: SVG/PNG → postimg.cc URL appended to text ---
+    banner_url = None
+    if banner_svg_or_png:
+        try:
+            png_bytes = _resolve_banner_png(banner_svg_or_png)
+        except RuntimeError as exc:
+            await _rollback_debit(cost_key)
+            return {"error": str(exc)}
+
+        try:
+            banner_url = await upload_to_postimg(png_bytes)
+        except PostImgUploadError as exc:
+            await _rollback_debit(cost_key)
+            return {"error": f"Banner upload failed: {exc.detail}"}
+
+        converted = f"{converted}\n{banner_url}"
 
     try:
         creds = _get_x_credentials()
@@ -1496,6 +1555,9 @@ async def post_tweet(text: str, image_url: str | None = None) -> dict:
             "status_code": exc.status_code,
             "detail": exc.detail,
         }
+
+    if banner_url:
+        result["banner_url"] = banner_url
 
     return await _with_warning(result)
 

@@ -3,16 +3,19 @@
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from excalibur_mcp.x_client import (
     ALLOWED_IMAGE_CONTENT_TYPES,
     MAX_IMAGE_SIZE_BYTES,
     MediaUploadError,
+    PostImgUploadError,
     XAPIError,
     XClient,
     XCredentials,
     _build_oauth1_header,
+    upload_to_postimg,
 )
 
 
@@ -407,3 +410,93 @@ class TestPostTweetWithImage:
         mock_post.assert_called_once_with("hello", media_ids=["media_99"])
         assert result["tweet_id"] == "777"
         assert result["media_id"] == "media_99"
+
+
+# ---------------------------------------------------------------------------
+# PostImg upload
+# ---------------------------------------------------------------------------
+
+
+class TestUploadToPostImg:
+    @pytest.mark.asyncio
+    async def test_success(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"url": "https://i.postimg.cc/abc123/banner.png"}
+
+        with patch("excalibur_mcp.x_client.httpx.AsyncClient") as MockClient:
+            mock_instance = AsyncMock()
+            mock_instance.post = AsyncMock(return_value=mock_resp)
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = mock_instance
+
+            url = await upload_to_postimg(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+
+        assert url == "https://i.postimg.cc/abc123/banner.png"
+
+    @pytest.mark.asyncio
+    async def test_custom_filename(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"url": "https://i.postimg.cc/abc/custom.png"}
+
+        with patch("excalibur_mcp.x_client.httpx.AsyncClient") as MockClient:
+            mock_instance = AsyncMock()
+            mock_instance.post = AsyncMock(return_value=mock_resp)
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = mock_instance
+
+            await upload_to_postimg(b"\x89PNG\r\n", filename="infographic.png")
+
+            call_kwargs = mock_instance.post.call_args.kwargs
+            files = call_kwargs["files"]
+            assert files["file"][0] == "infographic.png"
+
+    @pytest.mark.asyncio
+    async def test_http_error(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 500
+        mock_resp.text = "Internal Server Error"
+
+        with patch("excalibur_mcp.x_client.httpx.AsyncClient") as MockClient:
+            mock_instance = AsyncMock()
+            mock_instance.post = AsyncMock(return_value=mock_resp)
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = mock_instance
+
+            with pytest.raises(PostImgUploadError) as exc_info:
+                await upload_to_postimg(b"\x89PNG\r\n")
+            assert "500" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    async def test_missing_url_in_response(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"status": "ok"}
+
+        with patch("excalibur_mcp.x_client.httpx.AsyncClient") as MockClient:
+            mock_instance = AsyncMock()
+            mock_instance.post = AsyncMock(return_value=mock_resp)
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = mock_instance
+
+            with pytest.raises(PostImgUploadError) as exc_info:
+                await upload_to_postimg(b"\x89PNG\r\n")
+            assert "missing 'url'" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    async def test_network_error(self):
+        with patch("excalibur_mcp.x_client.httpx.AsyncClient") as MockClient:
+            mock_instance = AsyncMock()
+            mock_instance.post = AsyncMock(side_effect=httpx.ConnectError("refused"))
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = mock_instance
+
+            with pytest.raises(PostImgUploadError) as exc_info:
+                await upload_to_postimg(b"\x89PNG\r\n")
+            assert "refused" in exc_info.value.detail

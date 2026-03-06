@@ -1,5 +1,6 @@
 """Tests for Tollbooth credit gating on post_tweet."""
 
+import base64
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -399,3 +400,219 @@ class TestSettings:
         s = Settings()
         assert s.btcpay_host == "https://btcpay.test"
         assert s.seed_balance_sats == 500
+
+
+# ---------------------------------------------------------------------------
+# _resolve_banner_png
+# ---------------------------------------------------------------------------
+
+
+class TestResolveBannerPng:
+    def test_base64_png_decoded(self):
+        from excalibur_mcp.server import _resolve_banner_png
+
+        raw = b"\x89PNG\r\n\x1a\n" + b"\x00" * 50
+        b64 = base64.b64encode(raw).decode()
+        result = _resolve_banner_png(b64)
+        assert result == raw
+
+    def test_svg_converted_to_png(self):
+        import sys
+        from excalibur_mcp.server import _resolve_banner_png
+
+        svg = '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="red"/></svg>'
+        mock_png = b"\x89PNG_FAKE"
+        mock_cairo = MagicMock()
+        mock_cairo.svg2png.return_value = mock_png
+
+        with patch.dict(sys.modules, {"cairosvg": mock_cairo}):
+            result = _resolve_banner_png(svg)
+
+        assert result == mock_png
+        mock_cairo.svg2png.assert_called_once()
+
+    def test_svg_with_xml_preamble(self):
+        import sys
+        from excalibur_mcp.server import _resolve_banner_png
+
+        svg = '<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>'
+        mock_png = b"\x89PNG_FAKE"
+        mock_cairo = MagicMock()
+        mock_cairo.svg2png.return_value = mock_png
+
+        with patch.dict(sys.modules, {"cairosvg": mock_cairo}):
+            result = _resolve_banner_png(svg)
+
+        assert result == mock_png
+
+    def test_svg_without_cairosvg_raises(self):
+        import sys
+        from excalibur_mcp.server import _resolve_banner_png
+
+        svg = '<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>'
+
+        # Remove cairosvg from modules cache so the import fails
+        saved = sys.modules.pop("cairosvg", None)
+        try:
+            with patch.dict(sys.modules, {}, clear=False):
+                # Ensure import raises
+                if "cairosvg" in sys.modules:
+                    del sys.modules["cairosvg"]
+                original_import = __builtins__.__import__ if hasattr(__builtins__, '__import__') else __import__
+
+                def fake_import(name, *args, **kwargs):
+                    if name == "cairosvg":
+                        raise ImportError("no cairosvg")
+                    return original_import(name, *args, **kwargs)
+
+                with patch("builtins.__import__", side_effect=fake_import):
+                    with pytest.raises(RuntimeError, match="cairosvg"):
+                        _resolve_banner_png(svg)
+        finally:
+            if saved is not None:
+                sys.modules["cairosvg"] = saved
+
+    def test_invalid_base64_raises(self):
+        from excalibur_mcp.server import _resolve_banner_png
+
+        with pytest.raises(RuntimeError, match="base64-encoded PNG"):
+            _resolve_banner_png("not-valid-b64-!!!")
+
+
+# ---------------------------------------------------------------------------
+# post_tweet with banner_svg_or_png
+# ---------------------------------------------------------------------------
+
+
+class TestPostTweetBanner:
+    @pytest.mark.asyncio
+    async def test_banner_appends_url_to_text(self, monkeypatch):
+        """Banner PNG is uploaded to postimg and URL appended to tweet text."""
+        from excalibur_mcp.server import post_tweet
+
+        monkeypatch.setenv("X_API_KEY", "k")
+        monkeypatch.setenv("X_API_SECRET", "s")
+        monkeypatch.setenv("X_ACCESS_TOKEN", "t")
+        monkeypatch.setenv("X_ACCESS_TOKEN_SECRET", "ts")
+
+        mock_cache = MagicMock()
+        mock_cache.debit = AsyncMock(return_value=True)
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 201
+        mock_resp.json.return_value = {"data": {"id": "1001", "text": "hello"}}
+
+        banner_png = base64.b64encode(b"\x89PNG\r\n" + b"\x00" * 50).decode()
+        banner_url = "https://i.postimg.cc/abc/banner.png"
+
+        with _mock_user_id(None), \
+             patch("excalibur_mcp.server._get_ledger_cache", return_value=mock_cache), \
+             patch("excalibur_mcp.x_client.upload_to_postimg", new_callable=AsyncMock,
+                   return_value=banner_url) as mock_upload, \
+             patch("excalibur_mcp.x_client.httpx.AsyncClient") as MockClient:
+            mock_instance = AsyncMock()
+            mock_instance.post.return_value = mock_resp
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = mock_instance
+
+            result = await post_tweet("hello", banner_svg_or_png=banner_png)
+
+        assert result["tweet_id"] == "1001"
+        assert result["banner_url"] == banner_url
+        # The text posted to X should contain the banner URL
+        call_kwargs = mock_instance.post.call_args.kwargs
+        assert banner_url in call_kwargs["json"]["text"]
+        mock_upload.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_banner_upload_failure_rolls_back(self, monkeypatch):
+        """If postimg upload fails, credits are rolled back."""
+        from excalibur_mcp.server import post_tweet
+
+        monkeypatch.setenv("X_API_KEY", "k")
+        monkeypatch.setenv("X_API_SECRET", "s")
+        monkeypatch.setenv("X_ACCESS_TOKEN", "t")
+        monkeypatch.setenv("X_ACCESS_TOKEN_SECRET", "ts")
+
+        mock_ledger = MagicMock()
+        mock_cache = MagicMock()
+        mock_cache.debit = AsyncMock(return_value=True)
+        mock_cache.get = AsyncMock(return_value=mock_ledger)
+
+        banner_png = base64.b64encode(b"\x89PNG\r\n").decode()
+
+        from excalibur_mcp.x_client import PostImgUploadError
+
+        with _mock_user_id(None), \
+             patch("excalibur_mcp.server._get_ledger_cache", return_value=mock_cache), \
+             patch("excalibur_mcp.x_client.upload_to_postimg", new_callable=AsyncMock,
+                   side_effect=PostImgUploadError("service down")):
+            result = await post_tweet("fail", banner_svg_or_png=banner_png)
+
+        assert "error" in result
+        assert "Banner upload failed" in result["error"]
+        mock_ledger.rollback_debit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_banner_and_image_url_together(self, monkeypatch):
+        """Both banner and image_url can be used simultaneously."""
+        from excalibur_mcp.server import post_tweet
+
+        monkeypatch.setenv("X_API_KEY", "k")
+        monkeypatch.setenv("X_API_SECRET", "s")
+        monkeypatch.setenv("X_ACCESS_TOKEN", "t")
+        monkeypatch.setenv("X_ACCESS_TOKEN_SECRET", "ts")
+
+        mock_cache = MagicMock()
+        mock_cache.debit = AsyncMock(return_value=True)
+
+        # Mock image download + media upload + tweet post
+        mock_dl_resp = MagicMock()
+        mock_dl_resp.status_code = 200
+        mock_dl_resp.headers = {"content-type": "image/jpeg"}
+        mock_dl_resp.content = b"\xff\xd8\x00"
+
+        mock_up_resp = MagicMock()
+        mock_up_resp.status_code = 200
+        mock_up_resp.json.return_value = {"media_id_string": "m1"}
+        mock_up_resp.text = '{"media_id_string": "m1"}'
+
+        mock_tweet_resp = MagicMock()
+        mock_tweet_resp.status_code = 201
+        mock_tweet_resp.json.return_value = {"data": {"id": "2002", "text": "both"}}
+
+        call_count = {"n": 0}
+
+        async def mock_post(*args, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return mock_up_resp
+            return mock_tweet_resp
+
+        banner_png = base64.b64encode(b"\x89PNG\r\n").decode()
+        banner_url = "https://i.postimg.cc/xyz/banner.png"
+
+        with _mock_user_id(None), \
+             patch("excalibur_mcp.server._get_ledger_cache", return_value=mock_cache), \
+             patch("excalibur_mcp.x_client.upload_to_postimg", new_callable=AsyncMock,
+                   return_value=banner_url), \
+             patch("excalibur_mcp.x_client.httpx.AsyncClient") as MockClient:
+            mock_instance = AsyncMock()
+            mock_instance.get = AsyncMock(return_value=mock_dl_resp)
+            mock_instance.post = mock_post
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = mock_instance
+
+            result = await post_tweet(
+                "both",
+                image_url="https://example.com/img.jpg",
+                banner_svg_or_png=banner_png,
+            )
+
+        assert result["tweet_id"] == "2002"
+        assert result["banner_url"] == banner_url
+        assert result["media_id"] == "m1"
+        # Cost key should be post_tweet_image (higher tier)
+        mock_cache.debit.assert_called_once_with("stdio:0", "post_tweet_image", ToolTier.HEAVY)
