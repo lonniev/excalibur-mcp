@@ -2,7 +2,7 @@ name: excalibur
 version: 0.1.0
 description: Sword-swift posting of pretty tweets to X
 
-install: pip install -e . && python -m playwright install chromium
+install: pip install -e .
 command: python -m excalibur_mcp.server
 
 environment:
