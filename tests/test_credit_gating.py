@@ -402,45 +402,69 @@ class TestSettings:
 
 
 # ---------------------------------------------------------------------------
-# _svg_to_png
+# _html_to_png
 # ---------------------------------------------------------------------------
 
 
+_TEST_HTML = '<html><body style="width:100px;height:100px;background:red"></body></html>'
 _TEST_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="red"/></svg>'
-_TEST_SVG_XML = '<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="blue"/></svg>'
 
 
-class TestSvgToPng:
-    def test_svg_converted_to_png(self):
-        from excalibur_mcp.server import _svg_to_png
+class TestHtmlToPng:
+    @pytest.mark.asyncio
+    async def test_html_rendered_to_png(self):
+        from excalibur_mcp.server import _html_to_png
 
-        # cairosvg is now a required dep — just call it
-        result = _svg_to_png(_TEST_SVG)
-        # Result should be valid PNG (starts with PNG magic bytes)
-        assert result[:4] == b"\x89PNG"
+        mock_png = b"\x89PNG_FAKE"
 
-    def test_svg_with_xml_preamble(self):
-        from excalibur_mcp.server import _svg_to_png
+        with patch("playwright.async_api.async_playwright") as mock_pw:
+            mock_page = AsyncMock()
+            mock_page.screenshot = AsyncMock(return_value=mock_png)
+            mock_browser = AsyncMock()
+            mock_browser.new_page = AsyncMock(return_value=mock_page)
+            mock_browser.close = AsyncMock()
+            mock_pw_instance = AsyncMock()
+            mock_pw_instance.chromium.launch = AsyncMock(return_value=mock_browser)
+            mock_pw.return_value.__aenter__ = AsyncMock(return_value=mock_pw_instance)
+            mock_pw.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        result = _svg_to_png(_TEST_SVG_XML)
-        assert result[:4] == b"\x89PNG"
+            result = await _html_to_png(_TEST_HTML)
 
-    def test_non_svg_input_raises(self):
-        from excalibur_mcp.server import _svg_to_png
+        assert result == mock_png
+        mock_page.set_content.assert_called_once_with(_TEST_HTML, wait_until="networkidle")
+        mock_page.screenshot.assert_called_once_with(full_page=False)
 
-        with pytest.raises(RuntimeError, match="banner_svg must be SVG markup"):
-            _svg_to_png("this is not SVG")
+    @pytest.mark.asyncio
+    async def test_svg_rendered_to_png(self):
+        from excalibur_mcp.server import _html_to_png
+
+        mock_png = b"\x89PNG_SVG"
+
+        with patch("playwright.async_api.async_playwright") as mock_pw:
+            mock_page = AsyncMock()
+            mock_page.screenshot = AsyncMock(return_value=mock_png)
+            mock_browser = AsyncMock()
+            mock_browser.new_page = AsyncMock(return_value=mock_page)
+            mock_browser.close = AsyncMock()
+            mock_pw_instance = AsyncMock()
+            mock_pw_instance.chromium.launch = AsyncMock(return_value=mock_browser)
+            mock_pw.return_value.__aenter__ = AsyncMock(return_value=mock_pw_instance)
+            mock_pw.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            result = await _html_to_png(_TEST_SVG)
+
+        assert result == mock_png
 
 
 # ---------------------------------------------------------------------------
-# post_tweet with banner_svg
+# post_tweet with banner_html
 # ---------------------------------------------------------------------------
 
 
 class TestPostTweetBanner:
     @pytest.mark.asyncio
     async def test_banner_appends_url_to_text(self, monkeypatch):
-        """Banner SVG is converted to PNG, uploaded to postimg, URL appended to tweet text."""
+        """Banner HTML is rendered to PNG, uploaded to postimg, URL appended to tweet text."""
         from excalibur_mcp.server import post_tweet
 
         monkeypatch.setenv("X_API_KEY", "k")
@@ -459,6 +483,8 @@ class TestPostTweetBanner:
 
         with _mock_user_id(None), \
              patch("excalibur_mcp.server._get_ledger_cache", return_value=mock_cache), \
+             patch("excalibur_mcp.server._html_to_png", new_callable=AsyncMock,
+                   return_value=b"\x89PNG_FAKE") as mock_render, \
              patch("excalibur_mcp.x_client.upload_to_postimg", new_callable=AsyncMock,
                    return_value=banner_url) as mock_upload, \
              patch("excalibur_mcp.x_client.httpx.AsyncClient") as MockClient:
@@ -468,13 +494,13 @@ class TestPostTweetBanner:
             mock_instance.__aexit__ = AsyncMock(return_value=False)
             MockClient.return_value = mock_instance
 
-            result = await post_tweet("hello", banner_svg=_TEST_SVG)
+            result = await post_tweet("hello", banner_html=_TEST_HTML)
 
         assert result["tweet_id"] == "1001"
         assert result["banner_url"] == banner_url
-        # The text posted to X should contain the banner URL
         call_kwargs = mock_instance.post.call_args.kwargs
         assert banner_url in call_kwargs["json"]["text"]
+        mock_render.assert_called_once_with(_TEST_HTML)
         mock_upload.assert_called_once()
 
     @pytest.mark.asyncio
@@ -496,9 +522,11 @@ class TestPostTweetBanner:
 
         with _mock_user_id(None), \
              patch("excalibur_mcp.server._get_ledger_cache", return_value=mock_cache), \
+             patch("excalibur_mcp.server._html_to_png", new_callable=AsyncMock,
+                   return_value=b"\x89PNG_FAKE"), \
              patch("excalibur_mcp.x_client.upload_to_postimg", new_callable=AsyncMock,
                    side_effect=PostImgUploadError("service down")):
-            result = await post_tweet("fail", banner_svg=_TEST_SVG)
+            result = await post_tweet("fail", banner_html=_TEST_HTML)
 
         assert "error" in result
         assert "Banner upload failed" in result["error"]
@@ -544,6 +572,8 @@ class TestPostTweetBanner:
 
         with _mock_user_id(None), \
              patch("excalibur_mcp.server._get_ledger_cache", return_value=mock_cache), \
+             patch("excalibur_mcp.server._html_to_png", new_callable=AsyncMock,
+                   return_value=b"\x89PNG_FAKE"), \
              patch("excalibur_mcp.x_client.upload_to_postimg", new_callable=AsyncMock,
                    return_value=banner_url), \
              patch("excalibur_mcp.x_client.httpx.AsyncClient") as MockClient:
@@ -557,7 +587,7 @@ class TestPostTweetBanner:
             result = await post_tweet(
                 "both",
                 image_url="https://example.com/img.jpg",
-                banner_svg=_TEST_SVG,
+                banner_html=_TEST_HTML,
             )
 
         assert result["tweet_id"] == "2002"

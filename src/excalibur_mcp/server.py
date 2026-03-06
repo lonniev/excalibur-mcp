@@ -560,20 +560,20 @@ def _get_btcpay():
 # ---------------------------------------------------------------------------
 
 
-def _svg_to_png(svg_markup: str) -> bytes:
-    """Convert SVG markup to PNG bytes via cairosvg.
+async def _html_to_png(html: str, width: int = 1200, height: int = 630) -> bytes:
+    """Render HTML/SVG to PNG bytes via Playwright's bundled Chromium.
 
-    Raises:
-        RuntimeError: If the input doesn't look like SVG markup.
+    No OS-level dependencies required — Playwright ships its own browser.
     """
-    import cairosvg  # type: ignore[import-untyped]
+    from playwright.async_api import async_playwright
 
-    stripped = svg_markup.strip()
-    if not (stripped.startswith("<svg") or stripped.startswith("<?xml")):
-        raise RuntimeError(
-            "banner_svg must be SVG markup (starting with <svg or <?xml)"
-        )
-    return cairosvg.svg2png(bytestring=stripped.encode("utf-8"))
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        page = await browser.new_page(viewport={"width": width, "height": height})
+        await page.set_content(html, wait_until="networkidle")
+        png_bytes = await page.screenshot(full_page=False)
+        await browser.close()
+    return png_bytes
 
 
 def _get_x_credentials():
@@ -1444,7 +1444,7 @@ async def account_statement_infographic(days: int = 30) -> dict[str, Any]:
 async def post_tweet(
     text: str,
     image_url: str | None = None,
-    banner_svg: str | None = None,
+    banner_html: str | None = None,
 ) -> dict:
     """Post a tweet with markdown formatting converted to Unicode rich text.
 
@@ -1474,10 +1474,11 @@ async def post_tweet(
         image_url: Optional URL of an image to attach to the tweet as a
                    native Twitter media attachment.
                    Supported formats: JPEG, PNG, GIF, WebP. Max 5 MB.
-        banner_svg: Optional SVG markup (must start with ``<svg`` or
-                   ``<?xml``). Converted to PNG via cairosvg, uploaded to
-                   postimg.cc, and the resulting URL is appended to the
-                   tweet text so it renders as a link card.
+        banner_html: Optional HTML or SVG markup to render as a banner
+                   image. Rendered to PNG via Playwright (bundled Chromium),
+                   uploaded to postimg.cc, and the resulting URL is appended
+                   to the tweet text so it renders as a link card.
+                   Supports full HTML with CSS, web fonts, SVG, etc.
                    Can be used together with image_url.
 
     Returns:
@@ -1485,7 +1486,7 @@ async def post_tweet(
         tweet_url: Direct link to the tweet on X.
         text_posted: The Unicode-converted text that was actually sent.
         media_id: The uploaded media ID (only when image_url provided).
-        banner_url: The postimg.cc URL (only when banner_svg provided).
+        banner_url: The postimg.cc URL (only when banner_html provided).
     """
     cost_key = "post_tweet_image" if image_url else "post_tweet"
 
@@ -1499,14 +1500,14 @@ async def post_tweet(
 
     converted = markdown_to_unicode(text)
 
-    # --- Banner processing: SVG → PNG → postimg.cc URL appended to text ---
+    # --- Banner processing: HTML/SVG → PNG → postimg.cc URL appended to text ---
     banner_url = None
-    if banner_svg:
+    if banner_html:
         try:
-            png_bytes = _svg_to_png(banner_svg)
-        except RuntimeError as exc:
+            png_bytes = await _html_to_png(banner_html)
+        except Exception as exc:
             await _rollback_debit(cost_key)
-            return {"error": str(exc)}
+            return {"error": f"Banner render failed: {exc}"}
 
         try:
             banner_url = await upload_to_postimg(png_bytes)
