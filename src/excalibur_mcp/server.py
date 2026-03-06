@@ -560,35 +560,20 @@ def _get_btcpay():
 # ---------------------------------------------------------------------------
 
 
-def _resolve_banner_png(banner_svg_or_png: str) -> bytes:
-    """Convert banner input (SVG markup or base64 PNG) to raw PNG bytes.
+def _svg_to_png(svg_markup: str) -> bytes:
+    """Convert SVG markup to PNG bytes via cairosvg.
 
     Raises:
-        RuntimeError: If SVG is provided but cairosvg is not installed,
-            or if the input is not recognizable.
+        RuntimeError: If the input doesn't look like SVG markup.
     """
-    import base64 as b64
+    import cairosvg  # type: ignore[import-untyped]
 
-    stripped = banner_svg_or_png.strip()
-
-    # Detect SVG by leading markup
-    if stripped.startswith("<svg") or stripped.startswith("<?xml"):
-        try:
-            import cairosvg  # type: ignore[import-untyped]
-        except ImportError:
-            raise RuntimeError(
-                "SVG banner requires cairosvg. "
-                "Install with: pip install excalibur-mcp[png]"
-            )
-        return cairosvg.svg2png(bytestring=stripped.encode("utf-8"))
-
-    # Otherwise treat as base64-encoded PNG
-    try:
-        return b64.b64decode(stripped)
-    except Exception as exc:
+    stripped = svg_markup.strip()
+    if not (stripped.startswith("<svg") or stripped.startswith("<?xml")):
         raise RuntimeError(
-            f"banner_svg_or_png must be SVG markup (<svg…) or base64-encoded PNG: {exc}"
+            "banner_svg must be SVG markup (starting with <svg or <?xml)"
         )
+    return cairosvg.svg2png(bytestring=stripped.encode("utf-8"))
 
 
 def _get_x_credentials():
@@ -1459,7 +1444,7 @@ async def account_statement_infographic(days: int = 30) -> dict[str, Any]:
 async def post_tweet(
     text: str,
     image_url: str | None = None,
-    banner_svg_or_png: str | None = None,
+    banner_svg: str | None = None,
 ) -> dict:
     """Post a tweet with markdown formatting converted to Unicode rich text.
 
@@ -1489,18 +1474,18 @@ async def post_tweet(
         image_url: Optional URL of an image to attach to the tweet as a
                    native Twitter media attachment.
                    Supported formats: JPEG, PNG, GIF, WebP. Max 5 MB.
-        banner_svg_or_png: Optional raw SVG markup (starts with ``<svg`` or
-                   ``<?xml``) or base64-encoded PNG bytes. The image is
-                   converted to PNG (if SVG), uploaded to postimg.cc, and the
-                   resulting URL is appended to the tweet text so it renders
-                   as a link card. Can be used together with image_url.
+        banner_svg: Optional SVG markup (must start with ``<svg`` or
+                   ``<?xml``). Converted to PNG via cairosvg, uploaded to
+                   postimg.cc, and the resulting URL is appended to the
+                   tweet text so it renders as a link card.
+                   Can be used together with image_url.
 
     Returns:
         tweet_id: The posted tweet's ID.
         tweet_url: Direct link to the tweet on X.
         text_posted: The Unicode-converted text that was actually sent.
         media_id: The uploaded media ID (only when image_url provided).
-        banner_url: The postimg.cc URL (only when banner_svg_or_png provided).
+        banner_url: The postimg.cc URL (only when banner_svg provided).
     """
     cost_key = "post_tweet_image" if image_url else "post_tweet"
 
@@ -1514,11 +1499,11 @@ async def post_tweet(
 
     converted = markdown_to_unicode(text)
 
-    # --- Banner processing: SVG/PNG → postimg.cc URL appended to text ---
+    # --- Banner processing: SVG → PNG → postimg.cc URL appended to text ---
     banner_url = None
-    if banner_svg_or_png:
+    if banner_svg:
         try:
-            png_bytes = _resolve_banner_png(banner_svg_or_png)
+            png_bytes = _svg_to_png(banner_svg)
         except RuntimeError as exc:
             await _rollback_debit(cost_key)
             return {"error": str(exc)}

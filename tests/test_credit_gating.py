@@ -1,6 +1,5 @@
 """Tests for Tollbooth credit gating on post_tweet."""
 
-import base64
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -403,91 +402,45 @@ class TestSettings:
 
 
 # ---------------------------------------------------------------------------
-# _resolve_banner_png
+# _svg_to_png
 # ---------------------------------------------------------------------------
 
 
-class TestResolveBannerPng:
-    def test_base64_png_decoded(self):
-        from excalibur_mcp.server import _resolve_banner_png
+_TEST_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="red"/></svg>'
+_TEST_SVG_XML = '<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="blue"/></svg>'
 
-        raw = b"\x89PNG\r\n\x1a\n" + b"\x00" * 50
-        b64 = base64.b64encode(raw).decode()
-        result = _resolve_banner_png(b64)
-        assert result == raw
 
+class TestSvgToPng:
     def test_svg_converted_to_png(self):
-        import sys
-        from excalibur_mcp.server import _resolve_banner_png
+        from excalibur_mcp.server import _svg_to_png
 
-        svg = '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="red"/></svg>'
-        mock_png = b"\x89PNG_FAKE"
-        mock_cairo = MagicMock()
-        mock_cairo.svg2png.return_value = mock_png
-
-        with patch.dict(sys.modules, {"cairosvg": mock_cairo}):
-            result = _resolve_banner_png(svg)
-
-        assert result == mock_png
-        mock_cairo.svg2png.assert_called_once()
+        # cairosvg is now a required dep — just call it
+        result = _svg_to_png(_TEST_SVG)
+        # Result should be valid PNG (starts with PNG magic bytes)
+        assert result[:4] == b"\x89PNG"
 
     def test_svg_with_xml_preamble(self):
-        import sys
-        from excalibur_mcp.server import _resolve_banner_png
+        from excalibur_mcp.server import _svg_to_png
 
-        svg = '<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>'
-        mock_png = b"\x89PNG_FAKE"
-        mock_cairo = MagicMock()
-        mock_cairo.svg2png.return_value = mock_png
+        result = _svg_to_png(_TEST_SVG_XML)
+        assert result[:4] == b"\x89PNG"
 
-        with patch.dict(sys.modules, {"cairosvg": mock_cairo}):
-            result = _resolve_banner_png(svg)
+    def test_non_svg_input_raises(self):
+        from excalibur_mcp.server import _svg_to_png
 
-        assert result == mock_png
-
-    def test_svg_without_cairosvg_raises(self):
-        import sys
-        from excalibur_mcp.server import _resolve_banner_png
-
-        svg = '<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>'
-
-        # Remove cairosvg from modules cache so the import fails
-        saved = sys.modules.pop("cairosvg", None)
-        try:
-            with patch.dict(sys.modules, {}, clear=False):
-                # Ensure import raises
-                if "cairosvg" in sys.modules:
-                    del sys.modules["cairosvg"]
-                original_import = __builtins__.__import__ if hasattr(__builtins__, '__import__') else __import__
-
-                def fake_import(name, *args, **kwargs):
-                    if name == "cairosvg":
-                        raise ImportError("no cairosvg")
-                    return original_import(name, *args, **kwargs)
-
-                with patch("builtins.__import__", side_effect=fake_import):
-                    with pytest.raises(RuntimeError, match="cairosvg"):
-                        _resolve_banner_png(svg)
-        finally:
-            if saved is not None:
-                sys.modules["cairosvg"] = saved
-
-    def test_invalid_base64_raises(self):
-        from excalibur_mcp.server import _resolve_banner_png
-
-        with pytest.raises(RuntimeError, match="base64-encoded PNG"):
-            _resolve_banner_png("not-valid-b64-!!!")
+        with pytest.raises(RuntimeError, match="banner_svg must be SVG markup"):
+            _svg_to_png("this is not SVG")
 
 
 # ---------------------------------------------------------------------------
-# post_tweet with banner_svg_or_png
+# post_tweet with banner_svg
 # ---------------------------------------------------------------------------
 
 
 class TestPostTweetBanner:
     @pytest.mark.asyncio
     async def test_banner_appends_url_to_text(self, monkeypatch):
-        """Banner PNG is uploaded to postimg and URL appended to tweet text."""
+        """Banner SVG is converted to PNG, uploaded to postimg, URL appended to tweet text."""
         from excalibur_mcp.server import post_tweet
 
         monkeypatch.setenv("X_API_KEY", "k")
@@ -502,7 +455,6 @@ class TestPostTweetBanner:
         mock_resp.status_code = 201
         mock_resp.json.return_value = {"data": {"id": "1001", "text": "hello"}}
 
-        banner_png = base64.b64encode(b"\x89PNG\r\n" + b"\x00" * 50).decode()
         banner_url = "https://i.postimg.cc/abc/banner.png"
 
         with _mock_user_id(None), \
@@ -516,7 +468,7 @@ class TestPostTweetBanner:
             mock_instance.__aexit__ = AsyncMock(return_value=False)
             MockClient.return_value = mock_instance
 
-            result = await post_tweet("hello", banner_svg_or_png=banner_png)
+            result = await post_tweet("hello", banner_svg=_TEST_SVG)
 
         assert result["tweet_id"] == "1001"
         assert result["banner_url"] == banner_url
@@ -540,15 +492,13 @@ class TestPostTweetBanner:
         mock_cache.debit = AsyncMock(return_value=True)
         mock_cache.get = AsyncMock(return_value=mock_ledger)
 
-        banner_png = base64.b64encode(b"\x89PNG\r\n").decode()
-
         from excalibur_mcp.x_client import PostImgUploadError
 
         with _mock_user_id(None), \
              patch("excalibur_mcp.server._get_ledger_cache", return_value=mock_cache), \
              patch("excalibur_mcp.x_client.upload_to_postimg", new_callable=AsyncMock,
                    side_effect=PostImgUploadError("service down")):
-            result = await post_tweet("fail", banner_svg_or_png=banner_png)
+            result = await post_tweet("fail", banner_svg=_TEST_SVG)
 
         assert "error" in result
         assert "Banner upload failed" in result["error"]
@@ -590,7 +540,6 @@ class TestPostTweetBanner:
                 return mock_up_resp
             return mock_tweet_resp
 
-        banner_png = base64.b64encode(b"\x89PNG\r\n").decode()
         banner_url = "https://i.postimg.cc/xyz/banner.png"
 
         with _mock_user_id(None), \
@@ -608,7 +557,7 @@ class TestPostTweetBanner:
             result = await post_tweet(
                 "both",
                 image_url="https://example.com/img.jpg",
-                banner_svg_or_png=banner_png,
+                banner_svg=_TEST_SVG,
             )
 
         assert result["tweet_id"] == "2002"
