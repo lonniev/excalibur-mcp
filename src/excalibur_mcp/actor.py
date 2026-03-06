@@ -190,6 +190,34 @@ class ExcaliburOperator:
 
         return await service_status()
 
+    # ── Secure Courier (hot-path) ─────────────────────────────────
+
+    async def session_status(self) -> dict[str, Any]:
+        from excalibur_mcp.server import session_status
+
+        return await session_status()
+
+    async def request_credential_channel(
+        self, service: str, greeting: str, recipient_npub: str | None,
+    ) -> dict[str, Any]:
+        from excalibur_mcp.server import request_credential_channel
+
+        return await request_credential_channel(service, recipient_npub)
+
+    async def receive_credentials(
+        self, sender_npub: str, service: str, credential_card: str,
+    ) -> dict[str, Any]:
+        from excalibur_mcp.server import receive_credentials
+
+        return await receive_credentials(sender_npub, service)
+
+    async def forget_credentials(
+        self, sender_npub: str, service: str,
+    ) -> dict[str, Any]:
+        from excalibur_mcp.server import forget_credentials
+
+        return await forget_credentials(sender_npub, service)
+
     # ── Delegation stubs (BTCPay via Authority) ──────────────────
     # DELEGATION_STUB
 

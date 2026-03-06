@@ -26,6 +26,22 @@ def _clean_state():
     srv._courier_service = None
 
 
+@pytest.fixture(autouse=True)
+def _mock_commerce_vault():
+    """Mock commerce vault to avoid NEON_DATABASE_URL requirement."""
+    mock_vault = MagicMock()
+    mock_vault._execute = AsyncMock(return_value={"rowCount": 0, "rows": []})
+    with patch("excalibur_mcp.server._get_commerce_vault", return_value=mock_vault):
+        yield mock_vault
+
+
+@pytest.fixture(autouse=True)
+def _fast_relays():
+    """Skip real relay probing in tests."""
+    with patch("excalibur_mcp.server._resolve_relays", return_value=["wss://test.relay"]):
+        yield
+
+
 @pytest.fixture
 def vault_dir(tmp_path):
     """Set up a temporary vault directory."""
