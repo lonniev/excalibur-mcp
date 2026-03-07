@@ -819,9 +819,6 @@ async def service_status() -> dict[str, Any]:
         btcpay_tier_config=settings.btcpay_tier_config,
         btcpay_user_tiers=settings.btcpay_user_tiers,
         seed_balance_sats=settings.seed_balance_sats,
-        tollbooth_royalty_address=settings.tollbooth_royalty_address,
-        tollbooth_royalty_percent=settings.tollbooth_royalty_percent,
-        tollbooth_royalty_min_sats=settings.tollbooth_royalty_min_sats,
         authority_npub=authority_npub,
         credit_ttl_seconds=settings.credit_ttl_seconds,
     )
@@ -1221,8 +1218,8 @@ async def purchase_credits(amount_sats: int) -> dict[str, Any]:
 
     Args:
         amount_sats: Number of satoshis to purchase (minimum 1, maximum 1,000,000).
-            The Authority's certification fee is deducted automatically; the
-            invoice will be for the net amount (purchase minus tax).
+            The Authority's certification fee is absorbed by the operator as a
+            cost of doing business. The invoice is for the full amount you requested.
     """
     from tollbooth.tools import credits
 
@@ -1285,9 +1282,6 @@ async def check_payment(invoice_id: str) -> dict[str, Any]:
         tier_config_json=settings.btcpay_tier_config,
         user_tiers_json=settings.btcpay_user_tiers,
         default_credit_ttl_seconds=settings.credit_ttl_seconds,
-        royalty_address=settings.tollbooth_royalty_address,
-        royalty_percent=settings.tollbooth_royalty_percent,
-        royalty_min_sats=settings.tollbooth_royalty_min_sats,
     )
 
 
