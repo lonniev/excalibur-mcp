@@ -56,7 +56,7 @@ async def upload_to_postimg(png_bytes: bytes, filename: str = "banner.png") -> s
     Raises:
         PostImgUploadError: If the upload fails.
     """
-    async with httpx.AsyncClient(timeout=POSTIMG_UPLOAD_TIMEOUT_SECONDS) as client:
+    async with httpx.AsyncClient(timeout=POSTIMG_UPLOAD_TIMEOUT_SECONDS, follow_redirects=True) as client:
         try:
             response = await client.post(
                 POSTIMG_UPLOAD_URL,
