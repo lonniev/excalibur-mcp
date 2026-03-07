@@ -31,7 +31,7 @@ MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB (X limit for images)
 IMAGE_DOWNLOAD_TIMEOUT_SECONDS = 30
 
 
-POSTIMG_UPLOAD_URL = "https://postimg.cc/json"
+POSTIMG_UPLOAD_URL = "https://api.postimages.org/"
 POSTIMG_UPLOAD_TIMEOUT_SECONDS = 30
 
 
