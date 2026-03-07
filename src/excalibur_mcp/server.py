@@ -1472,21 +1472,19 @@ async def post_tweet(
                    native Twitter media attachment.
                    Supported formats: JPEG, PNG, GIF, WebP. Max 5 MB.
         banner_svg: Optional self-contained SVG markup string. Converted
-                   to PNG via svglib+reportlab (pure Python, no OS deps),
-                   uploaded to postimg.cc, and the resulting URL is appended
-                   to the tweet text so it renders as a link card.
-                   SVG must use inlined styles — no CSS variables, no
-                   external fonts, no foreignObject.
-                   Can be used together with image_url.
+                   to PNG via PyMuPDF and attached as a native Twitter
+                   media image. SVG must use inlined styles — no CSS
+                   variables, no external fonts, no foreignObject.
+                   Mutually exclusive with image_url (Twitter allows
+                   only one media attachment per tweet).
 
     Returns:
         tweet_id: The posted tweet's ID.
         tweet_url: Direct link to the tweet on X.
         text_posted: The Unicode-converted text that was actually sent.
-        media_id: The uploaded media ID (only when image_url provided).
-        banner_url: The postimg.cc URL (only when banner_svg provided).
+        media_id: The uploaded media ID (when image_url or banner_svg provided).
     """
-    cost_key = "post_tweet_image" if image_url else "post_tweet"
+    cost_key = "post_tweet_image" if (image_url or banner_svg) else "post_tweet"
 
     # Credit gating
     gate = await _debit_or_error(cost_key)
@@ -1494,26 +1492,18 @@ async def post_tweet(
         return gate
 
     from excalibur_mcp.formatter import markdown_to_unicode
-    from excalibur_mcp.x_client import PostImgUploadError, XAPIError, XClient, upload_to_postimg
+    from excalibur_mcp.x_client import XAPIError, XClient
 
     converted = markdown_to_unicode(text)
 
-    # --- Banner processing: SVG → PNG → postimg.cc URL appended to text ---
-    banner_url = None
+    # --- Banner processing: SVG → PNG → Twitter media attachment ---
+    banner_png: bytes | None = None
     if banner_svg:
         try:
-            png_bytes = _svg_to_png(banner_svg)
+            banner_png = _svg_to_png(banner_svg)
         except Exception as exc:
             await _rollback_debit(cost_key)
             return {"error": f"Banner render failed: {exc}"}
-
-        try:
-            banner_url = await upload_to_postimg(png_bytes)
-        except PostImgUploadError as exc:
-            await _rollback_debit(cost_key)
-            return {"error": f"Banner upload failed: {exc.detail}"}
-
-        converted = f"{converted}\n{banner_url}"
 
     try:
         creds = _get_x_credentials()
@@ -1530,6 +1520,9 @@ async def post_tweet(
     try:
         if image_url:
             result = await client.post_tweet_with_image(converted, image_url)
+        elif banner_png:
+            media_id = await client.upload_media(banner_png, "image/png")
+            result = await client.post_tweet(converted, media_ids=[media_id])
         else:
             result = await client.post_tweet(converted)
     except XAPIError as exc:
@@ -1539,9 +1532,6 @@ async def post_tweet(
             "status_code": exc.status_code,
             "detail": exc.detail,
         }
-
-    if banner_url:
-        result["banner_url"] = banner_url
 
     return await _with_warning(result)
 

@@ -430,8 +430,8 @@ class TestSvgToPng:
 
 class TestPostTweetBanner:
     @pytest.mark.asyncio
-    async def test_banner_appends_url_to_text(self, monkeypatch):
-        """Banner SVG is rendered to PNG, uploaded to postimg, URL appended to tweet text."""
+    async def test_banner_uploads_as_twitter_media(self, monkeypatch):
+        """Banner SVG is rendered to PNG and attached as native Twitter media."""
         from excalibur_mcp.server import post_tweet
 
         monkeypatch.setenv("X_API_KEY", "k")
@@ -442,21 +442,31 @@ class TestPostTweetBanner:
         mock_cache = MagicMock()
         mock_cache.debit = AsyncMock(return_value=True)
 
-        mock_resp = MagicMock()
-        mock_resp.status_code = 201
-        mock_resp.json.return_value = {"data": {"id": "1001", "text": "hello"}}
+        # First call: media upload; second call: tweet post
+        mock_up_resp = MagicMock()
+        mock_up_resp.status_code = 200
+        mock_up_resp.json.return_value = {"media_id_string": "banner_m1"}
+        mock_up_resp.text = '{"media_id_string": "banner_m1"}'
 
-        banner_url = "https://i.postimg.cc/abc/banner.png"
+        mock_tweet_resp = MagicMock()
+        mock_tweet_resp.status_code = 201
+        mock_tweet_resp.json.return_value = {"data": {"id": "1001", "text": "hello"}}
+
+        call_count = {"n": 0}
+
+        async def mock_post(*args, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return mock_up_resp
+            return mock_tweet_resp
 
         with _mock_user_id(None), \
              patch("excalibur_mcp.server._get_ledger_cache", return_value=mock_cache), \
              patch("excalibur_mcp.server._svg_to_png",
                    return_value=b"\x89PNG_FAKE") as mock_render, \
-             patch("excalibur_mcp.x_client.upload_to_postimg", new_callable=AsyncMock,
-                   return_value=banner_url) as mock_upload, \
              patch("excalibur_mcp.x_client.httpx.AsyncClient") as MockClient:
             mock_instance = AsyncMock()
-            mock_instance.post.return_value = mock_resp
+            mock_instance.post = mock_post
             mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
             mock_instance.__aexit__ = AsyncMock(return_value=False)
             MockClient.return_value = mock_instance
@@ -464,15 +474,14 @@ class TestPostTweetBanner:
             result = await post_tweet("hello", banner_svg=_TEST_SVG)
 
         assert result["tweet_id"] == "1001"
-        assert result["banner_url"] == banner_url
-        call_kwargs = mock_instance.post.call_args.kwargs
-        assert banner_url in call_kwargs["json"]["text"]
         mock_render.assert_called_once_with(_TEST_SVG)
-        mock_upload.assert_called_once()
+        # Should have called post twice: media upload + tweet
+        assert call_count["n"] == 2
+        mock_cache.debit.assert_called_once_with("stdio:0", "post_tweet_image", ToolTier.HEAVY)
 
     @pytest.mark.asyncio
-    async def test_banner_upload_failure_rolls_back(self, monkeypatch):
-        """If postimg upload fails, credits are rolled back."""
+    async def test_banner_render_failure_rolls_back(self, monkeypatch):
+        """If SVG render fails, credits are rolled back."""
         from excalibur_mcp.server import post_tweet
 
         monkeypatch.setenv("X_API_KEY", "k")
@@ -485,23 +494,19 @@ class TestPostTweetBanner:
         mock_cache.debit = AsyncMock(return_value=True)
         mock_cache.get = AsyncMock(return_value=mock_ledger)
 
-        from excalibur_mcp.x_client import PostImgUploadError
-
         with _mock_user_id(None), \
              patch("excalibur_mcp.server._get_ledger_cache", return_value=mock_cache), \
              patch("excalibur_mcp.server._svg_to_png",
-                   return_value=b"\x89PNG_FAKE"), \
-             patch("excalibur_mcp.x_client.upload_to_postimg", new_callable=AsyncMock,
-                   side_effect=PostImgUploadError("service down")):
+                   side_effect=RuntimeError("bad svg")):
             result = await post_tweet("fail", banner_svg=_TEST_SVG)
 
         assert "error" in result
-        assert "Banner upload failed" in result["error"]
+        assert "Banner render failed" in result["error"]
         mock_ledger.rollback_debit.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_banner_and_image_url_together(self, monkeypatch):
-        """Both banner and image_url can be used simultaneously."""
+    async def test_banner_uses_image_cost_tier(self, monkeypatch):
+        """Banner SVG uses the post_tweet_image (HEAVY) cost tier."""
         from excalibur_mcp.server import post_tweet
 
         monkeypatch.setenv("X_API_KEY", "k")
@@ -512,12 +517,6 @@ class TestPostTweetBanner:
         mock_cache = MagicMock()
         mock_cache.debit = AsyncMock(return_value=True)
 
-        # Mock image download + media upload + tweet post
-        mock_dl_resp = MagicMock()
-        mock_dl_resp.status_code = 200
-        mock_dl_resp.headers = {"content-type": "image/jpeg"}
-        mock_dl_resp.content = b"\xff\xd8\x00"
-
         mock_up_resp = MagicMock()
         mock_up_resp.status_code = 200
         mock_up_resp.json.return_value = {"media_id_string": "m1"}
@@ -525,7 +524,7 @@ class TestPostTweetBanner:
 
         mock_tweet_resp = MagicMock()
         mock_tweet_resp.status_code = 201
-        mock_tweet_resp.json.return_value = {"data": {"id": "2002", "text": "both"}}
+        mock_tweet_resp.json.return_value = {"data": {"id": "3003", "text": "cost"}}
 
         call_count = {"n": 0}
 
@@ -535,29 +534,18 @@ class TestPostTweetBanner:
                 return mock_up_resp
             return mock_tweet_resp
 
-        banner_url = "https://i.postimg.cc/xyz/banner.png"
-
         with _mock_user_id(None), \
              patch("excalibur_mcp.server._get_ledger_cache", return_value=mock_cache), \
              patch("excalibur_mcp.server._svg_to_png",
                    return_value=b"\x89PNG_FAKE"), \
-             patch("excalibur_mcp.x_client.upload_to_postimg", new_callable=AsyncMock,
-                   return_value=banner_url), \
              patch("excalibur_mcp.x_client.httpx.AsyncClient") as MockClient:
             mock_instance = AsyncMock()
-            mock_instance.get = AsyncMock(return_value=mock_dl_resp)
             mock_instance.post = mock_post
             mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
             mock_instance.__aexit__ = AsyncMock(return_value=False)
             MockClient.return_value = mock_instance
 
-            result = await post_tweet(
-                "both",
-                image_url="https://example.com/img.jpg",
-                banner_svg=_TEST_SVG,
-            )
+            result = await post_tweet("cost", banner_svg=_TEST_SVG)
 
-        assert result["tweet_id"] == "2002"
-        assert result["banner_url"] == banner_url
-        assert result["media_id"] == "m1"
+        assert result["tweet_id"] == "3003"
         mock_cache.debit.assert_called_once_with("stdio:0", "post_tweet_image", ToolTier.HEAVY)
