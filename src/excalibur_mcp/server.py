@@ -1247,6 +1247,17 @@ async def purchase_credits(amount_sats: int) -> dict[str, Any]:
     except AuthorityCertifyError as e:
         return {"success": False, "error": f"Authority certification failed: {e}"}
 
+    # Fire-and-forget invoice DM — courier may not be available
+    invoice_dm_cb = None
+    try:
+        courier = _get_courier_service()
+        if courier is not None and courier.enabled:
+            async def _send_invoice_dm(msg: str) -> None:
+                courier.exchange.send_dm(user_id, msg)
+            invoice_dm_cb = _send_invoice_dm
+    except Exception:
+        pass  # courier unavailable — skip DM
+
     return await credits.purchase_credits_tool(
         btcpay, cache, user_id, amount_sats,
         certificate=cert_result["certificate"],
@@ -1254,6 +1265,7 @@ async def purchase_credits(amount_sats: int) -> dict[str, Any]:
         tier_config_json=settings.btcpay_tier_config,
         user_tiers_json=settings.btcpay_user_tiers,
         default_credit_ttl_seconds=settings.credit_ttl_seconds,
+        invoice_dm_callback=invoice_dm_cb,
     )
 
 
