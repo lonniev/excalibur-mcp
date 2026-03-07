@@ -25,11 +25,6 @@ class Settings(BaseSettings):
     # Credit seeding for new users (0 = disabled)
     seed_balance_sats: int = 0
 
-    # Tollbooth royalty (operator originator payout)
-    tollbooth_royalty_address: str | None = None
-    tollbooth_royalty_percent: float = 0.02
-    tollbooth_royalty_min_sats: int = 10
-
     # DPYC registry resolution (replaces dpyc_operator_npub / dpyc_authority_npub env vars)
     dpyc_registry_url: str = "https://raw.githubusercontent.com/lonniev/dpyc-community/main/members.json"
     dpyc_registry_cache_ttl_seconds: int = 300
