@@ -31,7 +31,7 @@ MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB (X limit for images)
 IMAGE_DOWNLOAD_TIMEOUT_SECONDS = 30
 
 
-POSTIMG_UPLOAD_URL = "https://api.postimages.org/"
+POSTIMG_UPLOAD_URL = "https://postimg.cc/json?q=a"
 POSTIMG_UPLOAD_TIMEOUT_SECONDS = 30
 
 
@@ -60,7 +60,13 @@ async def upload_to_postimg(png_bytes: bytes, filename: str = "banner.png") -> s
         try:
             response = await client.post(
                 POSTIMG_UPLOAD_URL,
-                data={"numfiles": "1", "optsize": "0"},
+                data={
+                    "token": "61aa06d6116f7331ad7b2ba9c7fb707ec9b182e8",
+                    "upload_session": os.urandom(16).hex(),
+                    "numfiles": "1",
+                    "optsize": "0",
+                    "upload_referer": "https://postimages.org/",
+                },
                 files={"file": (filename, png_bytes, "image/png")},
             )
         except httpx.HTTPError as exc:
