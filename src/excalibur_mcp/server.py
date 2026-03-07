@@ -563,30 +563,14 @@ def _get_btcpay():
 def _svg_to_png(svg_markup: str) -> bytes:
     """Convert SVG markup to PNG bytes via svglib + reportlab.
 
-    Pure Python — no OS-level dependencies (no libcairo, no Chromium).
+    Uses PyMuPDF (bundles MuPDF inside the wheel — no OS-level deps).
     """
-    import io
-    import os
-    import tempfile
+    import pymupdf
 
-    from reportlab.graphics import renderPM
-    from svglib.svglib import svg2rlg
-
-    with tempfile.NamedTemporaryFile(suffix=".svg", delete=False) as f:
-        f.write(svg_markup.encode("utf-8"))
-        tmp = f.name
-
-    try:
-        drawing = svg2rlg(tmp)
-    finally:
-        os.unlink(tmp)
-
-    if drawing is None:
-        raise RuntimeError("svglib could not parse the SVG markup")
-
-    buf = io.BytesIO()
-    renderPM.drawToFile(drawing, buf, fmt="PNG")
-    return buf.getvalue()
+    doc = pymupdf.open(stream=svg_markup.encode("utf-8"), filetype="svg")
+    page = doc[0]
+    pix = page.get_pixmap()
+    return pix.tobytes("png")
 
 
 def _get_x_credentials():
