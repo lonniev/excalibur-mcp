@@ -16,7 +16,24 @@ from tollbooth.slug_tools import make_slug_tool
 
 logger = logging.getLogger(__name__)
 
-mcp = FastMCP("eXcalibur")
+mcp = FastMCP(
+    "eXcalibur",
+    instructions=(
+        "eXcalibur MCP — AI agent access to X (Twitter) posting, "
+        "monetized via DPYC Tollbooth Lightning micropayments.\n\n"
+        "## Getting Started\n\n"
+        "1. Call `session_status` to check your current session.\n"
+        "2. If no active session, follow the Secure Courier onboarding flow:\n"
+        "   - Get your **patron npub** from the dpyc-oracle's how_to_join() tool — "
+        "this is the npub you registered as a DPYC Citizen, your identity for credit operations\n"
+        "   - Call `request_credential_channel(recipient_npub=<patron_npub>)` to receive a welcome DM\n"
+        "   - Reply via your Nostr client with your X API credentials in JSON\n"
+        "   - Call `receive_credentials(sender_npub=<patron_npub>)` to vault your credentials\n\n"
+        "## Credits Model\n\n"
+        "Tool calls cost api_sats per call. Auth and balance tools are always free. "
+        "Use `check_balance` to see your balance. Top up via `purchase_credits`."
+    ),
+)
 tool = make_slug_tool(mcp, "excalibur")
 
 # Structured onboarding guidance — included in error responses so Claude
@@ -24,7 +41,7 @@ tool = make_slug_tool(mcp, "excalibur")
 # without the user needing to explain the process.
 _ONBOARDING_NEXT_STEPS = {
     "action": "secure_courier_onboarding",
-    "step_1": "Ask the user for their Nostr npub (public key). They can get one from the dpyc-oracle's how_to_join() tool.",
+    "step_1": "Ask the user for their **patron npub** (the npub they registered as a DPYC Citizen). They can get one from the dpyc-oracle's how_to_join() tool.",
     "step_2": "Call request_credential_channel(recipient_npub=<npub>) to send a welcome DM to the user's Nostr client.",
     "step_3": "Tell the user to open their Nostr client (Primal, Damus, etc.) and reply to the welcome DM with their X API credentials in the JSON format shown. Credentials must NEVER appear in this chat.",
     "step_4": "Once the user confirms they replied, call receive_credentials(sender_npub=<npub>, passphrase=<passphrase>) to vault the credentials for future sessions.",
@@ -926,9 +943,10 @@ async def register_credentials(
     vault. The passphrase is never stored — you will need it each session
     to activate access.
 
-    Your DPYC npub (Nostr public key) is required — it serves as your
-    persistent identity for credit operations. Obtain one from the
-    dpyc-oracle's how_to_join() tool if you don't have one yet.
+    Your **patron** npub (Nostr public key) is required — the one you
+    registered as a DPYC Citizen. It serves as your persistent identity
+    for credit operations. Obtain one from the dpyc-oracle's
+    how_to_join() tool if you don't have one yet.
 
     Args:
         x_api_key: Your X API consumer key
@@ -936,8 +954,9 @@ async def register_credentials(
         x_access_token: Your X API access token
         x_access_token_secret: Your X API access token secret
         passphrase: A passphrase to encrypt your credentials (remember this!)
-        npub: Your Nostr public key in bech32 format (npub1...). Required for
-            credit operations. Get one via the dpyc-oracle's how_to_join() tool.
+        npub: Your **patron** Nostr public key in bech32 format (npub1...) —
+            the one registered as a DPYC Citizen. Required for credit
+            operations. Get one via the dpyc-oracle's how_to_join() tool.
     """
     from excalibur_mcp.vault import encrypt_credentials, set_session
 
@@ -1083,8 +1102,9 @@ async def request_credential_channel(
 
     Args:
         service: Which credential template to use (default "x" for X/Twitter).
-        recipient_npub: Your Nostr public key (npub1...). If provided, you'll
-            receive a welcome DM to reply to instead of composing from scratch.
+        recipient_npub: Your **patron** Nostr public key (npub1...) — the one
+            registered as a DPYC Citizen. If provided, you'll receive a welcome
+            DM to reply to instead of composing from scratch.
     """
     try:
         courier = _get_courier_service()
@@ -1128,8 +1148,8 @@ async def receive_credentials(
     activate_session(passphrase) instead of repeating the Courier flow.
 
     Args:
-        sender_npub: Your Nostr public key (npub1...) — the one you
-            sent the DM from.
+        sender_npub: Your **patron** Nostr public key (npub1...) — the one
+            you registered as a DPYC Citizen and sent the DM from.
         service: Which credential template to match (default "x").
         passphrase: Optional passphrase to store credentials in the
             passphrase vault for future activate_session() calls.
