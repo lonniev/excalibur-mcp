@@ -136,13 +136,13 @@ async def _resolve_authority_npub() -> str:
     if _cached_authority_npub is not None:
         return _cached_authority_npub
 
-    from tollbooth.registry import DPYCRegistry, RegistryError
+    from tollbooth.registry import DEFAULT_REGISTRY_URL, DPYCRegistry, RegistryError
 
     operator_npub = _get_operator_npub()
     settings = get_settings()
 
     registry = DPYCRegistry(
-        url=settings.dpyc_registry_url,
+        url=DEFAULT_REGISTRY_URL,
         cache_ttl_seconds=settings.dpyc_registry_cache_ttl_seconds,
     )
     try:
@@ -171,13 +171,13 @@ async def _resolve_authority_service_url() -> str:
     if _cached_authority_service_url is not None:
         return _cached_authority_service_url
 
-    from tollbooth.registry import DPYCRegistry, RegistryError
+    from tollbooth.registry import DEFAULT_REGISTRY_URL, DPYCRegistry, RegistryError
 
     operator_npub = _get_operator_npub()
     settings = get_settings()
 
     registry = DPYCRegistry(
-        url=settings.dpyc_registry_url,
+        url=DEFAULT_REGISTRY_URL,
         cache_ttl_seconds=settings.dpyc_registry_cache_ttl_seconds,
     )
     try:
