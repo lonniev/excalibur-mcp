@@ -70,7 +70,8 @@ TOOL_COSTS: dict[str, int] = {
     "receive_credentials": ToolTier.FREE,
     "forget_credentials": ToolTier.FREE,
     "get_pricing_model": ToolTier.FREE,
-    "set_pricing_model": ToolTier.FREE,
+    "set_pricing_model": ToolTier.RESTRICTED,
+    "list_constraint_types": ToolTier.FREE,
     # Paid
     "post_tweet": ToolTier.WRITE,  # 5 api_sats (text only)
     "post_tweet_image": ToolTier.HEAVY,  # 10 api_sats (with image upload)
@@ -680,8 +681,29 @@ async def _debit_or_error(tool_name: str) -> dict[str, Any] | None:
 
     Returns None to proceed, or an error dict to short-circuit.
     Free tools skip gating. All paid tools require credits — including STDIO mode.
+
+    RESTRICTED tools (cost == ToolTier.RESTRICTED) are operator-only:
+    allowed at cost 0 if the caller's npub matches the operator npub,
+    rejected otherwise.  STDIO mode bypasses the restriction.
     """
     cost = TOOL_COSTS.get(tool_name, 0)
+
+    # RESTRICTED tier: operator-only access gate
+    if cost == ToolTier.RESTRICTED:
+        user_id = _get_current_user_id()
+        if not user_id:
+            return None  # STDIO mode — allow
+        try:
+            caller_npub = await _ensure_dpyc_session()
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
+        if caller_npub != _get_operator_npub():
+            return {
+                "success": False,
+                "error": "This tool is restricted to the operator.",
+            }
+        return None  # operator — allow at cost 0
+
     if cost == 0:
         return None
 
@@ -745,7 +767,7 @@ async def _debit_or_error(tool_name: str) -> dict[str, Any] | None:
 async def _rollback_debit(tool_name: str) -> None:
     """Undo a debit when the downstream API call fails."""
     cost = TOOL_COSTS.get(tool_name, 0)
-    if cost == 0:
+    if cost <= 0:
         return
 
     try:
@@ -1608,15 +1630,43 @@ async def get_pricing_model() -> dict[str, Any]:
 
 @tool
 async def set_pricing_model(model_json: str) -> dict[str, Any]:
-    """Set or update the active pricing model. Free — operator self-service."""
+    """Set or update the active pricing model. Restricted — operator only."""
+    err = await _debit_or_error("set_pricing_model")
+    if err:
+        return err
     try:
         store = _get_pricing_store()
         operator = _get_operator_npub()
     except (ValueError, RuntimeError) as e:
         return {"status": "error", "error": str(e)}
+
+    # Verify caller is the operator (skip in STDIO mode)
+    user_id = _get_current_user_id()
+    if user_id is not None:
+        try:
+            caller_npub = _get_effective_user_id()
+        except ValueError as e:
+            return {"status": "error", "error": str(e)}
+        if caller_npub != operator:
+            return {"status": "error", "error": "Only the operator can modify pricing"}
+
     from tollbooth.tools.pricing import set_pricing_model_tool
 
     return await set_pricing_model_tool(store, operator, model_json)
+
+
+@tool
+async def list_constraint_types() -> dict[str, Any]:
+    """List all available constraint types and their parameter schemas.
+
+    Returns the type, category, description, and parameter specs for
+    every constraint that can be used in a pricing pipeline.
+
+    Free — no credits required.
+    """
+    from tollbooth.tools.pricing import list_constraint_types as _list
+
+    return {"status": "ok", "constraint_types": _list()}
 
 
 # ---------------------------------------------------------------------------
