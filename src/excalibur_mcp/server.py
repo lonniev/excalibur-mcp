@@ -1676,6 +1676,13 @@ async def list_constraint_types() -> dict[str, Any]:
 
 def main() -> None:
     """Entry point for the eXcalibur MCP server."""
+    from tollbooth import validate_operator_tools
+
+    missing = validate_operator_tools(mcp, "excalibur")
+    if missing:
+        import sys
+
+        print(f"\u26a0 Missing base-catalog tools: {', '.join(missing)}", file=sys.stderr)
     mcp.run()
 
 
