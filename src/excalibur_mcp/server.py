@@ -257,17 +257,23 @@ def _get_effective_user_id() -> str:
     return npub
 
 
-async def _ensure_dpyc_session() -> str:
-    """Return the npub for the current user, auto-restoring on cold start.
+async def _ensure_dpyc_session(npub: str | None = None) -> str:
+    """Return the patron's npub for credit operations.
 
-    Delegates to ``SecureCourierService.ensure_identity()`` which manages
-    the in-memory session cache and vault-based cold-start restoration.
+    Args:
+        npub: Explicit npub from the tool call. If provided and valid,
+              used directly (and cached for subsequent calls).
 
-    Falls back to ``_get_effective_user_id()`` in STDIO mode where the
-    courier service is not available.
-
-    Raises ValueError if restoration fails (first-time user or forgotten creds).
+    Falls back to courier restore, then session cache, then raises.
+    Returns "stdio:0" in STDIO mode for local dev.
     """
+    if npub and npub.startswith("npub1") and len(npub) >= 60:
+        user_id = _get_current_user_id()
+        if user_id:
+            from excalibur_mcp.vault import _dpyc_sessions
+            _dpyc_sessions[user_id] = npub
+        return npub
+
     horizon_id = _get_current_user_id()
     if not horizon_id:
         return "stdio:0"
