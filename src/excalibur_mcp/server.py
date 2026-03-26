@@ -229,65 +229,14 @@ def _require_user_id() -> str:
     return user_id
 
 
-def _get_effective_user_id() -> str:
-    """Return the npub for the current user. Required for credit operations.
-
-    Returns "stdio:0" in STDIO mode for local dev.
-    Raises ValueError if no DPYC session is active in cloud mode.
-
-    NOTE: Prefer ``_ensure_dpyc_session()`` in async contexts — it
-    auto-restores the session from vault on cold start.
-    """
-    from excalibur_mcp.vault import get_dpyc_npub
-
-    horizon_id = _get_current_user_id()
-    if not horizon_id:
-        return "stdio:0"
-
-    npub = get_dpyc_npub(horizon_id)
-    if not npub:
+def _resolve_npub(npub: str) -> str:
+    """Validate and return the npub. No fallback, no session cache."""
+    if not npub or not npub.startswith("npub1") or len(npub) < 60:
         raise ValueError(
-            "No DPYC identity active. Credit operations require an npub. "
-            "Call activate_session (returning user) or follow the Secure Courier "
-            "onboarding flow: ask the user for their npub, call "
-            "request_credential_channel(recipient_npub=<npub>), wait for them to "
-            "reply via Nostr DM, then call receive_credentials(sender_npub=<npub>, passphrase=<passphrase>). "
-            "Credentials must NEVER appear in this chat."
+            "npub is required. Pass your Nostr public key (npub1...) "
+            "to identify yourself."
         )
     return npub
-
-
-async def _ensure_dpyc_session(npub: str | None = None) -> str:
-    """Return the patron's npub for credit operations.
-
-    Args:
-        npub: Explicit npub from the tool call. If provided and valid,
-              used directly (and cached for subsequent calls).
-
-    Falls back to courier restore, then session cache, then raises.
-    Returns "stdio:0" in STDIO mode for local dev.
-    """
-    if npub and npub.startswith("npub1") and len(npub) >= 60:
-        user_id = _get_current_user_id()
-        if user_id:
-            from excalibur_mcp.vault import _dpyc_sessions
-            _dpyc_sessions[user_id] = npub
-        return npub
-
-    horizon_id = _get_current_user_id()
-    if not horizon_id:
-        return "stdio:0"
-
-    try:
-        courier = _get_courier_service()
-        return await courier.ensure_identity(horizon_id, service="x")
-    except ValueError:
-        raise
-    except Exception:
-        pass
-
-    # Fallback to sync path if courier unavailable
-    return _get_effective_user_id()
 
 
 # ---------------------------------------------------------------------------
@@ -682,7 +631,7 @@ def _fire_and_forget_demand_increment(tool_name: str) -> None:
     asyncio.create_task(_inc())
 
 
-async def _debit_or_error(tool_name: str, **kwargs: Any) -> dict[str, Any] | None:
+async def _debit_or_error(tool_name: str, npub: str = "", **kwargs: Any) -> dict[str, Any] | None:
     """Check balance and debit credits for a paid tool call.
 
     Returns None to proceed, or an error dict to short-circuit.
@@ -700,7 +649,7 @@ async def _debit_or_error(tool_name: str, **kwargs: Any) -> dict[str, Any] | Non
         if not user_id:
             return None  # STDIO mode — allow
         try:
-            caller_npub = await _ensure_dpyc_session()
+            caller_npub = _resolve_npub(npub)
         except ValueError as e:
             return {"success": False, "error": str(e)}
         if caller_npub != _get_operator_npub():
@@ -721,7 +670,7 @@ async def _debit_or_error(tool_name: str, **kwargs: Any) -> dict[str, Any] | Non
         return None
 
     try:
-        user_id = await _ensure_dpyc_session()
+        user_id = _resolve_npub(npub)
     except ValueError as e:
         return {"success": False, "error": str(e)}
 
@@ -777,14 +726,14 @@ async def _debit_or_error(tool_name: str, **kwargs: Any) -> dict[str, Any] | Non
     return None
 
 
-async def _rollback_debit(tool_name: str) -> None:
+async def _rollback_debit(tool_name: str, npub: str = "") -> None:
     """Undo a debit when the downstream API call fails."""
     cost = TOOL_COSTS.get(tool_name, 0)
     if cost <= 0:
         return
 
     try:
-        user_id = await _ensure_dpyc_session()
+        user_id = _resolve_npub(npub)
         cache = _get_ledger_cache()
         ledger = await cache.get(user_id)
     except Exception:
@@ -794,12 +743,12 @@ async def _rollback_debit(tool_name: str) -> None:
     cache.mark_dirty(user_id)
 
 
-async def _with_warning(result: dict[str, Any]) -> dict[str, Any]:
+async def _with_warning(result: dict[str, Any], npub: str = "") -> dict[str, Any]:
     """Attach a low-balance warning to a paid tool result if balance is low."""
     try:
         from tollbooth.tools.credits import compute_low_balance_warning
 
-        user_id = await _ensure_dpyc_session()
+        user_id = _resolve_npub(npub)
         cache = _get_ledger_cache()
         ledger = await cache.get(user_id)
         settings = get_settings()
@@ -945,7 +894,7 @@ async def session_status() -> dict[str, Any]:
     the user's X API credentials via encrypted Nostr DM (credentials
     never appear in chat).
     """
-    from excalibur_mcp.vault import get_dpyc_npub, get_session
+    from excalibur_mcp.vault import get_session
 
     user_id = _get_current_user_id()
     if not user_id:
@@ -963,11 +912,10 @@ async def session_status() -> dict[str, Any]:
             "session_age_seconds": session.age_seconds,
             "message": "Personal X API credentials active.",
         }
-        npub = get_dpyc_npub(user_id)
-        if npub:
-            result["dpyc_npub"] = npub
+        if session.npub:
+            result["dpyc_npub"] = session.npub
         else:
-            result["dpyc_warning"] = "No DPYC identity active."
+            result["dpyc_warning"] = "No DPYC identity active — pass npub to credit tools."
         return result
 
     return {
@@ -1286,7 +1234,7 @@ async def forget_credentials(sender_npub: str, service: str = "x") -> dict[str, 
 
 
 @tool
-async def purchase_credits(amount_sats: int) -> dict[str, Any]:
+async def purchase_credits(amount_sats: int, npub: str = "") -> dict[str, Any]:
     """Create a BTCPay Lightning invoice to purchase credits for tool calls.
 
     Automatically obtains an Authority-signed certificate behind the scenes —
@@ -1305,7 +1253,7 @@ async def purchase_credits(amount_sats: int) -> dict[str, Any]:
     from tollbooth.tools import credits
 
     try:
-        user_id = await _ensure_dpyc_session()
+        user_id = _resolve_npub(npub)
         btcpay = _get_btcpay()
         cache = _get_ledger_cache()
     except ValueError as e:
@@ -1351,7 +1299,7 @@ async def purchase_credits(amount_sats: int) -> dict[str, Any]:
 
 
 @tool
-async def check_payment(invoice_id: str) -> dict[str, Any]:
+async def check_payment(invoice_id: str, npub: str = "") -> dict[str, Any]:
     """Verify that a Lightning invoice has settled and credit the payment to your balance.
 
     Call this after paying the invoice from purchase_credits. Safe to call
@@ -1363,7 +1311,7 @@ async def check_payment(invoice_id: str) -> dict[str, Any]:
     from tollbooth.tools import credits
 
     try:
-        user_id = await _ensure_dpyc_session()
+        user_id = _resolve_npub(npub)
         btcpay = _get_btcpay()
         cache = _get_ledger_cache()
     except ValueError as e:
@@ -1379,7 +1327,7 @@ async def check_payment(invoice_id: str) -> dict[str, Any]:
 
 
 @tool
-async def restore_credits(invoice_id: str) -> dict[str, Any]:
+async def restore_credits(invoice_id: str, npub: str = "") -> dict[str, Any]:
     """Restore credits from a paid invoice that was lost due to cache or vault issues.
 
     Emergency recovery tool. Call when you paid an invoice but your balance
@@ -1398,7 +1346,7 @@ async def restore_credits(invoice_id: str) -> dict[str, Any]:
     from tollbooth.tools import credits
 
     try:
-        user_id = await _ensure_dpyc_session()
+        user_id = _resolve_npub(npub)
         btcpay = _get_btcpay()
         cache = _get_ledger_cache()
     except ValueError as e:
@@ -1414,7 +1362,7 @@ async def restore_credits(invoice_id: str) -> dict[str, Any]:
 
 
 @tool
-async def check_balance() -> dict[str, Any]:
+async def check_balance(npub: str = "") -> dict[str, Any]:
     """Check your current credit balance, tier info, usage summary, and cache health.
 
     Read-only — no side effects. Call anytime to check your funding level,
@@ -1423,7 +1371,7 @@ async def check_balance() -> dict[str, Any]:
     from tollbooth.tools import credits
 
     try:
-        user_id = await _ensure_dpyc_session()
+        user_id = _resolve_npub(npub)
         cache = _get_ledger_cache()
     except ValueError as e:
         return {"success": False, "error": str(e)}
@@ -1438,7 +1386,7 @@ async def check_balance() -> dict[str, Any]:
 
 
 @tool
-async def account_statement(days: int = 30) -> dict[str, Any]:
+async def account_statement(days: int = 30, npub: str = "") -> dict[str, Any]:
     """Generate a customer-facing account statement with purchase history and usage.
 
     Free — no credits consumed.
@@ -1449,7 +1397,7 @@ async def account_statement(days: int = 30) -> dict[str, Any]:
     from tollbooth.tools import credits
 
     try:
-        user_id = await _ensure_dpyc_session()
+        user_id = _resolve_npub(npub)
         cache = _get_ledger_cache()
     except ValueError as e:
         return {"success": False, "error": str(e)}
@@ -1468,7 +1416,7 @@ async def account_statement(days: int = 30) -> dict[str, Any]:
 
 
 @tool
-async def account_statement_infographic(days: int = 30) -> dict[str, Any]:
+async def account_statement_infographic(days: int = 30, npub: str = "") -> dict[str, Any]:
     """Generate a visual SVG infographic of your account statement.
 
     Returns the same data as account_statement, rendered as a dark-themed
@@ -1487,15 +1435,15 @@ async def account_statement_infographic(days: int = 30) -> dict[str, Any]:
         png_base64: Base64-encoded PNG (only when cairosvg is installed).
         generated_at: ISO timestamp of generation.
     """
-    gate = await _debit_or_error("account_statement_infographic")
+    gate = await _debit_or_error("account_statement_infographic", npub=npub)
     if gate:
         return gate
 
     try:
-        user_id = await _ensure_dpyc_session()
+        user_id = _resolve_npub(npub)
         cache = _get_ledger_cache()
     except ValueError as e:
-        await _rollback_debit("account_statement_infographic")
+        await _rollback_debit("account_statement_infographic", npub=npub)
         return {"success": False, "error": str(e)}
 
     try:
@@ -1504,7 +1452,7 @@ async def account_statement_infographic(days: int = 30) -> dict[str, Any]:
 
         data = await credits.account_statement_tool(cache, user_id, days=days)
         if not data.get("success"):
-            await _rollback_debit("account_statement_infographic")
+            await _rollback_debit("account_statement_infographic", npub=npub)
             return data
 
         svg = render_account_infographic(data)
@@ -1520,7 +1468,7 @@ async def account_statement_infographic(days: int = 30) -> dict[str, Any]:
 
         return await _with_warning(result)
     except Exception:
-        await _rollback_debit("account_statement_infographic")
+        await _rollback_debit("account_statement_infographic", npub=npub)
         raise
 
 
@@ -1529,6 +1477,7 @@ async def post_tweet(
     text: str,
     image_url: str | None = None,
     banner_svg: str | None = None,
+    npub: str = "",
 ) -> dict:
     """Post a tweet with markdown formatting converted to Unicode rich text.
 
@@ -1574,7 +1523,7 @@ async def post_tweet(
     cost_key = "post_tweet_image" if (image_url or banner_svg) else "post_tweet"
 
     # Credit gating
-    gate = await _debit_or_error(cost_key)
+    gate = await _debit_or_error(cost_key, npub=npub)
     if gate is not None:
         return gate
 
@@ -1589,13 +1538,13 @@ async def post_tweet(
         try:
             banner_png = _svg_to_png(banner_svg)
         except Exception as exc:
-            await _rollback_debit(cost_key)
+            await _rollback_debit(cost_key, npub=npub)
             return {"error": f"Banner render failed: {exc}"}
 
     try:
         creds = _get_x_credentials()
     except KeyError as exc:
-        await _rollback_debit(cost_key)
+        await _rollback_debit(cost_key, npub=npub)
         return {
             "error": f"Missing X API credential: {exc}. "
             "Set X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET "
@@ -1613,14 +1562,14 @@ async def post_tweet(
         else:
             result = await client.post_tweet(converted)
     except XAPIError as exc:
-        await _rollback_debit(cost_key)
+        await _rollback_debit(cost_key, npub=npub)
         return {
             "error": str(exc),
             "status_code": exc.status_code,
             "detail": exc.detail,
         }
 
-    return await _with_warning(result)
+    return await _with_warning(result, npub=npub)
 
 
 # ---------------------------------------------------------------------------
@@ -1676,18 +1625,12 @@ async def set_pricing_model(model_json: str) -> dict[str, Any]:
     # Verify caller is the operator (skip in STDIO mode)
     user_id = _get_current_user_id()
     if user_id is not None:
-        try:
-            caller_npub = _get_effective_user_id()
-        except ValueError as e:
-            return {"status": "error", "error": str(e)}
-        if caller_npub != operator:
-            # Allow if a valid operator proof was provided
-            if not operator_proof:
-                return {"status": "error", "error": "Only the operator can modify pricing"}
-            from tollbooth.operator_proof import verify_operator_proof
+        if not operator_proof:
+            return {"status": "error", "error": "Only the operator can modify pricing — provide operator_proof."}
+        from tollbooth.operator_proof import verify_operator_proof
 
-            if not verify_operator_proof(operator_proof, operator, "set_pricing_model"):
-                return {"status": "error", "error": "Only the operator can modify pricing"}
+        if not verify_operator_proof(operator_proof, operator, "set_pricing_model"):
+            return {"status": "error", "error": "Only the operator can modify pricing"}
 
     from tollbooth.tools.pricing import set_pricing_model_tool
 
