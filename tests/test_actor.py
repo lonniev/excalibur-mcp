@@ -22,9 +22,9 @@ def test_slug():
 
 
 def test_tool_catalog_completeness():
-    """Catalog has exactly 15 entries matching Protocol method names."""
+    """Catalog has exactly 22 entries matching OPERATOR_BASE_CATALOG."""
     catalog = ExcaliburOperator.tool_catalog()
-    assert len(catalog) == 15
+    assert len(catalog) == 22
 
     for entry in catalog:
         assert isinstance(entry, ToolPathInfo)
@@ -35,6 +35,14 @@ def test_tool_catalog_completeness():
         "account_statement_infographic",
         "restore_credits",
         "service_status",
+        "notarize_ledger",
+        "get_notarization_proof",
+        "list_notarizations",
+        "session_status",
+        "get_onboarding_status",
+        "request_credential_channel",
+        "receive_credentials",
+        "forget_credentials",
         "purchase_credits",
         "check_payment",
         "certify_credits",
@@ -42,7 +50,6 @@ def test_tool_catalog_completeness():
         "operator_status",
         "lookup_member",
         "how_to_join",
-        "get_tax_rate",
         "about",
         "network_advisory",
     }
@@ -67,9 +74,9 @@ async def test_delegation_stub_returns_error():
 
 
 def test_hot_path_count():
-    """5 hot-path tools (check_balance, account_statement, infographic, restore_credits, service_status)."""
+    """14 hot-path tools (credit, notarization, courier, onboarding)."""
     from tollbooth.actor_types import ToolPath
 
     catalog = ExcaliburOperator.tool_catalog()
     hot = [e for e in catalog if e.path == ToolPath.HOT]
-    assert len(hot) == 5
+    assert len(hot) == 14
