@@ -14,7 +14,6 @@ from __future__ import annotations
 from typing import Any
 
 from tollbooth.actor_types import ActorRole, ToolPath, ToolPathInfo
-from tollbooth.operator_protocol import OperatorProtocol
 
 _DELEGATION_MSG = (
     "Cold-path delegation not yet implemented. "
