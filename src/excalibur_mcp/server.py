@@ -13,7 +13,6 @@ import os
 from typing import Any
 
 from fastmcp import FastMCP
-
 from tollbooth.constants import ToolTier
 from tollbooth.credential_templates import CredentialTemplate, FieldSpec
 from tollbooth.runtime import OperatorRuntime, register_standard_tools, resolve_npub

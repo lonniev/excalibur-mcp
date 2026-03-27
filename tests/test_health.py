@@ -6,8 +6,8 @@ import pytest
 @pytest.mark.asyncio
 async def test_health_returns_ok():
     """Health tool should return service info with version provenance."""
-    from excalibur_mcp.server import health
     from excalibur_mcp import __version__
+    from excalibur_mcp.server import health
 
     result = await health()
     assert result["service"] == "excalibur-mcp"

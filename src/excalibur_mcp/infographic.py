@@ -14,7 +14,6 @@ from datetime import datetime, timezone
 from typing import Any
 from xml.sax.saxutils import escape
 
-
 # ---------------------------------------------------------------------------
 # Colour palette -- dark steel with gold/amber sword-theme accents
 # ---------------------------------------------------------------------------
