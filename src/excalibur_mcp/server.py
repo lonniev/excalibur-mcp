@@ -96,14 +96,29 @@ def get_settings():
 # ---------------------------------------------------------------------------
 
 runtime = OperatorRuntime(
+    service_name="eXcalibur",
     tool_costs=TOOL_COSTS,
     credential_service=CREDENTIAL_SERVICE,
     credential_template=CredentialTemplate(
         service="x",
         version=2,
         fields={
-            "access_token": FieldSpec(required=True, sensitive=True),
-            "access_token_secret": FieldSpec(required=True, sensitive=True),
+            "access_token": FieldSpec(
+                required=True,
+                sensitive=True,
+                description=(
+                    "Your X/Twitter OAuth 1.0a Access Token. Found in the "
+                    "X Developer Portal under your app's Keys and Tokens."
+                ),
+            ),
+            "access_token_secret": FieldSpec(
+                required=True,
+                sensitive=True,
+                description=(
+                    "Your X/Twitter OAuth 1.0a Access Token Secret. Found "
+                    "alongside the Access Token in the Developer Portal."
+                ),
+            ),
         },
         description="X/Twitter user access token (OAuth 1.0a User Context)",
     ),
