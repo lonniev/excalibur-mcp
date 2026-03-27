@@ -413,7 +413,7 @@ async def post_tweet(
     banner_svg: str | None = None,
     npub: str = "",
 ) -> dict:
-    """Post a tweet with markdown formatting converted to Unicode rich text.
+    """Post a tweet with markdown formatting converted to Unicode rich text. Requires npub for credit billing.
 
     Accepts standard markdown inline formatting and converts it to Unicode
     Mathematical Alphanumeric Symbols that render as styled text on X:
@@ -428,6 +428,7 @@ async def post_tweet(
         image_url: Optional URL of an image to attach to the tweet.
         banner_svg: Optional self-contained SVG markup string, converted
                    to PNG and attached as a native Twitter media image.
+        npub: Your DPYC patron Nostr public key (npub1...) for credit attribution.
     """
     cost_key = "post_tweet_image" if (image_url or banner_svg) else "post_tweet"
 
