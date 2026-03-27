@@ -1,6 +1,5 @@
 """Tests for the markdown → Unicode formatter."""
 
-import pytest
 
 from excalibur_mcp.formatter import (
     markdown_to_unicode,

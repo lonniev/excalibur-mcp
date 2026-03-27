@@ -7,7 +7,6 @@ import httpx
 import pytest
 
 from excalibur_mcp.x_client import (
-    ALLOWED_IMAGE_CONTENT_TYPES,
     MAX_IMAGE_SIZE_BYTES,
     MediaUploadError,
     PostImgUploadError,
