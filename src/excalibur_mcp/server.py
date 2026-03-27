@@ -107,6 +107,10 @@ runtime = OperatorRuntime(
         },
         description="X/Twitter user access token (OAuth 1.0a User Context)",
     ),
+    credential_greeting=(
+        "Hi \u2014 I\u2019m eXcalibur, a Tollbooth MCP service for posting formatted "
+        "content to X. You (or your AI agent) requested a credential channel."
+    ),
 )
 
 # ---------------------------------------------------------------------------
