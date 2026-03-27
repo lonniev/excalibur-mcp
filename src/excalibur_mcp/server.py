@@ -70,9 +70,6 @@ TOOL_COSTS: dict[str, int] = {
     "post_tweet_image": ToolTier.HEAVY,  # 10 api_sats (with image upload)
 }
 
-CREDENTIAL_SERVICE = "x"
-
-
 # ---------------------------------------------------------------------------
 # Settings singleton
 # ---------------------------------------------------------------------------
@@ -98,10 +95,28 @@ def get_settings():
 runtime = OperatorRuntime(
     service_name="eXcalibur",
     tool_costs=TOOL_COSTS,
-    credential_service=CREDENTIAL_SERVICE,
-    credential_template=CredentialTemplate(
-        service="x",
-        version=2,
+    operator_credential_template=CredentialTemplate(
+        service="excalibur-operator",
+        version=1,
+        fields={
+            "btcpay_host": FieldSpec(
+                required=True, sensitive=True,
+                description="The URL of your BTCPay Server instance.",
+            ),
+            "btcpay_api_key": FieldSpec(
+                required=True, sensitive=True,
+                description="Your BTCPay Server API key.",
+            ),
+            "btcpay_store_id": FieldSpec(
+                required=True, sensitive=True,
+                description="Your BTCPay Store ID.",
+            ),
+        },
+        description="BTCPay Lightning payment credentials",
+    ),
+    patron_credential_template=CredentialTemplate(
+        service="excalibur",
+        version=3,
         fields={
             "access_token": FieldSpec(
                 required=True,
@@ -120,9 +135,13 @@ runtime = OperatorRuntime(
                 ),
             ),
         },
-        description="X/Twitter user access token (OAuth 1.0a User Context)",
+        description="X/Twitter posting credentials",
     ),
-    credential_greeting=(
+    operator_credential_greeting=(
+        "Hi \u2014 I\u2019m eXcalibur, a Tollbooth MCP service for posting formatted "
+        "content to X. You (the operator) need to provide BTCPay credentials."
+    ),
+    patron_credential_greeting=(
         "Hi \u2014 I\u2019m eXcalibur, a Tollbooth MCP service for posting formatted "
         "content to X. You (or your AI agent) requested a credential channel."
     ),
@@ -136,7 +155,6 @@ register_standard_tools(
     mcp,
     "excalibur",
     runtime,
-    settings_fn=get_settings,
     service_name="excalibur-mcp",
     service_version=__version__,
 )

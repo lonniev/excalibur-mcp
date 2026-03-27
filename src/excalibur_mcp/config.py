@@ -1,4 +1,9 @@
-"""eXcalibur-mcp settings loaded from environment variables."""
+"""eXcalibur-mcp settings loaded from environment variables.
+
+With nsec-only bootstrap, Settings contains only the operator's Nostr
+identity and tuning parameters.  All secrets (BTCPay, X/Twitter API keys)
+are delivered via Secure Courier credential templates.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +11,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """eXcalibur MCP server settings."""
+    """eXcalibur MCP server settings.
+
+    Only one env var is required to boot: TOLLBOOTH_NOSTR_OPERATOR_NSEC.
+    Everything else has sensible defaults or is delivered via Secure Courier.
+    """
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -15,44 +24,18 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # BTCPay Server (for Lightning invoices)
-    btcpay_host: str | None = None
-    btcpay_store_id: str | None = None
-    btcpay_api_key: str | None = None
-    btcpay_tier_config: str | None = None
-    btcpay_user_tiers: str | None = None
+    # ── Nostr identity (one env var to boot) ─────────────────────────
+    tollbooth_nostr_operator_nsec: str | None = None
+    tollbooth_nostr_relays: str | None = None
 
-    # Credit seeding for new users (0 = disabled)
+    # ── Credit economics (tuning with defaults) ──────────────────────
     seed_balance_sats: int = 0
-
-    # DPYC registry cache TTL (URL comes from tollbooth-dpyc DEFAULT_REGISTRY_URL)
+    credit_ttl_seconds: int | None = 604800  # 7 days
     dpyc_registry_cache_ttl_seconds: int = 300
 
-    # Credit expiration
-    credit_ttl_seconds: int | None = 604800  # 7 days
-
-    # Commerce vault backend (pick one)
-    neon_database_url: str | None = None  # Primary (serverless Postgres)
-
-    # OpenTimestamps Bitcoin anchoring
-    tollbooth_ots_enabled: str | None = None  # "true" to enable
-    tollbooth_ots_calendars: str | None = None  # Comma-separated URLs
-
-    # Credential vault location
+    # ── Domain tuning ────────────────────────────────────────────────
     excalibur_vault_dir: str | None = None
 
-    # Secure Courier (Nostr DM credential exchange)
-    tollbooth_nostr_operator_nsec: str | None = None
-    tollbooth_nostr_relays: str | None = None  # Comma-separated relay URLs
-
-    # Constraint Engine (opt-in)
+    # ── Constraint Engine (opt-in) ───────────────────────────────────
     constraints_enabled: bool = False
-    constraints_config: str | None = None  # JSON string
-
-    def to_tollbooth_config(self):
-        """Build a TollboothConfig for passing to tollbooth library tools."""
-        from tollbooth.config import TollboothConfig
-        return TollboothConfig(
-            constraints_enabled=self.constraints_enabled,
-            constraints_config=self.constraints_config,
-        )
+    constraints_config: str | None = None
