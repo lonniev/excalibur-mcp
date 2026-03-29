@@ -4,7 +4,7 @@ version = "0.6.30"
 description = "FastMCP server for posting formatted content to X (Twitter) — Tollbooth-monetized, DPYC-native"
 authors = [{name = "eXcalibur MCP Contributors"}]
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 license = {text = "Apache-2.0"}
 keywords = ["mcp", "twitter", "x", "posting", "ai", "claude", "fastmcp", "tollbooth"]
 
