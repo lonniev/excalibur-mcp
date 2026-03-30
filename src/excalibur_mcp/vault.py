@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from tollbooth.session_cache import SessionCache
 
 logger = logging.getLogger(__name__)
 
@@ -156,16 +157,12 @@ class UserSession:
         return int(time.time() - self.created_at)
 
 
-_sessions: dict[str, UserSession] = {}  # Horizon user_id → session
+_sessions: SessionCache[UserSession] = SessionCache(ttl_seconds=SESSION_TTL_SECONDS)
 
 
 def get_session(user_id: str) -> UserSession | None:
     """Get active session, returning None if expired or absent."""
-    session = _sessions.get(user_id)
-    if session and session.is_expired:
-        del _sessions[user_id]
-        return None
-    return session
+    return _sessions.get(user_id)
 
 
 def set_session(
@@ -184,13 +181,12 @@ def set_session(
         x_access_token_secret=x_access_token_secret,
         npub=npub,
     )
-    _sessions[user_id] = session
-    return session
+    return _sessions.set(user_id, session)
 
 
 def clear_session(user_id: str) -> None:
     """Remove a session."""
-    _sessions.pop(user_id, None)
+    _sessions.clear(user_id)
 
 
 # ---------------------------------------------------------------------------
