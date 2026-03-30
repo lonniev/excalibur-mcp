@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any
+from typing import Annotated, Any
+
+from pydantic import Field
 
 from fastmcp import FastMCP
 from tollbooth.constants import ToolTier
 from tollbooth.credential_templates import CredentialTemplate, FieldSpec
-from tollbooth.runtime import OperatorRuntime, register_standard_tools, resolve_npub
+from tollbooth.runtime import OperatorRuntime, register_standard_tools
 from tollbooth.slug_tools import make_slug_tool
 
 from excalibur_mcp import __version__
@@ -55,6 +57,9 @@ _ONBOARDING_NEXT_STEPS = {
 
 # Default vault directory (operator can override via EXCALIBUR_VAULT_DIR)
 _DEFAULT_VAULT_DIR = os.path.join(os.path.expanduser("~"), ".excalibur", "vault")
+
+# Service name for Neon vault patron session persistence
+PATRON_CREDENTIAL_SERVICE = "excalibur"
 
 # ---------------------------------------------------------------------------
 # Tool cost table (domain tools only — standard tool costs are in the runtime)
@@ -165,29 +170,6 @@ register_standard_tools(
 # ---------------------------------------------------------------------------
 
 
-def _get_current_user_id() -> str | None:
-    """Extract FastMCP Cloud user ID from request headers.
-
-    Returns None in STDIO mode (local dev) or when no auth headers present.
-    """
-    try:
-        from fastmcp.server.dependencies import get_http_headers
-
-        headers = get_http_headers(include_all=True)
-        return headers.get("fastmcp-cloud-user")
-    except Exception:
-        return None
-
-
-def _require_user_id() -> str:
-    """Extract user ID or raise ValueError."""
-    user_id = _get_current_user_id()
-    if not user_id:
-        raise ValueError(
-            "Multi-tenant credentials require FastMCP Cloud (Horizon). "
-            "In STDIO mode, set X_API_KEY etc. as environment variables."
-        )
-    return user_id
 
 
 # ---------------------------------------------------------------------------
@@ -232,12 +214,36 @@ def _svg_to_png(svg_markup: str) -> bytes:
 # ---------------------------------------------------------------------------
 
 
+async def _ensure_session(user_id: str, npub: str = "") -> None:
+    """Restore credentials from Neon vault into in-memory session on cold start."""
+    from excalibur_mcp.vault import get_session, set_session
+
+    if get_session(user_id) is not None:
+        return
+    if not npub:
+        return
+    try:
+        creds = await runtime.load_patron_session(npub, service=PATRON_CREDENTIAL_SERVICE)
+        if creds:
+            set_session(
+                user_id,
+                creds["x_api_key"],
+                creds["x_api_secret"],
+                creds["x_access_token"],
+                creds["x_access_token_secret"],
+                npub=npub,
+            )
+            logger.info("Restored excalibur session for %s from vault.", npub[:20])
+    except Exception as exc:
+        logger.warning("Vault session restore failed: %s", exc)
+
+
 def _get_x_credentials():
     """Get X API credentials: per-user session first, env vars as fallback."""
     from excalibur_mcp.vault import get_session
     from excalibur_mcp.x_client import XCredentials
 
-    user_id = _get_current_user_id()
+    user_id = OperatorRuntime.get_current_user_id()
     if user_id:
         session = get_session(user_id)
         if session:
@@ -250,28 +256,6 @@ def _get_x_credentials():
 
     return XCredentials.from_env()
 
-
-# ---------------------------------------------------------------------------
-# Low-balance warning helper (uses runtime)
-# ---------------------------------------------------------------------------
-
-
-async def _with_warning(result: dict[str, Any], npub: str = "") -> dict[str, Any]:
-    """Attach a low-balance warning to a paid tool result if balance is low."""
-    try:
-        from tollbooth.tools.credits import compute_low_balance_warning
-
-        user_id = resolve_npub(npub)
-        cache = await runtime.ledger_cache()
-        ledger = await cache.get(user_id)
-        settings = get_settings()
-        warning = compute_low_balance_warning(ledger, settings.seed_balance_sats)
-        if warning:
-            result = dict(result)
-            result["low_balance_warning"] = warning
-    except Exception:
-        pass
-    return result
 
 
 # ---------------------------------------------------------------------------
@@ -334,7 +318,7 @@ async def register_credentials(
         }
 
     try:
-        user_id = _require_user_id()
+        user_id = OperatorRuntime.require_user_id()
     except ValueError as e:
         return {"success": False, "error": str(e)}
 
@@ -352,6 +336,14 @@ async def register_credentials(
     set_session(
         user_id, x_api_key, x_api_secret, x_access_token, x_access_token_secret, npub=npub
     )
+
+    # Persist to Neon vault for cross-restart survival
+    await runtime.store_patron_session(npub, {
+        "x_api_key": x_api_key,
+        "x_api_secret": x_api_secret,
+        "x_access_token": x_access_token,
+        "x_access_token_secret": x_access_token_secret,
+    }, service=PATRON_CREDENTIAL_SERVICE)
 
     return {
         "success": True,
@@ -380,7 +372,7 @@ async def activate_session(passphrase: str) -> dict[str, Any]:
     )
 
     try:
-        user_id = _require_user_id()
+        user_id = OperatorRuntime.require_user_id()
         vault = _get_vault()
         blob = await vault.fetch(user_id)
         creds = decrypt_credentials(blob, passphrase)
@@ -429,7 +421,7 @@ async def post_tweet(
     text: str,
     image_url: str | None = None,
     banner_svg: str | None = None,
-    npub: str = "",
+    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "",
 ) -> dict:
     """Post a tweet with markdown formatting converted to Unicode rich text. Requires npub for credit billing.
 
@@ -469,6 +461,11 @@ async def post_tweet(
             await runtime.rollback_debit(cost_key, npub)
             return {"error": f"Banner render failed: {exc}"}
 
+    # Restore session from Neon vault on cold start
+    user_id = OperatorRuntime.get_current_user_id()
+    if user_id:
+        await _ensure_session(user_id, npub)
+
     try:
         creds = _get_x_credentials()
     except KeyError as exc:
@@ -497,7 +494,8 @@ async def post_tweet(
             "detail": exc.detail,
         }
 
-    return await _with_warning(result, npub=npub)
+    runtime.fire_and_forget_demand_increment(cost_key)
+    return await runtime.inject_low_balance_warning(result, npub)
 
 
 # ---------------------------------------------------------------------------
