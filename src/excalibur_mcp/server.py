@@ -213,15 +213,48 @@ def _svg_to_png(svg_markup: str) -> bytes:
 # Credential resolution: session -> env vars
 # ---------------------------------------------------------------------------
 
+# Patron-facing guidance for each lifecycle state.
+_SESSION_GUIDANCE: dict[str, str] = {
+    "vault_bootstrapping": (
+        "The server is establishing its encrypted connection to the "
+        "credential vault. This happens once after a cold start and "
+        "typically completes within 10-15 seconds. "
+        "Action: repeat your request shortly — no re-authentication needed."
+    ),
+    "no_credentials": (
+        "No X API credentials are stored for your identity. This is "
+        "expected on first use. "
+        "Action: call register_credentials with your X API keys (api_key, "
+        "api_secret, access_token, access_token_secret), or use "
+        "request_patron_credentials for Secure Courier delivery."
+    ),
+    "session_expired": (
+        "Your in-memory session timed out but vault credentials exist. "
+        "The system attempted automatic restoration but it did not succeed. "
+        "Action: repeat your request — vault restoration should complete "
+        "transparently on the next call."
+    ),
+    "credentials_invalid": (
+        "Your X API credentials were found but X rejected them — they may "
+        "have been revoked or changed in the X Developer Portal. "
+        "Action: call register_credentials with fresh X API keys from "
+        "your X Developer Portal."
+    ),
+}
 
-async def _ensure_session(user_id: str, npub: str = "") -> None:
-    """Restore credentials from Neon vault into in-memory session on cold start."""
+
+async def _ensure_session(user_id: str, npub: str = "") -> str | None:
+    """Restore credentials from Neon vault into in-memory session on cold start.
+
+    Returns the lifecycle situation string if restoration was attempted but
+    failed, or ``None`` on success / nothing to do.
+    """
     from excalibur_mcp.vault import get_session, set_session
 
     if get_session(user_id) is not None:
-        return
+        return None
     if not npub:
-        return
+        return None
     try:
         creds = await runtime.load_patron_session(npub, service=PATRON_CREDENTIAL_SERVICE)
         if creds:
@@ -234,12 +267,20 @@ async def _ensure_session(user_id: str, npub: str = "") -> None:
                 npub=npub,
             )
             logger.info("Restored excalibur session for %s from vault.", npub[:20])
+            return None
+        # Vault responded but had nothing — patron never registered.
+        return "no_credentials"
     except Exception as exc:
         logger.warning("Vault session restore failed: %s", exc)
+        return "vault_bootstrapping"
 
 
 def _get_x_credentials():
-    """Get X API credentials: per-user session first, env vars as fallback."""
+    """Get X API credentials: per-user session first, env vars as fallback.
+
+    Raises ``ValueError`` with lifecycle-aware guidance when credentials
+    cannot be resolved.
+    """
     from excalibur_mcp.vault import get_session
     from excalibur_mcp.x_client import XCredentials
 
@@ -254,7 +295,11 @@ def _get_x_credentials():
                 access_token_secret=session.x_access_token_secret,
             )
 
-    return XCredentials.from_env()
+    # Env-var fallback (operator-level credentials)
+    try:
+        return XCredentials.from_env()
+    except KeyError:
+        raise ValueError(_SESSION_GUIDANCE["no_credentials"])
 
 
 
@@ -463,17 +508,25 @@ async def post_tweet(
 
     # Restore session from Neon vault on cold start
     user_id = OperatorRuntime.get_current_user_id()
+    restore_situation: str | None = None
     if user_id:
-        await _ensure_session(user_id, npub)
+        restore_situation = await _ensure_session(user_id, npub)
 
     try:
         creds = _get_x_credentials()
-    except KeyError as exc:
+    except ValueError as exc:
         await runtime.rollback_debit(cost_key, npub)
+        # If _ensure_session returned a specific situation, prefer that
+        # over the generic no_credentials from _get_x_credentials.
+        guidance = (
+            _SESSION_GUIDANCE.get(restore_situation, str(exc))
+            if restore_situation
+            else str(exc)
+        )
         return {
-            "error": f"Missing X API credential: {exc}. "
-            "Set X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET "
-            "or call register_credentials to store your personal credentials."
+            "error": guidance,
+            "lifecycle_state": restore_situation or "no_credentials",
+            "next_steps": _ONBOARDING_NEXT_STEPS,
         }
 
     client = XClient(creds)
@@ -488,11 +541,16 @@ async def post_tweet(
             result = await client.post_tweet(converted)
     except XAPIError as exc:
         await runtime.rollback_debit(cost_key, npub)
-        return {
+        result: dict[str, Any] = {
             "error": str(exc),
             "status_code": exc.status_code,
             "detail": exc.detail,
         }
+        # 401/403 from X means credentials are revoked or invalid
+        if exc.status_code in (401, 403):
+            result["lifecycle_state"] = "credentials_invalid"
+            result["guidance"] = _SESSION_GUIDANCE["credentials_invalid"]
+        return result
 
     runtime.fire_and_forget_demand_increment(cost_key)
     return await runtime.inject_low_balance_warning(result, npub)
