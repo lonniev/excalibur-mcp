@@ -67,7 +67,6 @@ PATRON_CREDENTIAL_SERVICE = "excalibur"
 
 TOOL_COSTS: dict[str, int] = {
     # Domain-specific free
-    "health": ToolTier.FREE,
     "register_credentials": ToolTier.FREE,
     "activate_session": ToolTier.FREE,
     # Domain-specific paid
@@ -307,24 +306,6 @@ def _get_x_credentials():
 # MCP Tools — Free (domain-specific)
 # ---------------------------------------------------------------------------
 
-
-@tool
-async def health() -> dict:
-    """Health check — returns service version and status. Free, no credits consumed."""
-    import importlib.metadata as _meta
-
-    versions: dict[str, str] = {"excalibur_mcp": __version__}
-    try:
-        versions["tollbooth_dpyc"] = _meta.version("tollbooth-dpyc")
-    except _meta.PackageNotFoundError:
-        versions["tollbooth_dpyc"] = "unknown"
-
-    return {
-        "service": "excalibur-mcp",
-        "version": __version__,
-        "versions": versions,
-        "status": "ok",
-    }
 
 
 @tool
