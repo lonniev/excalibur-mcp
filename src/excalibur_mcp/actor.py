@@ -57,6 +57,20 @@ _CATALOG: list[ToolPathInfo] = [
         cost_tier="FREE",
         agent_hint="Return the Operator's health and version info.",
     ),
+    ToolPathInfo(
+        tool_name="get_operator_onboarding_status",
+        path=ToolPath.HOT,
+        requires_auth=False,
+        cost_tier="FREE",
+        agent_hint="Report the operator's configuration readiness.",
+    ),
+    ToolPathInfo(
+        tool_name="get_patron_onboarding_status",
+        path=ToolPath.HOT,
+        requires_auth=True,
+        cost_tier="FREE",
+        agent_hint="Report a patron's credential readiness. Use get_operator_onboarding_status instead.",
+    ),
     # ── Delegation (BTCPay via Authority) ────────────────────────
     ToolPathInfo(
         tool_name="purchase_credits",
@@ -188,6 +202,16 @@ class ExcaliburOperator:
         from excalibur_mcp.server import service_status
 
         return await service_status()
+
+    async def get_operator_onboarding_status(self) -> dict[str, Any]:
+        from excalibur_mcp.server import get_operator_onboarding_status
+
+        return await get_operator_onboarding_status()
+
+    async def get_patron_onboarding_status(self, patron_npub: str) -> dict[str, Any]:
+        from excalibur_mcp.server import get_patron_onboarding_status
+
+        return await get_patron_onboarding_status(patron_npub=patron_npub)
 
     # ── Secure Courier (hot-path) ─────────────────────────────────
 
