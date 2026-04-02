@@ -278,18 +278,31 @@ async def _ensure_session(user_id: str, npub: str = "") -> str | None:
         creds = await runtime.load_patron_session(npub, service=PATRON_CREDENTIAL_SERVICE)
         if not creds:
             return "no_credentials"
-        # Validate all required fields are present
-        required = ("x_api_key", "x_api_secret", "x_access_token", "x_access_token_secret")
-        missing = [k for k in required if k not in creds]
-        if missing:
-            logger.warning("Vault credentials for %s missing fields: %s", npub[:20], missing)
+
+        # Patron vault stores access_token + access_token_secret (per-patron).
+        # The app-level api_key + api_secret come from env vars (shared by all patrons).
+        # Also accept the legacy x_-prefixed field names from register_credentials.
+        access_token = creds.get("x_access_token") or creds.get("access_token")
+        access_token_secret = creds.get("x_access_token_secret") or creds.get("access_token_secret")
+
+        if not access_token or not access_token_secret:
+            logger.warning("Vault credentials for %s missing access_token fields", npub[:20])
             return "credentials_incomplete"
+
+        # App-level keys: from vault (register_credentials path) or env vars
+        api_key = creds.get("x_api_key") or os.environ.get("X_API_KEY", "")
+        api_secret = creds.get("x_api_secret") or os.environ.get("X_API_SECRET", "")
+
+        if not api_key or not api_secret:
+            logger.warning("No X API app keys — set X_API_KEY and X_API_SECRET env vars")
+            return "credentials_incomplete"
+
         set_session(
             user_id,
-            creds["x_api_key"],
-            creds["x_api_secret"],
-            creds["x_access_token"],
-            creds["x_access_token_secret"],
+            api_key,
+            api_secret,
+            access_token,
+            access_token_secret,
             npub=npub,
         )
         logger.info("Restored excalibur session for %s from vault.", npub[:20])
