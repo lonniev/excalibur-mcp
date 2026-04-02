@@ -68,7 +68,6 @@ PATRON_CREDENTIAL_SERVICE = "excalibur"
 TOOL_COSTS: dict[str, int] = {
     # Domain-specific free
     "register_credentials": ToolTier.FREE,
-    "activate_session": ToolTier.FREE,
     # Domain-specific paid
     "post_tweet": ToolTier.WRITE,  # 5 api_sats (text only)
     "post_tweet_image": ToolTier.HEAVY,  # 10 api_sats (with image upload)
@@ -215,10 +214,10 @@ def _svg_to_png(svg_markup: str) -> bytes:
 # Patron-facing guidance for each lifecycle state.
 _SESSION_GUIDANCE: dict[str, str] = {
     "vault_bootstrapping": (
-        "The server is establishing its encrypted connection to the "
-        "credential vault. This happens once after a cold start and "
-        "typically completes within 10-15 seconds. "
-        "Action: repeat your request shortly — no re-authentication needed."
+        "Your credentials are being synced from secure storage — this "
+        "happens once after the server restarts and usually takes 10-15 "
+        "seconds. Action: try your request again in a moment. No "
+        "re-authentication is needed."
     ),
     "no_credentials": (
         "No X API credentials are stored for your identity. This is "
@@ -379,63 +378,6 @@ async def register_credentials(
     }
 
 
-@tool
-async def activate_session(passphrase: str) -> dict[str, Any]:
-    """Activate your personal X API session by decrypting stored credentials.
-
-    Call this at the start of each session. Provide the same passphrase you
-    used during register_credentials.
-
-    Args:
-        passphrase: The passphrase you used when registering credentials
-    """
-    from excalibur_mcp.vault import (
-        CredentialNotFoundError,
-        DecryptionError,
-        VaultNotConfiguredError,
-        decrypt_credentials,
-        set_session,
-    )
-
-    try:
-        user_id = OperatorRuntime.require_user_id()
-        vault = _get_vault()
-        blob = await vault.fetch(user_id)
-        creds = decrypt_credentials(blob, passphrase)
-    except (ValueError, VaultNotConfiguredError, CredentialNotFoundError, DecryptionError) as e:
-        result: dict[str, Any] = {"success": False, "error": str(e)}
-        if isinstance(e, CredentialNotFoundError):
-            result["next_steps"] = _ONBOARDING_NEXT_STEPS
-            result["hint"] = (
-                "If you already completed the Secure Courier flow, you may not "
-                "have included a passphrase. Re-run receive_credentials(sender_npub=<npub>, "
-                "passphrase=<passphrase>) to store credentials in the passphrase vault."
-            )
-        return result
-
-    npub = creds.get("npub")
-    set_session(
-        user_id,
-        creds["x_api_key"],
-        creds["x_api_secret"],
-        creds["x_access_token"],
-        creds["x_access_token_secret"],
-        npub=npub,
-    )
-
-    result: dict[str, Any] = {
-        "success": True,
-        "message": "Session activated. post_tweet now uses your personal credentials.",
-    }
-    if npub:
-        result["dpyc_npub"] = npub
-    else:
-        result["dpyc_warning"] = (
-            "Your vault credentials were registered before npub was required. "
-            "Credit operations will not work until you re-register with an npub."
-        )
-    return result
-
 
 # ---------------------------------------------------------------------------
 # MCP Tools — Paid (domain-specific)
@@ -504,11 +446,15 @@ async def post_tweet(
             if restore_situation
             else str(exc)
         )
-        return {
+        result: dict[str, Any] = {
             "error": guidance,
             "lifecycle_state": restore_situation or "no_credentials",
-            "next_steps": _ONBOARDING_NEXT_STEPS,
         }
+        # Only include onboarding next_steps when credentials are actually missing,
+        # NOT for transient cold-start situations like vault_bootstrapping.
+        if restore_situation not in ("vault_bootstrapping", "session_expired"):
+            result["next_steps"] = _ONBOARDING_NEXT_STEPS
+        return result
 
     client = XClient(creds)
 
