@@ -114,11 +114,11 @@ runtime = OperatorRuntime(
                 required=True, sensitive=True,
                 description="Your BTCPay Store ID.",
             ),
-            "x_api_key": FieldSpec(
+            "api_key": FieldSpec(
                 required=True, sensitive=True,
                 description="X/Twitter API consumer key (app-level, shared across patrons).",
             ),
-            "x_api_secret": FieldSpec(
+            "api_secret": FieldSpec(
                 required=True, sensitive=True,
                 description="X/Twitter API consumer secret (app-level, shared across patrons).",
             ),
@@ -245,11 +245,10 @@ _SESSION_GUIDANCE: dict[str, dict[str, str]] = {
     "credentials_incomplete": {
         "status": "INCOMPLETE — missing required fields",
         "message": (
-            "X API credentials were found in the vault but some required "
-            "fields are missing (x_api_key, x_api_secret, x_access_token, "
-            "x_access_token_secret)."
+            "X API credentials are incomplete. Patron needs access_token "
+            "and access_token_secret. Operator needs api_key and api_secret."
         ),
-        "action": "Re-deliver complete credentials via Secure Courier or register_credentials.",
+        "action": "Re-deliver credentials via Secure Courier or register_credentials.",
     },
     "session_expired": {
         "status": "TRANSIENT — session timed out",
@@ -298,14 +297,14 @@ async def _ensure_session(user_id: str, npub: str = "") -> str | None:
 
         # App-level keys: from patron vault (register_credentials) or operator vault.
         # No env vars — nsec is the only env var.
-        api_key = creds.get("x_api_key")
-        api_secret = creds.get("x_api_secret")
+        api_key = creds.get("api_key") or creds.get("x_api_key")
+        api_secret = creds.get("api_secret") or creds.get("x_api_secret")
 
         if not api_key or not api_secret:
             # Load from operator credentials (shared across all patrons)
-            op_creds = await runtime.load_credentials(["x_api_key", "x_api_secret"])
-            api_key = api_key or op_creds.get("x_api_key", "")
-            api_secret = api_secret or op_creds.get("x_api_secret", "")
+            op_creds = await runtime.load_credentials(["api_key", "api_secret"])
+            api_key = api_key or op_creds.get("api_key", "")
+            api_secret = api_secret or op_creds.get("api_secret", "")
 
         if not api_key or not api_secret:
             logger.warning("No X API app keys in operator vault for %s", npub[:20])
@@ -359,29 +358,24 @@ def _get_x_credentials():
 
 @tool
 async def register_credentials(
-    x_api_key: str,
-    x_api_secret: str,
-    x_access_token: str,
-    x_access_token_secret: str,
-    passphrase: str,
+    access_token: str,
+    access_token_secret: str,
     npub: str,
 ) -> dict[str, Any]:
-    """Register your X API credentials for multi-tenant access.
+    """Register your X API patron credentials.
 
-    First-time setup: encrypts your X API OAuth credentials with your
-    passphrase and stores the encrypted blob in the operator's credential
-    vault. The passphrase is never stored — you will need it each session
-    to activate access.
+    Store your personal X/Twitter OAuth access tokens. The app-level
+    API keys are managed by the operator — you only need your personal
+    access token and secret from the X Developer Portal.
+
+    Prefer Secure Courier delivery over this tool for better security.
 
     Args:
-        x_api_key: Your X API consumer key
-        x_api_secret: Your X API consumer secret
-        x_access_token: Your X API access token
-        x_access_token_secret: Your X API access token secret
-        passphrase: A passphrase to encrypt your credentials (remember this!)
+        access_token: Your X API access token
+        access_token_secret: Your X API access token secret
         npub: Your **patron** Nostr public key in bech32 format (npub1...)
     """
-    from excalibur_mcp.vault import encrypt_credentials, set_session
+    from excalibur_mcp.vault import set_session
 
     if not npub.startswith("npub1") or len(npub) < 60:
         return {
@@ -397,27 +391,24 @@ async def register_credentials(
     except ValueError as e:
         return {"success": False, "error": str(e)}
 
-    try:
-        vault = _get_vault()
-    except Exception as e:
-        return {"success": False, "error": f"Vault not available: {e}"}
-
-    blob = encrypt_credentials(
-        x_api_key, x_api_secret, x_access_token, x_access_token_secret,
-        passphrase, npub=npub,
-    )
-    await vault.store(user_id, blob)
+    # Load operator app keys from vault
+    op_creds = await runtime.load_credentials(["api_key", "api_secret"])
+    api_key = op_creds.get("api_key", "")
+    api_secret = op_creds.get("api_secret", "")
+    if not api_key or not api_secret:
+        return {
+            "success": False,
+            "error": "Operator X API app keys not configured. Deliver api_key and api_secret via Secure Courier to the operator.",
+        }
 
     set_session(
-        user_id, x_api_key, x_api_secret, x_access_token, x_access_token_secret, npub=npub
+        user_id, api_key, api_secret, access_token, access_token_secret, npub=npub
     )
 
-    # Persist to Neon vault for cross-restart survival
+    # Persist patron tokens to Neon vault for cross-restart survival
     await runtime.store_patron_session(npub, {
-        "x_api_key": x_api_key,
-        "x_api_secret": x_api_secret,
-        "x_access_token": x_access_token,
-        "x_access_token_secret": x_access_token_secret,
+        "access_token": access_token,
+        "access_token_secret": access_token_secret,
     }, service=PATRON_CREDENTIAL_SERVICE)
 
     return {
