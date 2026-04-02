@@ -100,7 +100,7 @@ runtime = OperatorRuntime(
     tool_costs=TOOL_COSTS,
     operator_credential_template=CredentialTemplate(
         service="excalibur-operator",
-        version=1,
+        version=2,
         fields={
             "btcpay_host": FieldSpec(
                 required=True, sensitive=True,
@@ -114,8 +114,16 @@ runtime = OperatorRuntime(
                 required=True, sensitive=True,
                 description="Your BTCPay Store ID.",
             ),
+            "x_api_key": FieldSpec(
+                required=True, sensitive=True,
+                description="X/Twitter API consumer key (app-level, shared across patrons).",
+            ),
+            "x_api_secret": FieldSpec(
+                required=True, sensitive=True,
+                description="X/Twitter API consumer secret (app-level, shared across patrons).",
+            ),
         },
-        description="BTCPay Lightning payment credentials",
+        description="BTCPay Lightning payment + X API app credentials",
     ),
     patron_credential_template=CredentialTemplate(
         service="excalibur",
@@ -280,8 +288,7 @@ async def _ensure_session(user_id: str, npub: str = "") -> str | None:
             return "no_credentials"
 
         # Patron vault stores access_token + access_token_secret (per-patron).
-        # The app-level api_key + api_secret come from env vars (shared by all patrons).
-        # Also accept the legacy x_-prefixed field names from register_credentials.
+        # Also accept the x_-prefixed names from register_credentials.
         access_token = creds.get("x_access_token") or creds.get("access_token")
         access_token_secret = creds.get("x_access_token_secret") or creds.get("access_token_secret")
 
@@ -289,12 +296,19 @@ async def _ensure_session(user_id: str, npub: str = "") -> str | None:
             logger.warning("Vault credentials for %s missing access_token fields", npub[:20])
             return "credentials_incomplete"
 
-        # App-level keys: from vault (register_credentials path) or env vars
-        api_key = creds.get("x_api_key") or os.environ.get("X_API_KEY", "")
-        api_secret = creds.get("x_api_secret") or os.environ.get("X_API_SECRET", "")
+        # App-level keys: from patron vault (register_credentials) or operator vault.
+        # No env vars — nsec is the only env var.
+        api_key = creds.get("x_api_key")
+        api_secret = creds.get("x_api_secret")
 
         if not api_key or not api_secret:
-            logger.warning("No X API app keys — set X_API_KEY and X_API_SECRET env vars")
+            # Load from operator credentials (shared across all patrons)
+            op_creds = await runtime.load_credentials(["x_api_key", "x_api_secret"])
+            api_key = api_key or op_creds.get("x_api_key", "")
+            api_secret = api_secret or op_creds.get("x_api_secret", "")
+
+        if not api_key or not api_secret:
+            logger.warning("No X API app keys in operator vault for %s", npub[:20])
             return "credentials_incomplete"
 
         set_session(
@@ -313,10 +327,11 @@ async def _ensure_session(user_id: str, npub: str = "") -> str | None:
 
 
 def _get_x_credentials():
-    """Get X API credentials: per-user session first, env vars as fallback.
+    """Get X API credentials from the in-memory session.
 
     Raises ``ValueError`` with lifecycle-aware guidance when credentials
-    cannot be resolved.
+    cannot be resolved. No env var fallback — all credentials come from
+    the Neon vault via Secure Courier.
     """
     from excalibur_mcp.vault import get_session
     from excalibur_mcp.x_client import XCredentials
@@ -332,11 +347,7 @@ def _get_x_credentials():
                 access_token_secret=session.x_access_token_secret,
             )
 
-    # Env-var fallback (operator-level credentials)
-    try:
-        return XCredentials.from_env()
-    except KeyError:
-        raise ValueError(_SESSION_GUIDANCE["no_credentials"])
+    raise ValueError(_SESSION_GUIDANCE["no_credentials"]["message"])
 
 
 
