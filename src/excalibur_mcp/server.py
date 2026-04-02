@@ -255,21 +255,30 @@ async def _ensure_session(user_id: str, npub: str = "") -> str | None:
         return None
     try:
         creds = await runtime.load_patron_session(npub, service=PATRON_CREDENTIAL_SERVICE)
-        if creds:
-            set_session(
-                user_id,
-                creds["x_api_key"],
-                creds["x_api_secret"],
-                creds["x_access_token"],
-                creds["x_access_token_secret"],
-                npub=npub,
-            )
-            logger.info("Restored excalibur session for %s from vault.", npub[:20])
-            return None
-        # Vault responded but had nothing — patron never registered.
-        return "no_credentials"
+        if not creds:
+            # Vault responded but had nothing — patron never registered.
+            return "no_credentials"
+        # Validate all required fields are present
+        missing = [k for k in ("x_api_key", "x_api_secret", "x_access_token", "x_access_token_secret") if k not in creds]
+        if missing:
+            logger.warning("Vault credentials for %s missing fields: %s", npub[:20], missing)
+            return "credentials_invalid"
+        set_session(
+            user_id,
+            creds["x_api_key"],
+            creds["x_api_secret"],
+            creds["x_access_token"],
+            creds["x_access_token_secret"],
+            npub=npub,
+        )
+        logger.info("Restored excalibur session for %s from vault.", npub[:20])
+        return None
     except Exception as exc:
-        logger.warning("Vault session restore failed: %s", exc)
+        logger.warning("Vault session restore failed (%s): %s", type(exc).__name__, exc)
+        # Distinguish vault connection issues from other errors
+        exc_str = str(exc).lower()
+        if "bootstrap" in exc_str or "neon" in exc_str or "connection" in exc_str or "vault" in exc_str:
+            return "vault_bootstrapping"
         return "vault_bootstrapping"
 
 
@@ -432,8 +441,11 @@ async def post_tweet(
     # Restore session from Neon vault on cold start
     user_id = OperatorRuntime.get_current_user_id()
     restore_situation: str | None = None
+    restore_detail: str | None = None
     if user_id:
         restore_situation = await _ensure_session(user_id, npub)
+        if restore_situation:
+            logger.info("Session restore for %s: %s", npub[:20], restore_situation)
 
     try:
         creds = _get_x_credentials()
@@ -449,6 +461,7 @@ async def post_tweet(
         result: dict[str, Any] = {
             "error": guidance,
             "lifecycle_state": restore_situation or "no_credentials",
+            "credential_error_detail": str(exc),
         }
         # Only include onboarding next_steps when credentials are actually missing,
         # NOT for transient cold-start situations like vault_bootstrapping.
