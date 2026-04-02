@@ -9,12 +9,10 @@ domain-specific X/Twitter tools are defined here.
 from __future__ import annotations
 
 import logging
-import os
 from typing import Annotated, Any
 
-from pydantic import Field
-
 from fastmcp import FastMCP
+from pydantic import Field
 from tollbooth.constants import ToolTier
 from tollbooth.credential_templates import CredentialTemplate, FieldSpec
 from tollbooth.runtime import OperatorRuntime, register_standard_tools
@@ -453,7 +451,6 @@ async def post_tweet(
     # Restore session from Neon vault on cold start
     user_id = OperatorRuntime.get_current_user_id()
     restore_situation: str | None = None
-    restore_detail: str | None = None
     if user_id:
         restore_situation = await _ensure_session(user_id, npub)
         if restore_situation:
