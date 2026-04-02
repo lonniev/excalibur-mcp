@@ -212,32 +212,53 @@ def _svg_to_png(svg_markup: str) -> bytes:
 # ---------------------------------------------------------------------------
 
 # Patron-facing guidance for each lifecycle state.
-_SESSION_GUIDANCE: dict[str, str] = {
-    "vault_bootstrapping": (
-        "Your credentials are being synced from secure storage — this "
-        "happens once after the server restarts and usually takes 10-15 "
-        "seconds. Action: try your request again in a moment. No "
-        "re-authentication is needed."
-    ),
-    "no_credentials": (
-        "No X API credentials are stored for your identity. This is "
-        "expected on first use. "
-        "Action: call register_credentials with your X API keys (api_key, "
-        "api_secret, access_token, access_token_secret), or use "
-        "request_patron_credentials for Secure Courier delivery."
-    ),
-    "session_expired": (
-        "Your in-memory session timed out but vault credentials exist. "
-        "The system attempted automatic restoration but it did not succeed. "
-        "Action: repeat your request — vault restoration should complete "
-        "transparently on the next call."
-    ),
-    "credentials_invalid": (
-        "Your X API credentials were found but X rejected them — they may "
-        "have been revoked or changed in the X Developer Portal. "
-        "Action: call register_credentials with fresh X API keys from "
-        "your X Developer Portal."
-    ),
+_SESSION_GUIDANCE: dict[str, dict[str, str]] = {
+    "vault_bootstrapping": {
+        "status": "TRANSIENT — vault syncing",
+        "message": (
+            "The credential vault is syncing after a server restart. "
+            "This usually takes 10-15 seconds."
+        ),
+        "action": "Retry in a moment. No re-authentication needed.",
+    },
+    "no_credentials": {
+        "status": "ABSENT — no credentials stored",
+        "message": (
+            "No X API credentials are stored in the vault for this npub. "
+            "Either credentials were never delivered, or they were stored "
+            "under a different identity."
+        ),
+        "action": (
+            "Deliver X API credentials via Secure Courier "
+            "(request_patron_credentials → Nostr DM → receive_patron_credentials), "
+            "or call register_credentials directly."
+        ),
+    },
+    "credentials_incomplete": {
+        "status": "INCOMPLETE — missing required fields",
+        "message": (
+            "X API credentials were found in the vault but some required "
+            "fields are missing (x_api_key, x_api_secret, x_access_token, "
+            "x_access_token_secret)."
+        ),
+        "action": "Re-deliver complete credentials via Secure Courier or register_credentials.",
+    },
+    "session_expired": {
+        "status": "TRANSIENT — session timed out",
+        "message": (
+            "The in-memory session expired but vault credentials exist. "
+            "Automatic restoration was attempted."
+        ),
+        "action": "Retry your request. Restoration completes transparently.",
+    },
+    "credentials_rejected": {
+        "status": "REJECTED — X API refused the credentials",
+        "message": (
+            "X API credentials were found and loaded, but X rejected them. "
+            "They may have been revoked or changed in the X Developer Portal."
+        ),
+        "action": "Deliver fresh X API credentials via Secure Courier or register_credentials.",
+    },
 }
 
 
@@ -256,13 +277,13 @@ async def _ensure_session(user_id: str, npub: str = "") -> str | None:
     try:
         creds = await runtime.load_patron_session(npub, service=PATRON_CREDENTIAL_SERVICE)
         if not creds:
-            # Vault responded but had nothing — patron never registered.
             return "no_credentials"
         # Validate all required fields are present
-        missing = [k for k in ("x_api_key", "x_api_secret", "x_access_token", "x_access_token_secret") if k not in creds]
+        required = ("x_api_key", "x_api_secret", "x_access_token", "x_access_token_secret")
+        missing = [k for k in required if k not in creds]
         if missing:
             logger.warning("Vault credentials for %s missing fields: %s", npub[:20], missing)
-            return "credentials_invalid"
+            return "credentials_incomplete"
         set_session(
             user_id,
             creds["x_api_key"],
@@ -275,10 +296,6 @@ async def _ensure_session(user_id: str, npub: str = "") -> str | None:
         return None
     except Exception as exc:
         logger.warning("Vault session restore failed (%s): %s", type(exc).__name__, exc)
-        # Distinguish vault connection issues from other errors
-        exc_str = str(exc).lower()
-        if "bootstrap" in exc_str or "neon" in exc_str or "connection" in exc_str or "vault" in exc_str:
-            return "vault_bootstrapping"
         return "vault_bootstrapping"
 
 
@@ -451,21 +468,19 @@ async def post_tweet(
         creds = _get_x_credentials()
     except ValueError as exc:
         await runtime.rollback_debit(cost_key, npub)
-        # If _ensure_session returned a specific situation, prefer that
-        # over the generic no_credentials from _get_x_credentials.
-        guidance = (
-            _SESSION_GUIDANCE.get(restore_situation, str(exc))
-            if restore_situation
-            else str(exc)
-        )
+        state = restore_situation or "no_credentials"
+        guidance = _SESSION_GUIDANCE.get(state, {
+            "status": f"ERROR — {state}",
+            "message": str(exc),
+            "action": "Check the credential state and retry.",
+        })
         result: dict[str, Any] = {
-            "error": guidance,
-            "lifecycle_state": restore_situation or "no_credentials",
-            "credential_error_detail": str(exc),
+            "credential_state": state,
+            **guidance,
         }
-        # Only include onboarding next_steps when credentials are actually missing,
-        # NOT for transient cold-start situations like vault_bootstrapping.
-        if restore_situation not in ("vault_bootstrapping", "session_expired"):
+        # Include onboarding steps only when credentials are actually
+        # absent or incomplete — not for transient situations.
+        if state in ("no_credentials", "credentials_incomplete"):
             result["next_steps"] = _ONBOARDING_NEXT_STEPS
         return result
 
@@ -488,8 +503,8 @@ async def post_tweet(
         }
         # 401/403 from X means credentials are revoked or invalid
         if exc.status_code in (401, 403):
-            result["lifecycle_state"] = "credentials_invalid"
-            result["guidance"] = _SESSION_GUIDANCE["credentials_invalid"]
+            result["credential_state"] = "credentials_rejected"
+            result.update(_SESSION_GUIDANCE["credentials_rejected"])
         return result
 
     runtime.fire_and_forget_demand_increment(cost_key)
