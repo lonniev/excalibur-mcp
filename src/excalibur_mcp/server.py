@@ -55,9 +55,6 @@ _ONBOARDING_NEXT_STEPS = {
     "step_4": "Once the user confirms they replied, call receive_credentials(sender_npub=<npub>) to vault the credentials for future sessions.",
 }
 
-# Default vault directory (operator can override via EXCALIBUR_VAULT_DIR)
-_DEFAULT_VAULT_DIR = os.path.join(os.path.expanduser("~"), ".excalibur", "vault")
-
 # Service name for Neon vault patron session persistence
 PATRON_CREDENTIAL_SERVICE = "excalibur"
 
@@ -181,23 +178,6 @@ register_standard_tools(
 # ---------------------------------------------------------------------------
 # Credential vault singleton
 # ---------------------------------------------------------------------------
-
-_vault_instance = None
-
-
-def _get_vault():
-    """Get or create the FileVault singleton."""
-    global _vault_instance
-    if _vault_instance is not None:
-        return _vault_instance
-    from excalibur_mcp.vault import FileVault
-
-    settings = get_settings()
-    vault_dir = settings.excalibur_vault_dir or os.environ.get(
-        "EXCALIBUR_VAULT_DIR", _DEFAULT_VAULT_DIR
-    )
-    _vault_instance = FileVault(vault_dir)
-    return _vault_instance
 
 
 # ---------------------------------------------------------------------------

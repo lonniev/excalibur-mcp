@@ -28,13 +28,9 @@ class Settings(BaseSettings):
     tollbooth_nostr_operator_nsec: str | None = None
     tollbooth_nostr_relays: str | None = None
 
-    # ── Credit economics (tuning with defaults) ──────────────────────
+    # ── Tuning (defaults are fine) ───────────────────────────────────
     seed_balance_sats: int = 0
-    credit_ttl_seconds: int | None = 604800  # 7 days
     dpyc_registry_cache_ttl_seconds: int = 300
-
-    # ── Domain tuning ────────────────────────────────────────────────
-    excalibur_vault_dir: str | None = None
 
     # ── Constraint Engine (opt-in) ───────────────────────────────────
     constraints_enabled: bool = False
