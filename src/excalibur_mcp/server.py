@@ -196,8 +196,6 @@ _SESSION_GUIDANCE: dict[str, dict[str, str]] = {
     },
 }
 
-# In-memory PKCE verifier store (keyed by patron npub, short-lived)
-_pending_verifiers: dict[str, str] = {}
 
 
 async def _ensure_session(user_id: str, npub: str = "") -> str | None:
@@ -314,8 +312,11 @@ async def begin_oauth(npub: str = "") -> dict[str, Any]:
     from excalibur_mcp.oauth_flow import begin_oauth_flow
     authorize_url, verifier = begin_oauth_flow(npub, client_id, redirect_uri)
 
-    # Store verifier in memory (short-lived, keyed by npub)
-    _pending_verifiers[npub] = verifier
+    # Store verifier in vault (survives across Horizon SSE connections)
+    await runtime.store_patron_session(npub, {
+        "pkce_verifier": verifier,
+        "redirect_uri": redirect_uri,
+    }, service=PATRON_CREDENTIAL_SERVICE)
 
     return {
         "success": True,
@@ -348,12 +349,15 @@ async def check_oauth_status(npub: str = "") -> dict[str, Any]:
     except ValueError as e:
         return {"success": False, "error": str(e)}
 
-    verifier = _pending_verifiers.get(npub)
+    # Load PKCE verifier and redirect_uri from vault (stored by begin_oauth)
+    pending = await runtime.load_patron_session(npub, service=PATRON_CREDENTIAL_SERVICE)
+    verifier = (pending or {}).get("pkce_verifier")
     if not verifier:
         return {
             "success": False,
             "error": "No pending OAuth flow for this npub. Call begin_oauth first.",
         }
+    stored_redirect_uri = (pending or {}).get("redirect_uri", "")
 
     # Load operator OAuth2 app credentials
     op_creds = await runtime.load_credentials(["client_id", "client_secret"])
@@ -362,7 +366,7 @@ async def check_oauth_status(npub: str = "") -> dict[str, Any]:
     if not client_id or not client_secret:
         return {"success": False, "error": "Operator OAuth2 credentials not configured."}
 
-    # Resolve collector and redirect URI
+    # Resolve collector URL
     try:
         from tollbooth.registry import resolve_service_by_name
         settings = get_settings()
@@ -371,10 +375,17 @@ async def check_oauth_status(npub: str = "") -> dict[str, Any]:
             cache_ttl_seconds=settings.dpyc_registry_cache_ttl_seconds,
         )
         collector_url = svc["url"].rstrip("/")
-        callback_svc = await resolve_service_by_name("tollbooth-oauth2-callback")
-        redirect_uri = callback_svc["url"].rstrip("/") + "/callback"
     except Exception as e:
-        return {"success": False, "error": f"Failed to resolve OAuth2 services: {e}"}
+        return {"success": False, "error": f"Failed to resolve OAuth2 collector: {e}"}
+
+    # Use stored redirect_uri (must match what was used in begin_oauth)
+    redirect_uri = stored_redirect_uri
+    if not redirect_uri:
+        try:
+            callback_svc = await resolve_service_by_name("tollbooth-oauth2-callback")
+            redirect_uri = callback_svc["url"].rstrip("/") + "/callback"
+        except Exception as e:
+            return {"success": False, "error": f"Failed to resolve callback: {e}"}
 
     # Retrieve auth code from collector
     from tollbooth.oauth2_collector import retrieve_code_from_collector
@@ -392,13 +403,9 @@ async def check_oauth_status(npub: str = "") -> dict[str, Any]:
             code, client_id, client_secret, redirect_uri, verifier,
         )
     except Exception as e:
-        _pending_verifiers.pop(npub, None)
         return {"success": False, "error": f"Token exchange failed: {e}"}
 
-    # Clean up verifier
-    _pending_verifiers.pop(npub, None)
-
-    # Store token in vault
+    # Store tokens in vault (replaces the temporary pkce_verifier entry)
     await runtime.store_patron_session(npub, {
         "access_token": token["access_token"],
         "refresh_token": token.get("refresh_token", ""),
