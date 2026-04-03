@@ -46,11 +46,11 @@ tool = make_slug_tool(mcp, "excalibur")
 # can self-guide a first-time user through Secure Courier registration
 # without the user needing to explain the process.
 _ONBOARDING_NEXT_STEPS = {
-    "action": "secure_courier_onboarding",
-    "step_1": "Ask the user for their **patron npub** (the npub they registered as a DPYC Citizen). They can get one from the dpyc-oracle's how_to_join() tool.",
-    "step_2": "Call request_credential_channel(recipient_npub=<npub>) to send a welcome DM to the user's Nostr client.",
-    "step_3": "Tell the user to open their Nostr client (Primal, Damus, etc.) and reply to the welcome DM with their X API credentials in the JSON format shown. Credentials must NEVER appear in this chat.",
-    "step_4": "Once the user confirms they replied, call receive_credentials(sender_npub=<npub>) to vault the credentials for future sessions.",
+    "action": "oauth2_authorization",
+    "step_1": "Ask the user for their **patron npub** (npub1...).",
+    "step_2": "Call begin_oauth(npub=<npub>) to get an authorization URL.",
+    "step_3": "Tell the user to open the URL in their browser and authorize the app on X.",
+    "step_4": "Call check_oauth_status(npub=<npub>) to complete the token exchange.",
 }
 
 # Service name for Neon vault patron session persistence
@@ -62,7 +62,8 @@ PATRON_CREDENTIAL_SERVICE = "excalibur"
 
 TOOL_COSTS: dict[str, int] = {
     # Domain-specific free
-    "register_credentials": ToolTier.FREE,
+    "begin_oauth": ToolTier.FREE,
+    "check_oauth_status": ToolTier.FREE,
     # Domain-specific paid
     "post_tweet": ToolTier.WRITE,  # 5 api_sats (text only)
     "post_tweet_image": ToolTier.HEAVY,  # 10 api_sats (with image upload)
@@ -95,7 +96,7 @@ runtime = OperatorRuntime(
     tool_costs=TOOL_COSTS,
     operator_credential_template=CredentialTemplate(
         service="excalibur-operator",
-        version=2,
+        version=3,
         fields={
             "btcpay_host": FieldSpec(
                 required=True, sensitive=True,
@@ -109,47 +110,21 @@ runtime = OperatorRuntime(
                 required=True, sensitive=True,
                 description="Your BTCPay Store ID.",
             ),
-            "api_key": FieldSpec(
+            "client_id": FieldSpec(
                 required=True, sensitive=True,
-                description="X/Twitter API consumer key (app-level, shared across patrons).",
+                description="X OAuth2 Client ID (from X Developer Portal).",
             ),
-            "api_secret": FieldSpec(
+            "client_secret": FieldSpec(
                 required=True, sensitive=True,
-                description="X/Twitter API consumer secret (app-level, shared across patrons).",
+                description="X OAuth2 Client Secret (from X Developer Portal).",
             ),
         },
-        description="BTCPay Lightning payment + X API app credentials",
+        description="BTCPay Lightning payment + X OAuth2 app credentials",
     ),
-    patron_credential_template=CredentialTemplate(
-        service="excalibur",
-        version=3,
-        fields={
-            "access_token": FieldSpec(
-                required=True,
-                sensitive=True,
-                description=(
-                    "Your X/Twitter OAuth 1.0a Access Token. Found in the "
-                    "X Developer Portal under your app's Keys and Tokens."
-                ),
-            ),
-            "access_token_secret": FieldSpec(
-                required=True,
-                sensitive=True,
-                description=(
-                    "Your X/Twitter OAuth 1.0a Access Token Secret. Found "
-                    "alongside the Access Token in the Developer Portal."
-                ),
-            ),
-        },
-        description="X/Twitter posting credentials",
-    ),
+    # No patron_credential_template — patron tokens come from OAuth2 browser flow
     operator_credential_greeting=(
         "Hi \u2014 I\u2019m eXcalibur, a Tollbooth MCP service for posting formatted "
-        "content to X. You (the operator) need to provide BTCPay credentials."
-    ),
-    patron_credential_greeting=(
-        "Hi \u2014 I\u2019m eXcalibur, a Tollbooth MCP service for posting formatted "
-        "content to X. You (or your AI agent) requested a credential channel."
+        "content to X. You (the operator) need to provide BTCPay and X OAuth2 credentials."
     ),
 )
 
@@ -201,59 +176,40 @@ def _svg_to_png(svg_markup: str) -> bytes:
 _SESSION_GUIDANCE: dict[str, dict[str, str]] = {
     "vault_bootstrapping": {
         "status": "TRANSIENT — vault syncing",
-        "message": (
-            "The credential vault is syncing after a server restart. "
-            "This usually takes 10-15 seconds."
-        ),
-        "action": "Retry in a moment. No re-authentication needed.",
+        "message": "Credential vault is syncing after restart. Retry in a moment.",
+        "action": "Retry in 10-15 seconds.",
     },
     "no_credentials": {
-        "status": "ABSENT — no credentials stored",
-        "message": (
-            "No X API credentials are stored in the vault for this npub. "
-            "Either credentials were never delivered, or they were stored "
-            "under a different identity."
-        ),
-        "action": (
-            "Deliver X API credentials via Secure Courier "
-            "(request_patron_credentials → Nostr DM → receive_patron_credentials), "
-            "or call register_credentials directly."
-        ),
+        "status": "ABSENT — not authorized",
+        "message": "No X authorization found for this npub.",
+        "action": "Call begin_oauth(npub) to start the X OAuth2 authorization flow.",
     },
-    "credentials_incomplete": {
-        "status": "INCOMPLETE — missing required fields",
-        "message": (
-            "X API credentials are incomplete. Patron needs access_token "
-            "and access_token_secret. Operator needs api_key and api_secret."
-        ),
-        "action": "Re-deliver credentials via Secure Courier or register_credentials.",
-    },
-    "session_expired": {
-        "status": "TRANSIENT — session timed out",
-        "message": (
-            "The in-memory session expired but vault credentials exist. "
-            "Automatic restoration was attempted."
-        ),
-        "action": "Retry your request. Restoration completes transparently.",
+    "token_expired": {
+        "status": "EXPIRED — token needs refresh",
+        "message": "X access token expired and refresh failed.",
+        "action": "Call begin_oauth(npub) to re-authorize.",
     },
     "credentials_rejected": {
-        "status": "REJECTED — X API refused the credentials",
-        "message": (
-            "X API credentials were found and loaded, but X rejected them. "
-            "They may have been revoked or changed in the X Developer Portal."
-        ),
-        "action": "Deliver fresh X API credentials via Secure Courier or register_credentials.",
+        "status": "REJECTED — X API refused the token",
+        "message": "X rejected the access token. It may have been revoked.",
+        "action": "Call begin_oauth(npub) to re-authorize.",
     },
 }
 
+# In-memory PKCE verifier store (keyed by patron npub, short-lived)
+_pending_verifiers: dict[str, str] = {}
+
 
 async def _ensure_session(user_id: str, npub: str = "") -> str | None:
-    """Restore credentials from Neon vault into in-memory session on cold start.
+    """Restore OAuth2 Bearer token from vault on cold start.
 
-    Returns the lifecycle situation string if restoration was attempted but
-    failed, or ``None`` on success / nothing to do.
+    Checks expiration and auto-refreshes if needed. Returns lifecycle
+    situation string on failure, or None on success.
     """
-    from excalibur_mcp.vault import get_session, set_session
+    import json
+    import time
+
+    from excalibur_mcp.vault import get_session, set_bearer_session
 
     if get_session(user_id) is not None:
         return None
@@ -264,39 +220,40 @@ async def _ensure_session(user_id: str, npub: str = "") -> str | None:
         if not creds:
             return "no_credentials"
 
-        # Patron vault stores access_token + access_token_secret (per-patron).
-        # Also accept the x_-prefixed names from register_credentials.
-        access_token = creds.get("x_access_token") or creds.get("access_token")
-        access_token_secret = creds.get("x_access_token_secret") or creds.get("access_token_secret")
+        access_token = creds.get("access_token")
+        if not access_token:
+            return "no_credentials"
 
-        if not access_token or not access_token_secret:
-            logger.warning("Vault credentials for %s missing access_token fields", npub[:20])
-            return "credentials_incomplete"
+        # Check expiration and auto-refresh
+        expires_at = float(creds.get("expires_at", 0))
+        if time.time() > expires_at:
+            refresh_token = creds.get("refresh_token", "")
+            if not refresh_token:
+                return "token_expired"
+            # Load operator app creds for refresh
+            op_creds = await runtime.load_credentials(["client_id", "client_secret"])
+            client_id = op_creds.get("client_id", "")
+            client_secret = op_creds.get("client_secret", "")
+            if not client_id or not client_secret:
+                return "token_expired"
+            try:
+                from excalibur_mcp.oauth_flow import refresh_access_token
+                new_token = await refresh_access_token(client_id, client_secret, refresh_token)
+                # Persist refreshed token
+                await runtime.store_patron_session(npub, {
+                    "access_token": new_token["access_token"],
+                    "refresh_token": new_token.get("refresh_token", refresh_token),
+                    "expires_at": str(new_token["expires_at"]),
+                    "token_type": "Bearer",
+                }, service=PATRON_CREDENTIAL_SERVICE)
+                access_token = new_token["access_token"]
+                logger.info("Refreshed X OAuth2 token for %s", npub[:20])
+            except Exception as exc:
+                logger.warning("Token refresh failed for %s: %s", npub[:20], exc)
+                return "token_expired"
 
-        # App-level keys: from patron vault (register_credentials) or operator vault.
-        # No env vars — nsec is the only env var.
-        api_key = creds.get("api_key") or creds.get("x_api_key")
-        api_secret = creds.get("api_secret") or creds.get("x_api_secret")
-
-        if not api_key or not api_secret:
-            # Load from operator credentials (shared across all patrons)
-            op_creds = await runtime.load_credentials(["api_key", "api_secret"])
-            api_key = api_key or op_creds.get("api_key", "")
-            api_secret = api_secret or op_creds.get("api_secret", "")
-
-        if not api_key or not api_secret:
-            logger.warning("No X API app keys in operator vault for %s", npub[:20])
-            return "credentials_incomplete"
-
-        set_session(
-            user_id,
-            api_key,
-            api_secret,
-            access_token,
-            access_token_secret,
-            npub=npub,
-        )
-        logger.info("Restored excalibur session for %s from vault.", npub[:20])
+        set_bearer_session(user_id, access_token, npub=npub)
+        logger.info("Restored excalibur OAuth2 session for %s from vault.", npub[:20])
         return None
     except Exception as exc:
         logger.warning("Vault session restore failed (%s): %s", type(exc).__name__, exc)
@@ -304,96 +261,161 @@ async def _ensure_session(user_id: str, npub: str = "") -> str | None:
 
 
 def _get_x_credentials():
-    """Get X API credentials from the in-memory session.
-
-    Raises ``ValueError`` with lifecycle-aware guidance when credentials
-    cannot be resolved. No env var fallback — all credentials come from
-    the Neon vault via Secure Courier.
-    """
+    """Get X API Bearer token from the in-memory session."""
     from excalibur_mcp.vault import get_session
     from excalibur_mcp.x_client import XCredentials
 
     user_id = OperatorRuntime.get_current_user_id()
     if user_id:
         session = get_session(user_id)
-        if session:
-            return XCredentials(
-                api_key=session.x_api_key,
-                api_secret=session.x_api_secret,
-                access_token=session.x_access_token,
-                access_token_secret=session.x_access_token_secret,
-            )
+        if session and session.bearer_token:
+            return XCredentials(bearer_token=session.bearer_token)
 
     raise ValueError(_SESSION_GUIDANCE["no_credentials"]["message"])
 
 
-
 # ---------------------------------------------------------------------------
-# MCP Tools — Free (domain-specific)
+# MCP Tools — Free (OAuth2 flow)
 # ---------------------------------------------------------------------------
-
 
 
 @tool
-async def register_credentials(
-    access_token: str,
-    access_token_secret: str,
-    npub: str,
-) -> dict[str, Any]:
-    """Register your X API patron credentials.
+async def begin_oauth(npub: str = "") -> dict[str, Any]:
+    """Start the X OAuth2 authorization flow.
 
-    Store your personal X/Twitter OAuth access tokens. The app-level
-    API keys are managed by the operator — you only need your personal
-    access token and secret from the X Developer Portal.
+    Returns an authorization URL. Open it in a browser to authorize
+    this app to post on your behalf. Then call check_oauth_status.
 
-    Prefer Secure Courier delivery over this tool for better security.
+    Free — no credits required.
 
     Args:
-        access_token: Your X API access token
-        access_token_secret: Your X API access token secret
-        npub: Your **patron** Nostr public key in bech32 format (npub1...)
+        npub: Required. Your Nostr public key (npub1...).
     """
-    from excalibur_mcp.vault import set_session
-
-    if not npub.startswith("npub1") or len(npub) < 60:
-        return {
-            "success": False,
-            "error": (
-                "Invalid npub format. Must start with 'npub1' and be at least 60 characters. "
-                "Get your npub from the dpyc-oracle's how_to_join() tool."
-            ),
-        }
-
+    from tollbooth.runtime import resolve_npub
     try:
-        user_id = OperatorRuntime.require_user_id()
+        npub = resolve_npub(npub)
     except ValueError as e:
         return {"success": False, "error": str(e)}
 
-    # Load operator app keys from vault
-    op_creds = await runtime.load_credentials(["api_key", "api_secret"])
-    api_key = op_creds.get("api_key", "")
-    api_secret = op_creds.get("api_secret", "")
-    if not api_key or not api_secret:
-        return {
-            "success": False,
-            "error": "Operator X API app keys not configured. Deliver api_key and api_secret via Secure Courier to the operator.",
-        }
+    # Load operator OAuth2 app credentials
+    op_creds = await runtime.load_credentials(["client_id", "client_secret"])
+    client_id = op_creds.get("client_id", "")
+    if not client_id:
+        return {"success": False, "error": "Operator X OAuth2 client_id not configured."}
 
-    set_session(
-        user_id, api_key, api_secret, access_token, access_token_secret, npub=npub
-    )
+    # Resolve redirect URI from the OAuth2 collector in the registry
+    try:
+        from tollbooth.registry import resolve_service_by_name
+        svc = await resolve_service_by_name("tollbooth-oauth2-callback")
+        redirect_uri = svc["url"].rstrip("/") + "/callback"
+    except Exception as e:
+        return {"success": False, "error": f"Failed to resolve OAuth2 callback: {e}"}
 
-    # Persist patron tokens to Neon vault for cross-restart survival
-    await runtime.store_patron_session(npub, {
-        "access_token": access_token,
-        "access_token_secret": access_token_secret,
-    }, service=PATRON_CREDENTIAL_SERVICE)
+    from excalibur_mcp.oauth_flow import begin_oauth_flow
+    authorize_url, verifier = begin_oauth_flow(npub, client_id, redirect_uri)
+
+    # Store verifier in memory (short-lived, keyed by npub)
+    _pending_verifiers[npub] = verifier
 
     return {
         "success": True,
-        "message": "Credentials registered and session activated.",
-        "userId": user_id,
-        "dpyc_npub": npub,
+        "status": "pending",
+        "authorize_url": authorize_url,
+        "message": (
+            "Open this URL in your browser to authorize with X. "
+            "After authorizing, call check_oauth_status to complete."
+        ),
+    }
+
+
+@tool
+async def check_oauth_status(npub: str = "") -> dict[str, Any]:
+    """Check if the X OAuth2 authorization completed.
+
+    Polls the OAuth2 collector for the authorization code, exchanges
+    it for tokens, and stores them in the vault.
+
+    Free — no credits required.
+
+    Args:
+        npub: Required. Your Nostr public key (npub1...).
+    """
+    import json
+
+    from tollbooth.runtime import resolve_npub
+    try:
+        npub = resolve_npub(npub)
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+
+    verifier = _pending_verifiers.get(npub)
+    if not verifier:
+        return {
+            "success": False,
+            "error": "No pending OAuth flow for this npub. Call begin_oauth first.",
+        }
+
+    # Load operator OAuth2 app credentials
+    op_creds = await runtime.load_credentials(["client_id", "client_secret"])
+    client_id = op_creds.get("client_id", "")
+    client_secret = op_creds.get("client_secret", "")
+    if not client_id or not client_secret:
+        return {"success": False, "error": "Operator OAuth2 credentials not configured."}
+
+    # Resolve collector and redirect URI
+    try:
+        from tollbooth.registry import resolve_service_by_name
+        settings = get_settings()
+        svc = await resolve_service_by_name(
+            "tollbooth-oauth2-collector",
+            cache_ttl_seconds=settings.dpyc_registry_cache_ttl_seconds,
+        )
+        collector_url = svc["url"].rstrip("/")
+        callback_svc = await resolve_service_by_name("tollbooth-oauth2-callback")
+        redirect_uri = callback_svc["url"].rstrip("/") + "/callback"
+    except Exception as e:
+        return {"success": False, "error": f"Failed to resolve OAuth2 services: {e}"}
+
+    # Retrieve auth code from collector
+    from tollbooth.oauth2_collector import retrieve_code_from_collector
+    code = await retrieve_code_from_collector(collector_url, npub)
+    if code is None:
+        return {
+            "status": "pending",
+            "message": "Waiting for browser authorization. Open the URL from begin_oauth.",
+        }
+
+    # Exchange code for tokens
+    try:
+        from excalibur_mcp.oauth_flow import exchange_code_for_token
+        token = await exchange_code_for_token(
+            code, client_id, client_secret, redirect_uri, verifier,
+        )
+    except Exception as e:
+        _pending_verifiers.pop(npub, None)
+        return {"success": False, "error": f"Token exchange failed: {e}"}
+
+    # Clean up verifier
+    _pending_verifiers.pop(npub, None)
+
+    # Store token in vault
+    await runtime.store_patron_session(npub, {
+        "access_token": token["access_token"],
+        "refresh_token": token.get("refresh_token", ""),
+        "expires_at": str(token.get("expires_at", 0)),
+        "token_type": "Bearer",
+    }, service=PATRON_CREDENTIAL_SERVICE)
+
+    # Activate in-memory session
+    user_id = OperatorRuntime.get_current_user_id()
+    if user_id:
+        from excalibur_mcp.vault import set_bearer_session
+        set_bearer_session(user_id, token["access_token"], npub=npub)
+
+    return {
+        "success": True,
+        "status": "completed",
+        "message": "X authorization successful. You can now use post_tweet.",
     }
 
 
@@ -472,7 +494,7 @@ async def post_tweet(
         }
         # Include onboarding steps only when credentials are actually
         # absent or incomplete — not for transient situations.
-        if state in ("no_credentials", "credentials_incomplete"):
+        if state in ("no_credentials", "token_expired"):
             result["next_steps"] = _ONBOARDING_NEXT_STEPS
         return result
 

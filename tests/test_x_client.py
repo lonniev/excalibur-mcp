@@ -13,19 +13,13 @@ from excalibur_mcp.x_client import (
     XAPIError,
     XClient,
     XCredentials,
-    _build_oauth1_header,
     upload_to_postimg,
 )
 
 
 @pytest.fixture
 def creds():
-    return XCredentials(
-        api_key="test-key",
-        api_secret="test-secret",
-        access_token="test-token",
-        access_token_secret="test-token-secret",
-    )
+    return XCredentials(bearer_token="test-bearer-token")
 
 
 @pytest.fixture
@@ -48,45 +42,13 @@ def _mock_response(status_code: int, body: dict) -> MagicMock:
 
 
 class TestXCredentials:
-    def test_from_env(self, monkeypatch):
-        monkeypatch.setenv("X_API_KEY", "k")
-        monkeypatch.setenv("X_API_SECRET", "s")
-        monkeypatch.setenv("X_ACCESS_TOKEN", "t")
-        monkeypatch.setenv("X_ACCESS_TOKEN_SECRET", "ts")
-        c = XCredentials.from_env()
-        assert c.api_key == "k"
-        assert c.access_token_secret == "ts"
-
-    def test_from_env_missing(self, monkeypatch):
-        monkeypatch.delenv("X_API_KEY", raising=False)
-        with pytest.raises(KeyError):
-            XCredentials.from_env()
-
     def test_frozen(self, creds):
         with pytest.raises(AttributeError):
-            creds.api_key = "changed"
+            creds.bearer_token = "changed"
 
-
-# ---------------------------------------------------------------------------
-# OAuth 1.0a header
-# ---------------------------------------------------------------------------
-
-
-class TestOAuth1Header:
-    def test_header_format(self):
-        header = _build_oauth1_header(
-            "POST", "https://api.x.com/2/tweets",
-            "key", "secret", "token", "token_secret",
-        )
-        assert header.startswith("OAuth ")
-        assert "oauth_consumer_key" in header
-        assert "oauth_signature" in header
-        assert "oauth_nonce" in header
-
-    def test_different_nonces(self):
-        h1 = _build_oauth1_header("POST", "https://example.com", "k", "s", "t", "ts")
-        h2 = _build_oauth1_header("POST", "https://example.com", "k", "s", "t", "ts")
-        assert h1 != h2  # nonce is random each time
+    def test_bearer_token(self):
+        c = XCredentials(bearer_token="tok123")
+        assert c.bearer_token == "tok123"
 
 
 # ---------------------------------------------------------------------------
@@ -214,7 +176,7 @@ class TestUploadMedia:
 
             await client.upload_media(b"\x00", "image/png")
             call_args = mock_instance.post.call_args
-            assert "upload.twitter.com" in call_args.args[0]
+            assert "api.x.com/2/media/upload" in call_args.args[0]
 
     @pytest.mark.asyncio
     async def test_missing_media_id(self, client):
@@ -229,7 +191,7 @@ class TestUploadMedia:
 
             with pytest.raises(MediaUploadError) as exc_info:
                 await client.upload_media(b"\x00", "image/jpeg")
-            assert "media_id_string" in exc_info.value.detail
+            assert "media_id" in exc_info.value.detail
 
 
 # ---------------------------------------------------------------------------
@@ -334,7 +296,7 @@ class TestPostTweet:
             call_kwargs = mock_instance.post.call_args
             headers = call_kwargs.kwargs.get("headers", {})
             assert "Authorization" in headers
-            assert headers["Authorization"].startswith("OAuth ")
+            assert headers["Authorization"].startswith("Bearer ")
 
 
 # ---------------------------------------------------------------------------

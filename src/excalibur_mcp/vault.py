@@ -132,21 +132,15 @@ SESSION_TTL_SECONDS = 3600  # 1 hour
 
 @dataclass
 class UserSession:
-    """Per-user session holding decrypted X API credentials."""
+    """Per-user session holding OAuth2 Bearer token."""
 
-    x_api_key: str
-    x_api_secret: str
-    x_access_token: str
-    x_access_token_secret: str
+    bearer_token: str
     npub: str | None = None
     created_at: float = field(default_factory=time.time)
 
     def __repr__(self) -> str:
         age = int(time.time() - self.created_at)
-        return (
-            f"UserSession(npub={self.npub!r}, age={age}s, "
-            f"x_api_key=<redacted>, x_api_secret=<redacted>)"
-        )
+        return f"UserSession(npub={self.npub!r}, age={age}s, bearer=<redacted>)"
 
     @property
     def is_expired(self) -> bool:
@@ -165,22 +159,13 @@ def get_session(user_id: str) -> UserSession | None:
     return _sessions.get(user_id)
 
 
-def set_session(
+def set_bearer_session(
     user_id: str,
-    x_api_key: str,
-    x_api_secret: str,
-    x_access_token: str,
-    x_access_token_secret: str,
+    bearer_token: str,
     npub: str | None = None,
 ) -> UserSession:
-    """Create or replace a session for a user."""
-    session = UserSession(
-        x_api_key=x_api_key,
-        x_api_secret=x_api_secret,
-        x_access_token=x_access_token,
-        x_access_token_secret=x_access_token_secret,
-        npub=npub,
-    )
+    """Create or replace a Bearer token session for a user."""
+    session = UserSession(bearer_token=bearer_token, npub=npub)
     return _sessions.set(user_id, session)
 
 
