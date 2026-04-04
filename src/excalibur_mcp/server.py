@@ -202,7 +202,6 @@ async def _ensure_session(user_id: str, npub: str = "") -> str | None:
     Checks expiration and auto-refreshes if needed. Returns lifecycle
     situation string on failure, or None on success.
     """
-    import json
     import time
 
     from excalibur_mcp.vault import get_session, set_bearer_session
@@ -339,8 +338,6 @@ async def check_oauth_status(npub: str = "") -> dict[str, Any]:
     Args:
         npub: Required. Your Nostr public key (npub1...).
     """
-    import json
-
     from tollbooth.runtime import resolve_npub
     try:
         npub = resolve_npub(npub)
