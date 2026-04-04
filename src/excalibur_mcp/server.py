@@ -13,8 +13,8 @@ from typing import Annotated, Any
 
 from fastmcp import FastMCP
 from pydantic import Field
-from tollbooth.constants import ToolTier
 from tollbooth.credential_templates import CredentialTemplate, FieldSpec
+from tollbooth.tool_identity import STANDARD_IDENTITIES, ToolIdentity
 from tollbooth.runtime import OperatorRuntime, register_standard_tools
 from tollbooth.slug_tools import make_slug_tool
 
@@ -60,13 +60,11 @@ PATRON_CREDENTIAL_SERVICE = "excalibur"
 # Tool cost table (domain tools only — standard tool costs are in the runtime)
 # ---------------------------------------------------------------------------
 
-TOOL_COSTS: dict[str, int] = {
-    # Domain-specific free
-    "begin_oauth": ToolTier.FREE,
-    "check_oauth_status": ToolTier.FREE,
-    # Domain-specific paid
-    "post_tweet": ToolTier.WRITE,  # 5 api_sats (text only)
-    "post_tweet_image": ToolTier.HEAVY,  # 10 api_sats (with image upload)
+TOOL_REGISTRY: dict[str, ToolIdentity] = {
+    "begin_oauth": ToolIdentity(capability="begin_oauth", category="free", intent="Start OAuth2 authorization flow"),
+    "check_oauth_status": ToolIdentity(capability="check_oauth_status", category="free", intent="Check OAuth2 authorization status"),
+    "post_tweet": ToolIdentity(capability="post_social_media", category="write", intent="Post a tweet to X/Twitter"),
+    "post_tweet_image": ToolIdentity(capability="post_social_media_image", category="heavy", intent="Post a tweet with image to X/Twitter"),
 }
 
 # ---------------------------------------------------------------------------
@@ -93,7 +91,7 @@ def get_settings():
 
 runtime = OperatorRuntime(
     service_name="eXcalibur",
-    tool_costs=TOOL_COSTS,
+    tool_registry={**STANDARD_IDENTITIES, **TOOL_REGISTRY},
     operator_credential_template=CredentialTemplate(
         service="excalibur-operator",
         version=3,
