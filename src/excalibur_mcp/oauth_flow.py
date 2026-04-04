@@ -11,10 +11,15 @@ import logging
 
 from tollbooth.oauth2_collector import (
     build_authorize_url as _build_authorize_url,
+)
+from tollbooth.oauth2_collector import (
     exchange_code_for_token as _exchange_code_for_token,
+)
+from tollbooth.oauth2_collector import (
     generate_pkce_pair,
+)
+from tollbooth.oauth2_collector import (
     refresh_access_token as _refresh_access_token,
-    retrieve_code_from_collector,
 )
 
 logger = logging.getLogger(__name__)

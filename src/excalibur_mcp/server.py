@@ -14,9 +14,9 @@ from typing import Annotated, Any
 from fastmcp import FastMCP
 from pydantic import Field
 from tollbooth.credential_templates import CredentialTemplate, FieldSpec
-from tollbooth.tool_identity import STANDARD_IDENTITIES, ToolIdentity
 from tollbooth.runtime import OperatorRuntime, register_standard_tools
 from tollbooth.slug_tools import make_slug_tool
+from tollbooth.tool_identity import STANDARD_IDENTITIES, ToolIdentity
 
 from excalibur_mcp import __version__
 
