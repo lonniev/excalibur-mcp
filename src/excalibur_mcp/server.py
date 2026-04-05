@@ -16,7 +16,7 @@ from pydantic import Field
 from tollbooth.credential_templates import CredentialTemplate, FieldSpec
 from tollbooth.runtime import OperatorRuntime, register_standard_tools
 from tollbooth.slug_tools import make_slug_tool
-from tollbooth.tool_identity import STANDARD_IDENTITIES, ToolIdentity
+from tollbooth.tool_identity import STANDARD_IDENTITIES, ToolIdentity, capability_uuid
 
 from excalibur_mcp import __version__
 
@@ -60,12 +60,14 @@ PATRON_CREDENTIAL_SERVICE = "excalibur"
 # Tool cost table (domain tools only — standard tool costs are in the runtime)
 # ---------------------------------------------------------------------------
 
-TOOL_REGISTRY: dict[str, ToolIdentity] = {
-    "begin_oauth": ToolIdentity(capability="begin_oauth", category="free", intent="Start OAuth2 authorization flow"),
-    "check_oauth_status": ToolIdentity(capability="check_oauth_status", category="free", intent="Check OAuth2 authorization status"),
-    "post_tweet": ToolIdentity(capability="post_social_media", category="write", intent="Post a tweet to X/Twitter"),
-    "post_tweet_image": ToolIdentity(capability="post_social_media_image", category="heavy", intent="Post a tweet with image to X/Twitter"),
-}
+_DOMAIN_TOOLS = [
+    ToolIdentity(capability="begin_oauth", category="free", intent="Start OAuth2 authorization flow"),
+    ToolIdentity(capability="check_oauth_status", category="free", intent="Check OAuth2 authorization status"),
+    ToolIdentity(capability="post_social_media", category="write", intent="Post a tweet to X/Twitter"),
+    ToolIdentity(capability="post_social_media_image", category="heavy", intent="Post a tweet with image to X/Twitter"),
+]
+
+TOOL_REGISTRY: dict[str, ToolIdentity] = {ti.tool_id: ti for ti in _DOMAIN_TOOLS}
 
 # ---------------------------------------------------------------------------
 # Settings singleton
@@ -451,7 +453,7 @@ async def post_tweet(
                    to PNG and attached as a native Twitter media image.
         npub: Your DPYC patron Nostr public key (npub1...) for credit attribution.
     """
-    cost_key = "post_tweet_image" if (image_url or banner_svg) else "post_tweet"
+    cost_key = capability_uuid("post_social_media_image") if (image_url or banner_svg) else capability_uuid("post_social_media")
 
     # Credit gating via runtime
     err = await runtime.debit_or_error(cost_key, npub)
