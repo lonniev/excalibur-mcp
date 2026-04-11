@@ -422,52 +422,19 @@ async def check_oauth_status(npub: str = "") -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-@tool
-async def post_tweet(
-    text: str,
-    image_url: str | None = None,
-    banner_svg: str | None = None,
-    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "",
-) -> dict:
-    """Post a tweet with markdown formatting converted to Unicode rich text. Requires npub for credit billing.
+async def _prepare_x_client(
+    cost_key: str, npub: str,
+) -> tuple[Any, str | None] | dict:
+    """Shared setup for X posting tools: debit, session restore, credential check.
 
-    Accepts standard markdown inline formatting and converts it to Unicode
-    Mathematical Alphanumeric Symbols that render as styled text on X:
-
-        **bold**          -> bold
-        *italic*          -> italic
-        ***bold italic*** -> bold italic
-        `monospace`       -> monospace
-
-    Args:
-        text: Tweet content with optional markdown formatting.
-        image_url: Optional URL of an image to attach to the tweet.
-        banner_svg: Optional self-contained SVG markup string, converted
-                   to PNG and attached as a native Twitter media image.
-        npub: Your DPYC patron Nostr public key (npub1...) for credit attribution.
+    Returns (XClient, restore_situation) on success, or an error dict.
     """
-    cost_key = capability_uuid("post_tweet_image") if (image_url or banner_svg) else capability_uuid("post_tweet")
+    from excalibur_mcp.x_client import XClient
 
-    # Credit gating via runtime
     err = await runtime.debit_or_error(cost_key, npub)
     if err is not None:
         return err
 
-    from excalibur_mcp.formatter import markdown_to_unicode
-    from excalibur_mcp.x_client import XAPIError, XClient
-
-    converted = markdown_to_unicode(text)
-
-    # --- Banner processing: SVG -> PNG -> Twitter media attachment ---
-    banner_png: bytes | None = None
-    if banner_svg:
-        try:
-            banner_png = _svg_to_png(banner_svg)
-        except Exception as exc:
-            await runtime.rollback_debit(cost_key, npub)
-            return {"error": f"Banner render failed: {exc}"}
-
-    # Restore session from Neon vault on cold start
     user_id = OperatorRuntime.get_current_user_id()
     restore_situation: str | None = None
     if user_id:
@@ -489,13 +456,98 @@ async def post_tweet(
             "credential_state": state,
             **guidance,
         }
-        # Include onboarding steps only when credentials are actually
-        # absent or incomplete — not for transient situations.
         if state in ("no_credentials", "token_expired"):
             result["next_steps"] = _ONBOARDING_NEXT_STEPS
         return result
 
-    client = XClient(creds)
+    return (XClient(creds), restore_situation)
+
+
+@tool
+@runtime.paid_tool(capability_uuid("post_tweet"), catch_errors=True)
+async def post_tweet(
+    text: str,
+    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "",
+) -> dict:
+    """Post a text tweet with markdown formatting converted to Unicode rich text.
+
+    Accepts standard markdown inline formatting and converts it to Unicode
+    Mathematical Alphanumeric Symbols that render as styled text on X:
+
+        **bold**          -> bold
+        *italic*          -> italic
+        ***bold italic*** -> bold italic
+        `monospace`       -> monospace
+
+    Args:
+        text: Tweet content with optional markdown formatting.
+        npub: Your DPYC patron Nostr public key (npub1...) for credit attribution.
+    """
+    from excalibur_mcp.formatter import markdown_to_unicode
+    from excalibur_mcp.x_client import XAPIError
+
+    converted = markdown_to_unicode(text)
+
+    client_or_err = await _prepare_x_client(capability_uuid("post_tweet"), npub)
+    if isinstance(client_or_err, dict):
+        return client_or_err
+    client, _ = client_or_err
+
+    try:
+        result = await client.post_tweet(converted)
+    except XAPIError as exc:
+        result: dict[str, Any] = {
+            "error": str(exc),
+            "status_code": exc.status_code,
+            "detail": exc.detail,
+        }
+        if exc.status_code in (401, 403):
+            result["credential_state"] = "credentials_rejected"
+            result.update(_SESSION_GUIDANCE["credentials_rejected"])
+        return result
+
+    return result
+
+
+@tool
+@runtime.paid_tool(capability_uuid("post_tweet_image"), catch_errors=True)
+async def post_tweet_image(
+    text: str,
+    image_url: str = "",
+    banner_svg: str = "",
+    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "",
+) -> dict:
+    """Post a tweet with a hero banner image to X/Twitter.
+
+    Provide either an image_url (fetched and attached) or banner_svg
+    (rendered to PNG and attached). Text supports the same markdown
+    formatting as post_tweet.
+
+    Args:
+        text: Tweet content with optional markdown formatting.
+        image_url: URL of an image to attach to the tweet.
+        banner_svg: Self-contained SVG markup string, converted to PNG.
+        npub: Your DPYC patron Nostr public key (npub1...) for credit attribution.
+    """
+    if not image_url and not banner_svg:
+        return {"error": "Either image_url or banner_svg is required."}
+
+    from excalibur_mcp.formatter import markdown_to_unicode
+    from excalibur_mcp.x_client import XAPIError
+
+    converted = markdown_to_unicode(text)
+
+    client_or_err = await _prepare_x_client(capability_uuid("post_tweet_image"), npub)
+    if isinstance(client_or_err, dict):
+        return client_or_err
+    client, _ = client_or_err
+
+    banner_png: bytes | None = None
+    if banner_svg:
+        try:
+            banner_png = _svg_to_png(banner_svg)
+        except Exception as exc:
+            return {"error": f"Banner render failed: {exc}"}
 
     try:
         if image_url:
@@ -504,22 +556,19 @@ async def post_tweet(
             media_id = await client.upload_media(banner_png, "image/png")
             result = await client.post_tweet(converted, media_ids=[media_id])
         else:
-            result = await client.post_tweet(converted)
+            result = {"error": "No image provided."}
     except XAPIError as exc:
-        await runtime.rollback_debit(cost_key, npub)
         result: dict[str, Any] = {
             "error": str(exc),
             "status_code": exc.status_code,
             "detail": exc.detail,
         }
-        # 401/403 from X means credentials are revoked or invalid
         if exc.status_code in (401, 403):
             result["credential_state"] = "credentials_rejected"
             result.update(_SESSION_GUIDANCE["credentials_rejected"])
         return result
 
-    runtime.fire_and_forget_demand_increment(cost_key)
-    return await runtime.inject_low_balance_warning(result, npub)
+    return result
 
 
 # ---------------------------------------------------------------------------
