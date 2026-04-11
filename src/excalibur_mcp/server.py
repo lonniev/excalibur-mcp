@@ -431,7 +431,7 @@ async def _prepare_x_client(
     """
     from excalibur_mcp.x_client import XClient
 
-    err = await runtime.debit_or_error(cost_key, npub)
+    err = await runtime.debit_or_deny(cost_key, npub)
     if err is not None:
         return err
 
