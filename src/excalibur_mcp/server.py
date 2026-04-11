@@ -63,7 +63,8 @@ PATRON_CREDENTIAL_SERVICE = "excalibur"
 _DOMAIN_TOOLS = [
     ToolIdentity(capability="begin_oauth", category="free", intent="Start OAuth2 authorization flow"),
     ToolIdentity(capability="check_oauth_status", category="free", intent="Check OAuth2 authorization status"),
-    ToolIdentity(capability="post_tweet", category="write", intent="Post a tweet to X/Twitter, optionally with an image"),
+    ToolIdentity(capability="post_tweet", category="write", intent="Post a text tweet to X/Twitter"),
+    ToolIdentity(capability="post_tweet_image", category="heavy", intent="Post a tweet with image to X/Twitter"),
 ]
 
 TOOL_REGISTRY: dict[str, ToolIdentity] = {ti.tool_id: ti for ti in _DOMAIN_TOOLS}
@@ -445,7 +446,7 @@ async def post_tweet(
                    to PNG and attached as a native Twitter media image.
         npub: Your DPYC patron Nostr public key (npub1...) for credit attribution.
     """
-    cost_key = capability_uuid("post_tweet")
+    cost_key = capability_uuid("post_tweet_image") if (image_url or banner_svg) else capability_uuid("post_tweet")
 
     # Credit gating via runtime
     err = await runtime.debit_or_error(cost_key, npub)
