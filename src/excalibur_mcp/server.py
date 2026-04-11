@@ -14,6 +14,7 @@ from typing import Annotated, Any
 from fastmcp import FastMCP
 from pydantic import Field
 from tollbooth.credential_templates import CredentialTemplate, FieldSpec
+from tollbooth.credential_validators import validate_btcpay_creds, validate_required
 from tollbooth.runtime import OperatorRuntime, register_standard_tools
 from tollbooth.slug_tools import make_slug_tool
 from tollbooth.tool_identity import STANDARD_IDENTITIES, ToolIdentity, capability_uuid
@@ -125,6 +126,11 @@ runtime = OperatorRuntime(
     operator_credential_greeting=(
         "Hi \u2014 I\u2019m eXcalibur, a Tollbooth MCP service for posting formatted "
         "content to X. You (the operator) need to provide BTCPay and X OAuth2 credentials."
+    ),
+    credential_validator=lambda creds: (
+        validate_btcpay_creds(creds)
+        + [e for e in [validate_required(creds.get("client_id", ""), "client_id")] if e]
+        + [e for e in [validate_required(creds.get("client_secret", ""), "client_secret")] if e]
     ),
 )
 
