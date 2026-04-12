@@ -197,7 +197,7 @@ _SESSION_GUIDANCE: dict[str, dict[str, str]] = {
 
 
 
-async def _ensure_session(user_id: str, npub: str = "") -> str | None:
+async def _ensure_session(session_key: str, npub: str = "") -> str | None:
     """Restore OAuth2 Bearer token from vault on cold start.
 
     Checks expiration and auto-refreshes if needed. Returns lifecycle
@@ -207,7 +207,7 @@ async def _ensure_session(user_id: str, npub: str = "") -> str | None:
 
     from excalibur_mcp.vault import get_session, set_bearer_session
 
-    if get_session(user_id) is not None:
+    if get_session(session_key) is not None:
         return None
     if not npub:
         return None
@@ -248,7 +248,7 @@ async def _ensure_session(user_id: str, npub: str = "") -> str | None:
                 logger.warning("Token refresh failed for %s: %s", npub[:20], exc)
                 return "token_expired"
 
-        set_bearer_session(user_id, access_token, npub=npub)
+        set_bearer_session(session_key, access_token)
         logger.info("Restored excalibur OAuth2 session for %s from vault.", npub[:20])
         return None
     except Exception as exc:
@@ -256,16 +256,14 @@ async def _ensure_session(user_id: str, npub: str = "") -> str | None:
         return "vault_bootstrapping"
 
 
-def _get_x_credentials():
-    """Get X API Bearer token from the in-memory session."""
+def _get_x_credentials(npub: str):
+    """Get X API Bearer token from the in-memory session, keyed by npub."""
     from excalibur_mcp.vault import get_session
     from excalibur_mcp.x_client import XCredentials
 
-    user_id = OperatorRuntime.get_current_user_id()
-    if user_id:
-        session = get_session(user_id)
-        if session and session.bearer_token:
-            return XCredentials(bearer_token=session.bearer_token)
+    session = get_session(npub)
+    if session and session.bearer_token:
+        return XCredentials(bearer_token=session.bearer_token)
 
     raise ValueError(_SESSION_GUIDANCE["no_credentials"]["message"])
 
@@ -409,11 +407,9 @@ async def check_oauth_status(npub: str = "") -> dict[str, Any]:
         "token_type": "Bearer",
     }, service=PATRON_CREDENTIAL_SERVICE)
 
-    # Activate in-memory session
-    user_id = OperatorRuntime.get_current_user_id()
-    if user_id:
-        from excalibur_mcp.vault import set_bearer_session
-        set_bearer_session(user_id, token["access_token"], npub=npub)
+    # Activate in-memory session keyed by npub
+    from excalibur_mcp.vault import set_bearer_session
+    set_bearer_session(npub, token["access_token"])
 
     return {
         "success": True,
@@ -441,15 +437,12 @@ async def _prepare_x_client(
     if err is not None:
         return err
 
-    user_id = OperatorRuntime.get_current_user_id()
-    restore_situation: str | None = None
-    if user_id:
-        restore_situation = await _ensure_session(user_id, npub)
-        if restore_situation:
-            logger.info("Session restore for %s: %s", npub[:20], restore_situation)
+    restore_situation = await _ensure_session(npub, npub)
+    if restore_situation:
+        logger.info("Session restore for %s: %s", npub[:20], restore_situation)
 
     try:
-        creds = _get_x_credentials()
+        creds = _get_x_credentials(npub)
     except ValueError as exc:
         await runtime.rollback_debit(cost_key, npub)
         state = restore_situation or "no_credentials"

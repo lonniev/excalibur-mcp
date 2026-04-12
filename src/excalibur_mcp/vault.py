@@ -154,24 +154,23 @@ class UserSession:
 _sessions: SessionCache[UserSession] = SessionCache(ttl_seconds=SESSION_TTL_SECONDS)
 
 
-def get_session(user_id: str) -> UserSession | None:
-    """Get active session, returning None if expired or absent."""
-    return _sessions.get(user_id)
+def get_session(npub: str) -> UserSession | None:
+    """Get active session by npub, returning None if expired or absent."""
+    return _sessions.get(npub)
 
 
 def set_bearer_session(
-    user_id: str,
+    npub: str,
     bearer_token: str,
-    npub: str | None = None,
 ) -> UserSession:
-    """Create or replace a Bearer token session for a user."""
+    """Create or replace a Bearer token session keyed by npub."""
     session = UserSession(bearer_token=bearer_token, npub=npub)
-    return _sessions.set(user_id, session)
+    return _sessions.set(npub, session)
 
 
-def clear_session(user_id: str) -> None:
-    """Remove a session."""
-    _sessions.clear(user_id)
+def clear_session(npub: str) -> None:
+    """Remove a session by npub."""
+    _sessions.clear(npub)
 
 
 # ---------------------------------------------------------------------------
