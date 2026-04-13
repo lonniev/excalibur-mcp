@@ -274,7 +274,7 @@ def _get_x_credentials(npub: str):
 
 
 @tool
-async def begin_oauth(npub: str = "") -> dict[str, Any]:
+async def begin_oauth(npub: str = "", proof: str = "") -> dict[str, Any]:
     """Start the X OAuth2 authorization flow.
 
     Returns an authorization URL. Open it in a browser to authorize
@@ -326,7 +326,7 @@ async def begin_oauth(npub: str = "") -> dict[str, Any]:
 
 
 @tool
-async def check_oauth_status(npub: str = "") -> dict[str, Any]:
+async def check_oauth_status(npub: str = "", proof: str = "") -> dict[str, Any]:
     """Check if the X OAuth2 authorization completed.
 
     Polls the OAuth2 collector for the authorization code, exchanges
@@ -466,7 +466,7 @@ async def _prepare_x_client(
 @runtime.paid_tool(capability_uuid("post_tweet"), catch_errors=True)
 async def post_tweet(
     text: str,
-    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "",
+    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "", proof: str = "",
 ) -> dict:
     """Post a text tweet with markdown formatting converted to Unicode rich text.
 
@@ -514,7 +514,7 @@ async def post_tweet_image(
     text: str,
     image_url: str = "",
     banner_svg: str = "",
-    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "",
+    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "", proof: str = "",
 ) -> dict:
     """Post a tweet with a hero banner image to X/Twitter.
 
