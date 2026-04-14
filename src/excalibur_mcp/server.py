@@ -15,6 +15,7 @@ from fastmcp import FastMCP
 from pydantic import Field
 from tollbooth.credential_templates import CredentialTemplate, FieldSpec
 from tollbooth.credential_validators import validate_btcpay_creds, validate_required
+from tollbooth.oauth_config import OAuthProviderConfig
 from tollbooth.runtime import OperatorRuntime, register_standard_tools
 from tollbooth.slug_tools import make_slug_tool
 from tollbooth.tool_identity import STANDARD_IDENTITIES, ToolIdentity, capability_uuid
@@ -62,8 +63,7 @@ PATRON_CREDENTIAL_SERVICE = "excalibur"
 # ---------------------------------------------------------------------------
 
 _DOMAIN_TOOLS = [
-    ToolIdentity(capability="begin_oauth", category="free", intent="Start OAuth2 authorization flow"),
-    ToolIdentity(capability="check_oauth_status", category="free", intent="Check OAuth2 authorization status"),
+    # OAuth tools are now standard (from wheel via OAuthProviderConfig)
     ToolIdentity(capability="post_tweet", category="write", intent="Post a text tweet to X/Twitter"),
     ToolIdentity(capability="post_tweet_image", category="heavy", intent="Post a tweet with image to X/Twitter"),
 ]
@@ -122,7 +122,14 @@ runtime = OperatorRuntime(
         },
         description="BTCPay Lightning payment + X OAuth2 app credentials",
     ),
-    # No patron_credential_template — patron tokens come from OAuth2 browser flow
+    oauth_provider=OAuthProviderConfig(
+        authorize_url="https://x.com/i/oauth2/authorize",
+        token_url="https://api.x.com/2/oauth2/token",
+        scopes="tweet.read tweet.write users.read offline.access",
+        pkce=True,
+        refresh_enabled=True,
+        service_name="excalibur",
+    ),
     operator_credential_greeting=(
         "Hi \u2014 I\u2019m eXcalibur, a Tollbooth MCP service for posting formatted "
         "content to X. You (the operator) need to provide BTCPay and X OAuth2 credentials."
@@ -269,158 +276,9 @@ def _get_x_credentials(npub: str):
 
 
 # ---------------------------------------------------------------------------
-# MCP Tools — Free (OAuth2 flow)
-# ---------------------------------------------------------------------------
-
-
-@tool
-async def begin_oauth(npub: str = "", proof: str = "") -> dict[str, Any]:
-    """Start the X OAuth2 authorization flow.
-
-    Returns an authorization URL. Open it in a browser to authorize
-    this app to post on your behalf. Then call check_oauth_status.
-
-    Free — no credits required.
-
-    Args:
-        npub: Required. Your Nostr public key (npub1...).
-    """
-    from tollbooth.runtime import resolve_npub
-    try:
-        npub = resolve_npub(npub)
-    except ValueError as e:
-        return {"success": False, "error": str(e)}
-
-    # Load operator OAuth2 app credentials
-    op_creds = await runtime.load_credentials(["client_id", "client_secret"])
-    client_id = op_creds.get("client_id", "")
-    if not client_id:
-        return {"success": False, "error": "Operator X OAuth2 client_id not configured."}
-
-    # Resolve redirect URI from the OAuth2 collector in the registry
-    try:
-        from tollbooth.registry import resolve_service_by_name
-        svc = await resolve_service_by_name("tollbooth-oauth2-callback")
-        redirect_uri = svc["url"].rstrip("/") + "/callback"
-    except Exception as e:
-        return {"success": False, "error": f"Failed to resolve OAuth2 callback: {e}"}
-
-    from excalibur_mcp.oauth_flow import begin_oauth_flow
-    authorize_url, verifier = begin_oauth_flow(npub, client_id, redirect_uri)
-
-    # Store verifier in vault (survives across Horizon SSE connections)
-    await runtime.store_patron_session(npub, {
-        "pkce_verifier": verifier,
-        "redirect_uri": redirect_uri,
-    }, service=PATRON_CREDENTIAL_SERVICE)
-
-    return {
-        "success": True,
-        "status": "pending",
-        "authorize_url": authorize_url,
-        "message": (
-            "Open this URL in your browser to authorize with X. "
-            "After authorizing, call check_oauth_status to complete."
-        ),
-    }
-
-
-@tool
-async def check_oauth_status(npub: str = "", proof: str = "") -> dict[str, Any]:
-    """Check if the X OAuth2 authorization completed.
-
-    Polls the OAuth2 collector for the authorization code, exchanges
-    it for tokens, and stores them in the vault.
-
-    Free — no credits required.
-
-    Args:
-        npub: Required. Your Nostr public key (npub1...).
-    """
-    from tollbooth.runtime import resolve_npub
-    try:
-        npub = resolve_npub(npub)
-    except ValueError as e:
-        return {"success": False, "error": str(e)}
-
-    # Load PKCE verifier and redirect_uri from vault (stored by begin_oauth)
-    pending = await runtime.load_patron_session(npub, service=PATRON_CREDENTIAL_SERVICE)
-    verifier = (pending or {}).get("pkce_verifier")
-    if not verifier:
-        return {
-            "success": False,
-            "error": "No pending OAuth flow for this npub. Call begin_oauth first.",
-        }
-    stored_redirect_uri = (pending or {}).get("redirect_uri", "")
-
-    # Load operator OAuth2 app credentials
-    op_creds = await runtime.load_credentials(["client_id", "client_secret"])
-    client_id = op_creds.get("client_id", "")
-    client_secret = op_creds.get("client_secret", "")
-    if not client_id or not client_secret:
-        return {"success": False, "error": "Operator OAuth2 credentials not configured."}
-
-    # Resolve collector URL
-    try:
-        from tollbooth.registry import resolve_service_by_name
-        settings = get_settings()
-        svc = await resolve_service_by_name(
-            "tollbooth-oauth2-collector",
-            cache_ttl_seconds=settings.dpyc_registry_cache_ttl_seconds,
-        )
-        collector_url = svc["url"].rstrip("/")
-    except Exception as e:
-        return {"success": False, "error": f"Failed to resolve OAuth2 collector: {e}"}
-
-    # Use stored redirect_uri (must match what was used in begin_oauth)
-    redirect_uri = stored_redirect_uri
-    if not redirect_uri:
-        try:
-            callback_svc = await resolve_service_by_name("tollbooth-oauth2-callback")
-            redirect_uri = callback_svc["url"].rstrip("/") + "/callback"
-        except Exception as e:
-            return {"success": False, "error": f"Failed to resolve callback: {e}"}
-
-    # Retrieve auth code from collector
-    from tollbooth.oauth2_collector import retrieve_code_from_collector
-    code = await retrieve_code_from_collector(collector_url, npub)
-    if code is None:
-        return {
-            "status": "pending",
-            "message": "Waiting for browser authorization. Open the URL from begin_oauth.",
-        }
-
-    # Exchange code for tokens
-    try:
-        from excalibur_mcp.oauth_flow import exchange_code_for_token
-        token = await exchange_code_for_token(
-            code, client_id, client_secret, redirect_uri, verifier,
-        )
-    except Exception as e:
-        return {"success": False, "error": f"Token exchange failed: {e}"}
-
-    # Store tokens in vault (replaces the temporary pkce_verifier entry)
-    await runtime.store_patron_session(npub, {
-        "access_token": token["access_token"],
-        "refresh_token": token.get("refresh_token", ""),
-        "expires_at": str(token.get("expires_at", 0)),
-        "token_type": "Bearer",
-    }, service=PATRON_CREDENTIAL_SERVICE)
-
-    # Activate in-memory session keyed by npub
-    from excalibur_mcp.vault import set_bearer_session
-    set_bearer_session(npub, token["access_token"])
-
-    return {
-        "success": True,
-        "status": "completed",
-        "message": "X authorization successful. You can now use post_tweet.",
-    }
-
-
-
-# ---------------------------------------------------------------------------
 # MCP Tools — Paid (domain-specific)
+# OAuth tools (begin_oauth, check_oauth_status) are now standard
+# wheel tools, registered via OAuthProviderConfig.
 # ---------------------------------------------------------------------------
 
 
