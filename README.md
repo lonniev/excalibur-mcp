@@ -160,16 +160,17 @@ set as environment variables:
 | `btcpay_store_id` | Store ID for invoices |
 | `btcpay_api_key` | API key with invoice permissions |
 
-#### Optional Configuration
+Certified operators bootstrap their Neon database URL from the Authority via
+encrypted Nostr DM -- `NEON_DATABASE_URL` is not read from the environment.
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `SEED_BALANCE_SATS` | No | Starter credits for new users (default: 0) |
-| `CREDIT_TTL_SECONDS` | No | Tranche lifetime in seconds (default: 604800 = 7 days) |
-| `NEON_DATABASE_URL` | No | Neon Postgres URL for persistent ledger |
-| `TOLLBOOTH_NOSTR_RELAYS` | No | Comma-separated relay URLs |
-| `TOLLBOOTH_OTS_ENABLED` | No | `"true"` to enable Bitcoin anchoring |
-| `TOLLBOOTH_OTS_CALENDARS` | No | Comma-separated OTS calendar URLs |
+#### Optional Tuning
+
+| Variable | Description |
+|----------|-------------|
+| `TOLLBOOTH_NOSTR_RELAYS` | Comma-separated relay URLs (overrides defaults) |
+| `SEED_BALANCE_SATS` | Starter credits for new users (default: 0) |
+| `DPYC_REGISTRY_CACHE_TTL_SECONDS` | How long to cache the DPYC community registry (default: 300) |
+| `CONSTRAINTS_ENABLED` | `"true"` to enable constraint engine evaluation on tool calls |
 
 ## Troubleshooting
 
