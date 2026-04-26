@@ -207,60 +207,28 @@ _SESSION_GUIDANCE: dict[str, dict[str, str]] = {
 async def _ensure_session(session_key: str, npub: str = "") -> str | None:
     """Restore OAuth2 Bearer token from vault on cold start.
 
-    Checks expiration and auto-refreshes if needed. Returns lifecycle
-    situation string on failure, or None on success.
+    Delegates token loading and refresh to the wheel's generic
+    ``restore_oauth_session``. Returns lifecycle situation string
+    on failure, or None on success.
     """
-    import time
-
     from excalibur_mcp.vault import get_session, set_bearer_session
 
     if get_session(session_key) is not None:
         return None
     if not npub:
         return None
-    try:
-        creds = await runtime.load_patron_session(npub, service=PATRON_CREDENTIAL_SERVICE)
-        if not creds:
-            return "no_credentials"
 
-        access_token = creds.get("access_token")
-        if not access_token:
-            return "no_credentials"
+    creds, situation = await runtime.restore_oauth_session(npub)
+    if creds is None:
+        return situation
 
-        # Check expiration and auto-refresh
-        expires_at = float(creds.get("expires_at", 0))
-        if time.time() > expires_at:
-            refresh_token = creds.get("refresh_token", "")
-            if not refresh_token:
-                return "token_expired"
-            # Load operator app creds for refresh
-            op_creds = await runtime.load_credentials(["client_id", "client_secret"])
-            client_id = op_creds.get("client_id", "")
-            client_secret = op_creds.get("client_secret", "")
-            if not client_id or not client_secret:
-                return "token_expired"
-            try:
-                from excalibur_mcp.oauth_flow import refresh_access_token
-                new_token = await refresh_access_token(client_id, client_secret, refresh_token)
-                # Persist refreshed token
-                await runtime.store_patron_session(npub, {
-                    "access_token": new_token["access_token"],
-                    "refresh_token": new_token.get("refresh_token", refresh_token),
-                    "expires_at": str(new_token["expires_at"]),
-                    "token_type": "Bearer",
-                }, service=PATRON_CREDENTIAL_SERVICE)
-                access_token = new_token["access_token"]
-                logger.info("Refreshed X OAuth2 token for %s", npub[:20])
-            except Exception as exc:
-                logger.warning("Token refresh failed for %s: %s", npub[:20], exc)
-                return "token_expired"
+    access_token = creds.get("access_token", "")
+    if not access_token:
+        return "no_credentials"
 
-        set_bearer_session(session_key, access_token)
-        logger.info("Restored excalibur OAuth2 session for %s from vault.", npub[:20])
-        return None
-    except Exception as exc:
-        logger.warning("Vault session restore failed (%s): %s", type(exc).__name__, exc)
-        return "vault_bootstrapping"
+    set_bearer_session(session_key, access_token)
+    logger.info("Restored excalibur OAuth2 session for %s from vault.", npub[:20])
+    return None
 
 
 def _get_x_credentials(npub: str):
