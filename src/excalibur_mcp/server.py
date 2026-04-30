@@ -253,15 +253,14 @@ def _get_x_credentials(npub: str):
 async def _prepare_x_client(
     cost_key: str, npub: str,
 ) -> tuple[Any, str | None] | dict:
-    """Shared setup for X posting tools: debit, session restore, credential check.
+    """Shared setup for X posting tools: session restore, credential check.
+
+    Billing and proof are handled by the ``@paid_tool`` decorator —
+    do NOT call ``debit_or_deny`` here (double-gating bug).
 
     Returns (XClient, restore_situation) on success, or an error dict.
     """
     from excalibur_mcp.x_client import XClient
-
-    result_or_cost = await runtime.debit_or_deny(cost_key, npub)
-    if isinstance(result_or_cost, dict):
-        return result_or_cost
 
     restore_situation = await _ensure_session(npub, npub)
     if restore_situation:
