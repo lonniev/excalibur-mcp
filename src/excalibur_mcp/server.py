@@ -183,7 +183,7 @@ _SESSION_GUIDANCE: dict[str, dict[str, str]] = {
     "vault_bootstrapping": {
         "status": "TRANSIENT — vault syncing",
         "message": "Credential vault is syncing after restart. Retry in a moment.",
-        "action": "Retry in 10-15 seconds.",
+        "action": "Retry shortly — no re-authentication needed.",
     },
     "no_credentials": {
         "status": "ABSENT — not authorized",
