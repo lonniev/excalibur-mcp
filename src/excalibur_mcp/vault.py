@@ -13,13 +13,10 @@ import base64
 import json
 import logging
 import os
-import time
-from dataclasses import dataclass, field
 
 from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from tollbooth.session_cache import SessionCache
 
 logger = logging.getLogger(__name__)
 
@@ -124,57 +121,14 @@ def decrypt_credentials(blob: str, passphrase: str) -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# In-memory session management
-# ---------------------------------------------------------------------------
-
-SESSION_TTL_SECONDS = 3600  # 1 hour
-
-
-@dataclass
-class UserSession:
-    """Per-user session holding OAuth2 Bearer token."""
-
-    bearer_token: str
-    npub: str | None = None
-    created_at: float = field(default_factory=time.time)
-
-    def __repr__(self) -> str:
-        age = int(time.time() - self.created_at)
-        return f"UserSession(npub={self.npub!r}, age={age}s, bearer=<redacted>)"
-
-    @property
-    def is_expired(self) -> bool:
-        return (time.time() - self.created_at) > SESSION_TTL_SECONDS
-
-    @property
-    def age_seconds(self) -> int:
-        return int(time.time() - self.created_at)
-
-
-_sessions: SessionCache[UserSession] = SessionCache(ttl_seconds=SESSION_TTL_SECONDS)
-
-
-def get_session(npub: str) -> UserSession | None:
-    """Get active session by npub, returning None if expired or absent."""
-    return _sessions.get(npub)
-
-
-def set_bearer_session(
-    npub: str,
-    bearer_token: str,
-) -> UserSession:
-    """Create or replace a Bearer token session keyed by npub."""
-    session = UserSession(bearer_token=bearer_token, npub=npub)
-    return _sessions.set(npub, session)
-
-
-def clear_session(npub: str) -> None:
-    """Remove a session by npub."""
-    _sessions.clear(npub)
-
-
-# ---------------------------------------------------------------------------
 # Credential storage (file-based vault)
+#
+# In-memory bearer-session cache removed in 0.17.1 — every paid call
+# now routes through runtime.restore_oauth_session which loads from
+# vault, refreshes via the upstream provider if expired, and persists
+# rotated tokens back. The previous SessionCache could go stale across
+# process restarts (rotated refresh_token lost), forcing patrons to
+# re-do the browser OAuth dance.
 # ---------------------------------------------------------------------------
 
 

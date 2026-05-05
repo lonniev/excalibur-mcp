@@ -175,72 +175,71 @@ def _svg_to_png(svg_markup: str) -> bytes:
 
 
 # ---------------------------------------------------------------------------
-# Credential resolution: session -> env vars
+# Credential resolution: vault → live XClient on every call
+#
+# No long-lived in-memory cache: every paid call routes through
+# runtime.restore_oauth_session, which loads from vault, refreshes
+# via the upstream provider if expired, and persists rotated tokens
+# back. This eliminates the prior bug where in-memory bearer cache
+# could go stale across process restarts.
 # ---------------------------------------------------------------------------
 
-# Patron-facing guidance for each lifecycle state.
-_SESSION_GUIDANCE: dict[str, dict[str, str]] = {
-    "vault_bootstrapping": {
-        "status": "TRANSIENT — vault syncing",
-        "message": "Credential vault is syncing after restart. Retry in a moment.",
-        "action": "Retry shortly — no re-authentication needed.",
-    },
-    "no_credentials": {
-        "status": "ABSENT — not authorized",
-        "message": "No X authorization found for this npub.",
-        "action": "Call begin_oauth(npub) to start the X OAuth2 authorization flow.",
-    },
-    "token_expired": {
-        "status": "EXPIRED — token needs refresh",
-        "message": "X access token expired and refresh failed.",
-        "action": "Call begin_oauth(npub) to re-authorize.",
-    },
-    "credentials_rejected": {
-        "status": "REJECTED — X API refused the token",
-        "message": "X rejected the access token. It may have been revoked.",
-        "action": "Call begin_oauth(npub) to re-authorize.",
-    },
-}
 
+async def _prepare_x_client(
+    cost_key: str, npub: str,
+) -> tuple[Any, str] | dict:
+    """Resolve a fresh X bearer for this patron and build an XClient.
 
-
-async def _ensure_session(session_key: str, npub: str = "") -> str | None:
-    """Restore OAuth2 Bearer token from vault on cold start.
-
-    Delegates token loading and refresh to the wheel's generic
-    ``restore_oauth_session``. Returns lifecycle situation string
-    on failure, or None on success.
+    Returns ``(XClient, "")`` on success, or a structured error dict
+    (``{"success": False, "error_code": ..., "next_steps": [...]}``)
+    on any non-success situation.  Billing and proof are handled by
+    the ``@paid_tool`` decorator — do not call ``debit_or_deny`` here
+    (double-gating bug).
     """
-    from excalibur_mcp.vault import get_session, set_bearer_session
+    from excalibur_mcp.x_client import XClient, XCredentials
 
-    if get_session(session_key) is not None:
-        return None
-    if not npub:
-        return None
+    if not npub or not npub.startswith("npub1"):
+        await runtime.rollback_debit(cost_key, npub)
+        return {
+            "success": False,
+            "error_code": "npub_invalid",
+            "error": "npub is required. Pass your Nostr public key (npub1...) to identify yourself.",
+            "next_steps": [],
+        }
 
     creds, situation = await runtime.restore_oauth_session(npub)
     if creds is None:
-        return situation
+        await runtime.rollback_debit(cost_key, npub)
+        return runtime.oauth_situation_response(situation)
 
     access_token = creds.get("access_token", "")
     if not access_token:
-        return "no_credentials"
+        await runtime.rollback_debit(cost_key, npub)
+        return runtime.oauth_situation_response("no_credentials")
 
-    set_bearer_session(session_key, access_token)
-    logger.info("Restored excalibur OAuth2 session for %s from vault.", npub[:20])
-    return None
+    return (XClient(XCredentials(bearer_token=access_token)), "")
 
 
-def _get_x_credentials(npub: str):
-    """Get X API Bearer token from the in-memory session, keyed by npub."""
-    from excalibur_mcp.vault import get_session
-    from excalibur_mcp.x_client import XCredentials
+def _x_api_error_to_response(exc: Any) -> dict[str, Any]:
+    """Map an X API error to a structured response.
 
-    session = get_session(npub)
-    if session and session.bearer_token:
-        return XCredentials(bearer_token=session.bearer_token)
-
-    raise ValueError(_SESSION_GUIDANCE["no_credentials"]["message"])
+    A 401/403 from X means the access token was rejected upstream
+    even though our records considered it fresh — the patron must
+    re-authorize.  Routes to ``oauth_refresh_needed`` for symmetry
+    with the SDK helper's standard situations.
+    """
+    base: dict[str, Any] = {
+        "success": False,
+        "error": str(exc),
+        "status_code": getattr(exc, "status_code", None),
+        "detail": getattr(exc, "detail", None),
+    }
+    if getattr(exc, "status_code", 0) in (401, 403):
+        base.update(runtime.oauth_situation_response("token_expired"))
+        # Preserve the upstream detail alongside the structured guidance
+        base["status_code"] = exc.status_code
+        base["detail"] = getattr(exc, "detail", None)
+    return base
 
 
 # ---------------------------------------------------------------------------
@@ -248,43 +247,6 @@ def _get_x_credentials(npub: str):
 # OAuth tools (begin_oauth, check_oauth_status) are now standard
 # wheel tools, registered via OAuthProviderConfig.
 # ---------------------------------------------------------------------------
-
-
-async def _prepare_x_client(
-    cost_key: str, npub: str,
-) -> tuple[Any, str | None] | dict:
-    """Shared setup for X posting tools: session restore, credential check.
-
-    Billing and proof are handled by the ``@paid_tool`` decorator —
-    do NOT call ``debit_or_deny`` here (double-gating bug).
-
-    Returns (XClient, restore_situation) on success, or an error dict.
-    """
-    from excalibur_mcp.x_client import XClient
-
-    restore_situation = await _ensure_session(npub, npub)
-    if restore_situation:
-        logger.info("Session restore for %s: %s", npub[:20], restore_situation)
-
-    try:
-        creds = _get_x_credentials(npub)
-    except ValueError as exc:
-        await runtime.rollback_debit(cost_key, npub)
-        state = restore_situation or "no_credentials"
-        guidance = _SESSION_GUIDANCE.get(state, {
-            "status": f"ERROR — {state}",
-            "message": str(exc),
-            "action": "Check the credential state and retry.",
-        })
-        result: dict[str, Any] = {
-            "credential_state": state,
-            **guidance,
-        }
-        if state in ("no_credentials", "token_expired"):
-            result["next_steps"] = _ONBOARDING_NEXT_STEPS
-        return result
-
-    return (XClient(creds), restore_situation)
 
 
 @tool
@@ -320,15 +282,7 @@ async def post_tweet(
     try:
         result = await client.post_tweet(converted)
     except XAPIError as exc:
-        result: dict[str, Any] = {
-            "error": str(exc),
-            "status_code": exc.status_code,
-            "detail": exc.detail,
-        }
-        if exc.status_code in (401, 403):
-            result["credential_state"] = "credentials_rejected"
-            result.update(_SESSION_GUIDANCE["credentials_rejected"])
-        return result
+        return _x_api_error_to_response(exc)
 
     return result
 
@@ -382,15 +336,7 @@ async def post_tweet_image(
         else:
             result = {"error": "No image provided."}
     except XAPIError as exc:
-        result: dict[str, Any] = {
-            "error": str(exc),
-            "status_code": exc.status_code,
-            "detail": exc.detail,
-        }
-        if exc.status_code in (401, 403):
-            result["credential_state"] = "credentials_rejected"
-            result.update(_SESSION_GUIDANCE["credentials_rejected"])
-        return result
+        return _x_api_error_to_response(exc)
 
     return result
 
