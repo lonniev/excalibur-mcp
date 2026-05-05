@@ -198,14 +198,10 @@ async def _prepare_x_client(
     """
     from excalibur_mcp.x_client import XClient, XCredentials
 
-    if not npub or not npub.startswith("npub1"):
+    err = runtime.npub_validation_error(npub)
+    if err is not None:
         await runtime.rollback_debit(cost_key, npub)
-        return {
-            "success": False,
-            "error_code": "npub_invalid",
-            "error": "npub is required. Pass your Nostr public key (npub1...) to identify yourself.",
-            "next_steps": [],
-        }
+        return err
 
     creds, situation = await runtime.restore_oauth_session(npub)
     if creds is None:
