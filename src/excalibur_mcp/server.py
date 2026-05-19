@@ -17,7 +17,6 @@ from tollbooth.credential_templates import CredentialTemplate, FieldSpec
 from tollbooth.credential_validators import validate_btcpay_creds, validate_required
 from tollbooth.oauth_config import OAuthProviderConfig
 from tollbooth.runtime import OperatorRuntime, register_standard_tools
-from tollbooth.slug_tools import make_slug_tool
 from tollbooth.tool_identity import STANDARD_IDENTITIES, ToolIdentity, capability_uuid
 
 from excalibur_mcp import __version__
@@ -42,8 +41,6 @@ mcp = FastMCP(
         "Use `check_balance` to see your balance. Top up via `purchase_credits`."
     ),
 )
-tool = make_slug_tool(mcp, "excalibur")
-
 # Structured onboarding guidance — included in error responses so Claude
 # can self-guide a first-time user through Secure Courier registration
 # without the user needing to explain the process.
@@ -145,7 +142,7 @@ runtime = OperatorRuntime(
 # Register all standard DPYC tools from the wheel
 # ---------------------------------------------------------------------------
 
-register_standard_tools(
+tool = register_standard_tools(
     mcp,
     "excalibur",
     runtime,
