@@ -59,10 +59,15 @@ PATRON_CREDENTIAL_SERVICE = "excalibur"
 # Tool cost table (domain tools only — standard tool costs are in the runtime)
 # ---------------------------------------------------------------------------
 
+# Frozen UUIDs — declared once at tool birth and never changed.
+POST_TWEET_UUID       = "11f169f5-9cd8-5d30-85ab-d4485e6c6965"
+POST_TWEET_IMAGE_UUID = "d10365f0-9a03-5b6c-8c6d-1457c139f31b"
+
+
 _DOMAIN_TOOLS = [
     # OAuth tools are now standard (from wheel via OAuthProviderConfig)
-    ToolIdentity(capability="post_tweet", category="write", intent="Post a text tweet to X/Twitter"),
-    ToolIdentity(capability="post_tweet_image", category="heavy", intent="Post a tweet with image to X/Twitter"),
+    ToolIdentity(tool_id=POST_TWEET_UUID, capability="post_tweet", category="write", intent="Post a text tweet to X/Twitter"),
+    ToolIdentity(tool_id=POST_TWEET_IMAGE_UUID, capability="post_tweet_image", category="heavy", intent="Post a tweet with image to X/Twitter"),
 ]
 
 TOOL_REGISTRY: dict[str, ToolIdentity] = {ti.tool_id: ti for ti in _DOMAIN_TOOLS}
