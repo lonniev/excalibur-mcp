@@ -115,7 +115,6 @@ src/excalibur_mcp/
   vault.py         In-memory Bearer token session cache (keyed by npub)
   x_client.py      X API v2 client with OAuth 2.0 Bearer token auth
   formatter.py     Markdown -> Unicode rich text (bold, italic, headers)
-  actor.py         OperatorProtocol implementation for tool catalog
 ```
 
 **Key design choices:**
