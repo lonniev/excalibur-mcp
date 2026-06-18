@@ -16,7 +16,7 @@ per-operator Neon vault schema. Tool calls are metered with
 [Tollbooth DPYC(TM)](https://github.com/lonniev/tollbooth-dpyc) pre-funded
 Lightning balances -- Don't Pester Your Customer.
 
-Part of the [DPYC(TM) Honor Chain](https://github.com/lonniev/dpyc-community).
+Part of the [DPYC(TM) Social Contract](https://github.com/lonniev/dpyc-community).
 
 ## Getting Started
 
