@@ -5,6 +5,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.1] — 2026-06-19
+
+### Added — FE-direct "Refine with Claude" key delivery (TaxSort tactic)
+
+- **`get_anthropic_key`** — a free, proof-gated tool that hands the operator's
+  Anthropic API key to a proven patron so the editorial FE can call Claude
+  directly (no per-refine MCP round-trip). Mirrors taxsort-mcp. Returns
+  `{key}` or `{key: null, message}` when none is configured.
+- **`anthropic_api_key`** added to the operator credential template (optional,
+  sensitive) — delivered via Secure Courier. Posting works without it; it only
+  enables the editor's refine loop.
+
+### Changed
+- Bumped tollbooth-dpyc pin to **0.48.1** (picks up the `check_price`
+  tool_not_priced fix).
+
 ## [0.10.0] — 2026-06-19
 
 ### Added — stored posts + priced CRUD (editorial face-lift, backend)

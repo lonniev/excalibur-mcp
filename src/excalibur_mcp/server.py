@@ -82,6 +82,10 @@ _DOMAIN_TOOLS = [
                  intent="Archive or delete a stored post", pricing_hint_type="flat", pricing_hint_value=3),
     ToolIdentity(tool_id=capability_uuid("create_post"), capability="create_post", category="write",
                  intent="Store a new draft/scheduled post", pricing_hint_type="flat", pricing_hint_value=5),
+    # FE-direct Claude refine (TaxSort tactic): hands the operator's Anthropic key
+    # to a proven patron so the editor calls Claude directly. Free + proof-gated.
+    ToolIdentity(tool_id=capability_uuid("get_anthropic_key"), capability="get_anthropic_key",
+                 category="free", intent="Get the Anthropic API key for FE-direct 'Refine with Claude'"),
     # Operator-only cron entrypoint — fires due scheduled posts. `restricted`
     # gates it to the operator npub (verified by proof) and bills nothing for
     # the trigger itself; each fired post bills its own owner for post_tweet.
@@ -139,6 +143,10 @@ runtime = OperatorRuntime(
             "client_secret": FieldSpec(
                 required=True, sensitive=True,
                 description="X OAuth2 Client Secret (from X Developer Portal).",
+            ),
+            "anthropic_api_key": FieldSpec(
+                required=False, sensitive=True,
+                description="Anthropic API key for the editor's FE-direct 'Refine with Claude'. Optional — posting works without it.",
             ),
         },
         description="BTCPay Lightning payment + X OAuth2 app credentials",
@@ -482,6 +490,39 @@ async def delete_post(
         runtime, capability_uuid("delete_post"),
         post_id=post_id, hard=hard, npub=npub,
     )
+
+
+# ---------------------------------------------------------------------------
+# FE-direct Claude refine (TaxSort tactic)
+# ---------------------------------------------------------------------------
+
+
+@tool
+@runtime.paid_tool(capability_uuid("get_anthropic_key"))
+async def get_anthropic_key(
+    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "",
+    proof: str = "",
+) -> dict:
+    """Return the operator's Anthropic API key to a proven patron for the
+    editor's FE-direct "Refine with Claude".
+
+    Free, but **proof-gated** — only a patron who has proven npub ownership
+    receives the key. The key belongs to the operator (delivered via Secure
+    Courier); the editor FE then calls Anthropic directly. Returns
+    ``{"key": "..."}`` or ``{"key": null, "message": ...}`` when none is
+    configured. (Mirrors taxsort-mcp's get_anthropic_key.)
+    """
+    try:
+        creds = await runtime.load_credentials(["anthropic_api_key"])
+        key = creds.get("anthropic_api_key")
+        if key:
+            return {"key": key}
+        return {
+            "key": None,
+            "message": "No Anthropic API key configured. The operator must deliver one via Secure Courier.",
+        }
+    except Exception as e:
+        return {"key": None, "error": str(e)}
 
 
 # ---------------------------------------------------------------------------
