@@ -4,8 +4,41 @@ All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
-- chore: track tollbooth-dpyc through 0.45.4 — picks up deferred-adoption courtship (operators gain `request_adoption`), refund-on-raise UX fix (paid tools surface `ValueError` as `tool_input_invalid`), and subsequent SDK hardening. No wire-API changes in this server.
-- docs: refresh the DPYC ecosystem list with the full current roster, including the cypher-mcp newcomer.
+
+## [0.10.0] — 2026-06-19
+
+### Added — stored posts + priced CRUD (editorial face-lift, backend)
+
+- **eXcalibur now stores posts, not just posts them.** A new `posts` table in the
+  operator's NeonVault holds the editable Doc (blocks + flags + voice + bans +
+  schedule) as `jsonb`, with `text_cache`, `publish_at`/`recurrence`/`cease_at`/
+  `last_sent_at`, and a `client_req_id` for idempotency. Schema is created lazily
+  via `db/neon.py::_ensure_domain_schema` (canonical DDL in `db/migrations/0001_initial.sql`).
+- **Five metered, npub-authorized CRUD tools:** `create_post` (write), `get_post`
+  (read), `list_posts` (read, keyset-paginated), `update_post` (write, patch
+  semantics), `delete_post` (write, soft delete → `status='archived'`, opt-in
+  `hard`). Reads are cheap, writes pricier, `create` highest (seed prices; tune in
+  the pricing studio). Every statement is owner-scoped — no cross-npub access.
+- **Idempotency without double-charge.** A repeated `client_req_id` on
+  `create`/`update` returns the prior result and refunds the duplicate debit
+  (`rollback_debit`), so debounced FE autosave retries never double-spend.
+
+### Added — scheduled-post publishing
+
+- **`process_scheduled_posts`** — an operator-only (`restricted`) tool that fires
+  every due `scheduled` post: it bills each post's owner for `post_tweet` (tranche-
+  expiry guard intact), publishes on their behalf, stamps `last_sent_at`, and
+  reschedules from `recurrence` or retires the post past `cease_at`. Insufficient
+  balance / unavailable OAuth are situations — the post is left scheduled, never
+  dropped.
+- **Cloudflare Worker cron source** (`scheduler-worker/`, deploy deferred) triggers
+  the tick by impersonating the operator via its long-lived npub proof_token.
+
+### Changed
+- Requires **tollbooth-dpyc 0.48.0** (npub proof delegation cap raised 7 → 30 days),
+  enabling multi-day editorial sessions and the unattended scheduler proof_token.
+- Refactored the X-post path into a shared `_resolve_x_client` helper used by both
+  the interactive `post_tweet` tool and the scheduler (DRY); no wire-API change.
 
 ## [0.9.1] — 2026-06-11
 - chore: track tollbooth-dpyc through 0.44.15 — SDK audit hardening (correctness fixes for credit-tranche expiration in 0.44.9 and proof-reply handling in 0.44.10; blocking mypy + coverage gates). No wire-API changes.

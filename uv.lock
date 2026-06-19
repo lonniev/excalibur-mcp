@@ -503,7 +503,7 @@ wheels = [
 
 [[package]]
 name = "excalibur-mcp"
-version = "0.9.1"
+version = "0.10.0"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
@@ -541,7 +541,7 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.1.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.3.0" },
-    { name = "tollbooth-dpyc", extras = ["nostr"], specifier = "==0.47.0" },
+    { name = "tollbooth-dpyc", extras = ["nostr"], specifier = "==0.48.0" },
 ]
 provides-extras = ["dev"]
 
@@ -1582,16 +1582,16 @@ sdist = { url = "https://files.pythonhosted.org/packages/bb/89/6df40b0c5fd9a1c30
 
 [[package]]
 name = "tollbooth-dpyc"
-version = "0.47.0"
+version = "0.48.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cryptography" },
     { name = "httpx" },
     { name = "pynostr" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/66/84/ae86f592335810179315852e57ff6c80a7764fec4b6dcd2d527646468f98/tollbooth_dpyc-0.47.0.tar.gz", hash = "sha256:38b5dbbf1b4ec6982fd9bf945948756480a72756c5b2d93e9130b020c1aafe61", size = 2425842, upload-time = "2026-06-18T19:18:09.956Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/65/11/e3010ef9de7886b1a4616959c2a34063388ccfbf1a38dc013af67fdde818/tollbooth_dpyc-0.48.0.tar.gz", hash = "sha256:25da2d5efca34a829645fdca149e3efdc57ee5439d2b27b1a1b28ec9d5c54097", size = 2426402, upload-time = "2026-06-19T20:43:11.846Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/60/5c/4fb71369ee8ee6f4c754b2c882fb3eb3e2a185af0b76c5a3af05bc07b455/tollbooth_dpyc-0.47.0-py3-none-any.whl", hash = "sha256:8d04a6ca5fcc9adab9918df3a4bf8f9c343d39339bfa08f303bd293d06547b33", size = 323123, upload-time = "2026-06-18T19:18:07.805Z" },
+    { url = "https://files.pythonhosted.org/packages/a1/ac/de28d5492a36c0c3a7555f5e4c7034d55fc5944b009eba12cda15d94921a/tollbooth_dpyc-0.48.0-py3-none-any.whl", hash = "sha256:625ce737f6f1707375276407d181bdb7fab92ff02c63c899f89e532c9955ed44", size = 323128, upload-time = "2026-06-19T20:43:10.129Z" },
 ]
 
 [package.optional-dependencies]

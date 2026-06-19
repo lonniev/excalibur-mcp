@@ -1,0 +1,23 @@
+# Cloudflare Worker — eXcalibur scheduled-post cron trigger.
+#
+# Deploy is DEFERRED until the Cloudflare project is wired (alongside the
+# editorial FE). This Worker holds NO domain logic: on each cron tick it calls
+# the operator-only `excalibur_process_scheduled_posts` MCP tool, which does the
+# actual due-post selection, owner billing, and posting server-side.
+
+name = "excalibur-scheduler"
+main = "src/index.ts"
+compatibility_date = "2026-06-19"
+
+# Every 10 minutes. ~5-min cron granularity is fine for social posting.
+[triggers]
+crons = ["*/10 * * * *"]
+
+[vars]
+# The deployed eXcalibur MCP streamable-HTTP endpoint. CONFIRM the exact path
+# and transport at deploy time.
+MCP_URL = "https://excalibur-mcp.fastmcp.app/mcp"
+
+# Secrets (NOT committed) — set with `wrangler secret put`:
+#   OPERATOR_NPUB   — the operator's npub1...
+#   OPERATOR_PROOF  — the operator's long-lived proof_token (≤30 days; see README)
