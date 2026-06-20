@@ -26,6 +26,7 @@ export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
     __BUILD_COMMIT__: JSON.stringify(resolveCommit()),
+    __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
   },
   build: { outDir: 'dist' },
 })
