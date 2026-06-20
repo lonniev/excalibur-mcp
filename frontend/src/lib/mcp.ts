@@ -219,7 +219,9 @@ export async function serviceStatus(): Promise<ServiceStatus> {
 }
 
 export interface NpubProofResult {
-  verified?: boolean;
+  success?: boolean;
+  proven_npub?: string;
+  verified?: boolean; // legacy field; current wheel uses `success`
   status?: string;
   message?: string;
   proof_token?: string;
@@ -227,6 +229,7 @@ export interface NpubProofResult {
   expires_in_seconds?: number;
   expires_at?: string;
   error?: string;
+  error_code?: string;
 }
 
 /// Step 1 of DM login. Sends a Secure Courier challenge DM to the npub.
