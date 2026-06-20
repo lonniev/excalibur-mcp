@@ -464,11 +464,18 @@ export interface CreatePostResult {
   error?: string;
 }
 
+export interface Recurrence {
+  freq: "daily" | "weekly" | "monthly";
+  interval: number;
+}
+
 export async function createPost(opts: {
   doc: unknown;
   textCache?: string;
   status?: string;
   publishAt?: string;
+  recurrence?: Recurrence;
+  ceaseAt?: string;
   clientReqId?: string;
 }): Promise<CreatePostResult> {
   const args: Record<string, unknown> = {
@@ -477,6 +484,8 @@ export async function createPost(opts: {
     status: opts.status ?? "draft",
   };
   if (opts.publishAt) args.publish_at = opts.publishAt;
+  if (opts.recurrence) args.recurrence = opts.recurrence;
+  if (opts.ceaseAt) args.cease_at = opts.ceaseAt;
   if (opts.clientReqId) args.client_req_id = opts.clientReqId;
   return callTool<CreatePostResult>("create_post", args);
 }
