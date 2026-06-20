@@ -76,6 +76,72 @@ export function setStoredProof(proof: string): void {
   window.localStorage.setItem(PROOF_STORAGE_KEY, proof);
 }
 
+// ─── Recent logins (skip the DM on return) ───────────────────────────────
+// Ported from optionality-mcp's proven pattern: cache (npub, proof_token,
+// expiresAt) tuples so a returning patron re-enters on the cached proof
+// until the server-side cache actually expires.
+
+const RECENT_LOGINS_KEY = "excalibur:recent-logins:v1";
+const MAX_RECENT_LOGINS = 5;
+
+export interface RecentLogin {
+  npub: string;
+  proof: string;
+  expiresAt: number; // unix ms
+  lastUsed: number; // unix ms
+}
+
+function readRecentLogins(): RecentLogin[] {
+  try {
+    const raw = window.localStorage.getItem(RECENT_LOGINS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (e): e is RecentLogin =>
+        typeof e === "object" && e !== null &&
+        typeof e.npub === "string" && typeof e.proof === "string" &&
+        typeof e.expiresAt === "number" && typeof e.lastUsed === "number",
+    );
+  } catch {
+    return [];
+  }
+}
+
+function writeRecentLogins(entries: RecentLogin[]): void {
+  window.localStorage.setItem(RECENT_LOGINS_KEY, JSON.stringify(entries));
+}
+
+/// Unexpired recent logins, MRU-sorted. Prunes expired entries as a side effect.
+export function getValidRecentLogins(): RecentLogin[] {
+  const now = Date.now();
+  const entries = readRecentLogins();
+  const valid = entries.filter((e) => e.expiresAt > now);
+  if (valid.length !== entries.length) writeRecentLogins(valid);
+  valid.sort((a, b) => b.lastUsed - a.lastUsed);
+  return valid;
+}
+
+/// Record (or refresh) a successful login. Derate the TTL by 30s so a
+/// straggler can't serve an already-expired token to the next paid call.
+export function recordRecentLogin(npub: string, proof: string, expiresInSec: number): void {
+  const safeTtl = Math.max(0, expiresInSec - 30);
+  const next: RecentLogin = {
+    npub,
+    proof,
+    expiresAt: Date.now() + safeTtl * 1000,
+    lastUsed: Date.now(),
+  };
+  const others = readRecentLogins().filter((e) => e.npub !== npub);
+  writeRecentLogins(
+    [next, ...others].sort((a, b) => b.lastUsed - a.lastUsed).slice(0, MAX_RECENT_LOGINS),
+  );
+}
+
+export function forgetRecentLogin(npub: string): void {
+  writeRecentLogins(readRecentLogins().filter((e) => e.npub !== npub));
+}
+
 /// "Logged in" = we have the patron's npub AND a way to prove ownership:
 /// either a cached DM proof_token, or a session nsec whose npub matches.
 export function isLoggedIn(): boolean {
