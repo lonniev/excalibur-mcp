@@ -12,11 +12,11 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@tailwindcss/typography": "^0.5.19",
+    "lucide-react": "^0.460.0",
     "nostr-tools": "^2.23.5",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^6.26.0",
-    "yjs": "^13.6.20"
+    "react-router-dom": "^6.26.0"
   },
   "devDependencies": {
     "@types/react": "^18.3.5",

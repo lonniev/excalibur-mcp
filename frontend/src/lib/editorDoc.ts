@@ -1,138 +1,156 @@
-// Yjs document model for the editorial editor.
-//
-// A post is a Y.Array of blocks; each block is a Y.Map { id: string,
-// text: Y.Text }. Flagged regions ("select a span for rework") anchor to
-// Y.RelativePosition so they ride along as the author edits the text around
-// them. Single-player for now (no provider) — Yjs gives us stable anchors +
-// a free undo/redo manager, and sets up real-time later.
+// Editor document model — block list with per-block flagged regions.
+// Mirrors the Excalibur Editorial prototype: flags are plain {start,end}
+// char offsets within a block; freeform editing a block clears its flags.
 
-import * as Y from "yjs";
-
-export interface BlockDesc {
+export interface Flag {
   id: string;
-  text: string;
-}
-
-// Flag persisted to the backend `doc` (plain block-index + char offsets —
-// RelativePosition is session-bound, and stored blocks are plain strings with
-// no ids, so we anchor by index and rebuild RelativePositions on load).
-export interface FlagOffset {
-  blockIndex: number;
   start: number;
   end: number;
-  colorIdx: number;
   note: string;
+  suggestions: string[];
+  loading: boolean;
+  error: string;
+  colorIdx: number;
 }
 
-// Live flag held in component state: anchors survive edits to the block.
-export interface FlagState {
+export interface Block {
   id: string;
-  blockId: string;
-  startRel: Y.RelativePosition;
-  endRel: Y.RelativePosition;
-  colorIdx: number;
-  note: string;
+  text: string;
+  flags: Flag[];
 }
 
-// Distinct highlight hues (rgb triplets) — used at low alpha for marks and
-// solid for rail swatches, so they read in both light and dark themes.
-export const MARK_RGB = [
-  "234,179,8", // amber
-  "239,68,68", // red
-  "59,130,246", // blue
-  "16,185,129", // emerald
-  "168,85,247", // purple
-  "249,115,22", // orange
-  "20,184,166", // teal
-  "236,72,153", // pink
+export interface Ban {
+  text: string;
+  on: boolean;
+}
+
+let _id = 100;
+export function uid(): string {
+  return `id${_id++}`;
+}
+
+// Distinct highlight colour per flagged region. Static Tailwind classes
+// (no JIT) — marks sit on the white X card, dots/chips in the dark rail.
+export interface Palette {
+  mark: string;
+  active: string;
+  dot: string;
+}
+export const PALETTE: Palette[] = [
+  { mark: "bg-amber-200", active: "bg-amber-300", dot: "bg-amber-400" },
+  { mark: "bg-sky-200", active: "bg-sky-300", dot: "bg-sky-400" },
+  { mark: "bg-emerald-200", active: "bg-emerald-300", dot: "bg-emerald-400" },
+  { mark: "bg-fuchsia-200", active: "bg-fuchsia-300", dot: "bg-fuchsia-400" },
+  { mark: "bg-orange-200", active: "bg-orange-300", dot: "bg-orange-400" },
+  { mark: "bg-violet-200", active: "bg-violet-300", dot: "bg-violet-400" },
+];
+export function paletteOf(i: number): Palette {
+  return PALETTE[((i % PALETTE.length) + PALETTE.length) % PALETTE.length];
+}
+
+export const DEFAULT_VOICE =
+  "Plain, declarative, slightly contrarian. Sound-money conviction without " +
+  "sermonizing. Short sentences. No hype words. Lets the mechanism carry the pitch.";
+
+export const DEFAULT_BANS = [
+  "Happy to…",
+  "It's not X, it's Y",
+  "not just X, but Y",
+  "em-dash overuse",
+  "delve / dive in",
+  "in today's landscape",
+  "game-changer",
+  "elevate / unlock",
+  "I hope this helps",
 ];
 
-export function markBg(idx: number): string {
-  return `rgba(${MARK_RGB[idx % MARK_RGB.length]},0.32)`;
-}
-export function swatch(idx: number): string {
-  return `rgb(${MARK_RGB[idx % MARK_RGB.length]})`;
+export interface Segment {
+  text: string;
+  flag: Flag | null;
 }
 
-/// Stable free-list: hand out the lowest colour index not currently in use so
-/// removing a flag frees its colour for reuse (no drift toward high indices).
-export function allocColor(used: number[]): number {
-  for (let i = 0; i < 256; i++) if (!used.includes(i)) return i;
-  return used.length;
-}
-
-export function uid(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
-  return `id-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
-}
-
-// X-style fold weighting (editorial spec): URLs count 23, emoji 2, else 1.
-const URL_RE = /https?:\/\/\S+/g;
-const EMOJI_RE = /\p{Extended_Pictographic}/gu;
-export const FOLD_BUDGET = 280;
-
-export function weightedLength(text: string): number {
-  const urls = text.match(URL_RE) ?? [];
-  let body = text;
-  for (const u of urls) body = body.replace(u, "");
-  const emoji = (body.match(EMOJI_RE) ?? []).length;
-  const rest = [...body.replace(EMOJI_RE, "")].length;
-  return urls.length * 23 + emoji * 2 + rest;
-}
-
-/// Apply the minimal insert/delete to turn `ytext` into `next`, preserving
-/// relative-position anchors outside the changed span (a wholesale
-/// delete+insert would orphan every flag).
-export function applyTextDiff(ytext: Y.Text, next: string): void {
-  const prev = ytext.toString();
-  if (prev === next) return;
-  const min = Math.min(prev.length, next.length);
-  let p = 0;
-  while (p < min && prev[p] === next[p]) p++;
-  let s = 0;
-  while (s < min - p && prev[prev.length - 1 - s] === next[next.length - 1 - s]) s++;
-  const delCount = prev.length - p - s;
-  const insStr = next.slice(p, next.length - s);
-  const doc = ytext.doc;
-  const run = () => {
-    if (delCount > 0) ytext.delete(p, delCount);
-    if (insStr) ytext.insert(p, insStr);
-  };
-  doc ? doc.transact(run) : run();
-}
-
-export function blockText(block: Y.Map<unknown>): Y.Text {
-  return block.get("text") as Y.Text;
-}
-
-export function makeBlock(desc: BlockDesc): Y.Map<unknown> {
-  const m = new Y.Map();
-  m.set("id", desc.id);
-  m.set("text", new Y.Text(desc.text));
-  return m;
-}
-
-export interface PostDoc {
-  blocks: string[];
-  flags: FlagOffset[];
-}
-
-/// Parse a stored post `doc` (or fall back to text_cache) into block strings.
-export function parseDoc(doc: unknown, textCache?: string): { blocks: string[]; flags: FlagOffset[] } {
-  const d = doc as Partial<PostDoc> | null | undefined;
-  let blocks: string[] = [];
-  if (d && Array.isArray(d.blocks)) {
-    blocks = d.blocks.map((b) => (typeof b === "string" ? b : String((b as { text?: string })?.text ?? "")));
-  } else if (textCache) {
-    blocks = textCache.split(/\n\n+/);
+/// Split block text into rendered segments given its flags.
+export function segmentize(text: string, flags: Flag[]): Segment[] {
+  const sorted = [...flags].sort((a, b) => a.start - b.start);
+  const segs: Segment[] = [];
+  let cursor = 0;
+  for (const f of sorted) {
+    if (f.start > cursor) segs.push({ text: text.slice(cursor, f.start), flag: null });
+    segs.push({ text: text.slice(f.start, f.end), flag: f });
+    cursor = f.end;
   }
-  blocks = blocks.length ? blocks : [""];
-  const flags: FlagOffset[] = d && Array.isArray(d.flags)
-    ? d.flags.filter(
-        (f): f is FlagOffset =>
-          !!f && typeof f.blockIndex === "number" &&
-          typeof f.start === "number" && typeof f.end === "number",
-      ).map((f) => ({ ...f, colorIdx: f.colorIdx ?? 0, note: f.note ?? "" }))
-    : [];
-  return { blocks, flags };
+  if (cursor < text.length) segs.push({ text: text.slice(cursor), flag: null });
+  return segs;
+}
+
+export function overlaps(a: { start: number; end: number }, b: { start: number; end: number }): boolean {
+  return a.start < b.end && b.start < a.end;
+}
+
+/// Absolute character offset of (node, offset) within `root`.
+export function charOffset(root: Node, node: Node, offset: number): number {
+  let chars = 0;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let n: Node | null;
+  while ((n = walker.nextNode())) {
+    if (n === node) return chars + offset;
+    chars += (n.textContent ?? "").length;
+  }
+  return chars;
+}
+
+export function composeText(blocks: Block[]): string {
+  return blocks.map((b) => b.text).join("\n\n").trim();
+}
+
+function freshFlag(start: number, end: number, colorIdx: number, note = ""): Flag {
+  return { id: uid(), start, end, note, suggestions: [], loading: false, error: "", colorIdx };
+}
+
+// ── persistence ──────────────────────────────────────────────────────────
+// Stored doc shape: { blocks: [{ text, flags: [{start,end,note,colorIdx}] }] }.
+// Falls back to legacy string[] blocks or text_cache.
+
+interface StoredFlag {
+  start: number;
+  end: number;
+  note?: string;
+  colorIdx?: number;
+}
+interface StoredBlock {
+  text: string;
+  flags?: StoredFlag[];
+}
+
+export function parsePostDoc(doc: unknown, textCache?: string): Block[] {
+  const d = doc as { blocks?: unknown } | null | undefined;
+  let raw: StoredBlock[] = [];
+  if (d && Array.isArray(d.blocks)) {
+    raw = d.blocks.map((b) =>
+      typeof b === "string" ? { text: b } : { text: String((b as StoredBlock)?.text ?? ""), flags: (b as StoredBlock)?.flags },
+    );
+  } else if (textCache) {
+    raw = textCache.split(/\n\n+/).map((t) => ({ text: t }));
+  }
+  if (!raw.length) raw = [{ text: "" }];
+  return raw.map((b) => ({
+    id: uid(),
+    text: b.text,
+    flags: (b.flags ?? [])
+      .filter((f) => typeof f.start === "number" && typeof f.end === "number" && f.end > f.start)
+      .map((f) => freshFlag(f.start, f.end, f.colorIdx ?? 0, f.note ?? "")),
+  }));
+}
+
+export interface PostDocPayload {
+  blocks: { text: string; flags: StoredFlag[] }[];
+}
+
+export function serializeBlocks(blocks: Block[]): PostDocPayload {
+  return {
+    blocks: blocks.map((b) => ({
+      text: b.text,
+      flags: b.flags.map((f) => ({ start: f.start, end: f.end, note: f.note, colorIdx: f.colorIdx })),
+    })),
+  };
 }
