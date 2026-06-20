@@ -86,8 +86,10 @@ function DmFlow({ onLogin }: { onLogin: () => void }) {
     setError(null);
     try {
       const r = await receiveNpubProof(npub.trim(), token);
-      if (r.verified) {
-        setStoredNpub(npub.trim());
+      // Current wheel signals success via `success: true` (+ `proven_npub`);
+      // older builds used `verified`. Accept either.
+      if (r.success === true || r.verified === true) {
+        setStoredNpub(r.proven_npub || npub.trim());
         setStoredProof(r.proof_token || token);
         onLogin();
       } else {
