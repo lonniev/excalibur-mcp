@@ -11,9 +11,9 @@ import { useSession } from "../App";
 import Avatar from "./Avatar";
 import { avatarFor } from "../lib/avatar";
 import {
-  createPost, deletePost, getPost, updatePost, type PostRow, type Recurrence,
+  createPost, deletePost, getPost, refinePostRegion, updatePost,
+  type PostRow, type Recurrence,
 } from "../lib/mcp";
-import { callClaude, parseSuggestions } from "../lib/claude";
 import {
   charOffset, composeText, DEFAULT_BANS, DEFAULT_VOICE, overlaps, paletteOf,
   parsePostDoc, segmentize, serializeBlocks, uid,
@@ -153,26 +153,29 @@ export default function PostEditorPage() {
       b.id === blockId ? { ...b, flags: b.flags.map((f) => (f.id === flagId ? { ...f, ...patch } : f)) } : b));
   }
 
-  // ── refine (TaxSort tactic: FE → Anthropic direct) ───────────────────────
+  // ── refine (server-side: MCP calls Claude with the operator's vaulted key) ──
   async function refine(blockId: string, flag: FlagT) {
     const block = blocks.find((b) => b.id === blockId);
     if (!block) return;
     const region = block.text.slice(flag.start, flag.end);
     const activeBans = bans.filter((b) => b.on).map((b) => b.text);
-    const system =
-      "You are an editorial copy assistant working on a single tweet for X. " +
-      "You rewrite only the flagged region, keeping it consistent with the rest of the tweet. " +
-      "Match this voice profile exactly: " + voice + ". " +
-      "Hard constraints — never produce any of these AI tells: " + activeBans.join("; ") + ". " +
-      "Keep it tight enough for X. Prefer plain verbs and concrete nouns. " +
-      "Respond ONLY with a JSON array of exactly 3 alternative strings for the region. No markdown, no preamble.";
-    const user =
-      "FULL TWEET:\n" + block.text + "\n\nFLAGGED REGION:\n\"" + region + "\"\n\n" +
-      "WHAT THE EDITOR WANTS:\n" + (flag.note || "Make it sharper and more human. Remove any AI-sounding phrasing.");
     updateFlag(blockId, flag.id, { loading: true, error: "", suggestions: [] });
     try {
-      const raw = await callClaude(system, user);
-      const suggestions = parseSuggestions(raw);
+      const r = await refinePostRegion({
+        region,
+        fullText: block.text,
+        instruction: flag.note,
+        voice,
+        bans: activeBans,
+      });
+      if (!r.success) {
+        updateFlag(blockId, flag.id, {
+          loading: false,
+          error: r.message || r.error || "Refine is unavailable right now.",
+        });
+        return;
+      }
+      const suggestions = r.suggestions ?? [];
       if (!suggestions.length) throw new Error("No suggestions returned.");
       updateFlag(blockId, flag.id, { loading: false, suggestions });
     } catch (e) {

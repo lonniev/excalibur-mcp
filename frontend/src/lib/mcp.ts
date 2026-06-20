@@ -536,16 +536,33 @@ export async function deletePost(postId: string, hard = false): Promise<DeletePo
   return callTool<DeletePostResult>("delete_post", { post_id: postId, hard });
 }
 
-// ─── Anthropic key (free, proof-gated — TaxSort tactic) ──────────────────
+// ─── Refine with Claude (server-side; the operator's key never leaves the BE) ──
 
-export interface AnthropicKeyResult {
-  key?: string | null;
-  message?: string;
+export interface RefineResult {
+  success: boolean;
+  suggestions?: string[];
   error?: string;
+  error_code?: string;
+  message?: string;
 }
 
-export async function getAnthropicKey(): Promise<AnthropicKeyResult> {
-  return callTool<AnthropicKeyResult>("get_anthropic_key", {});
+/// Ask the MCP to refine a flagged region. The wheel calls Anthropic with the
+/// operator's vaulted key and meters the call as a paid fare — the browser
+/// never sees a key. Paid tool (npub/proof envelope injected by callTool).
+export async function refinePostRegion(args: {
+  region: string;
+  fullText?: string;
+  instruction?: string;
+  voice?: string;
+  bans?: string[];
+}): Promise<RefineResult> {
+  return callTool<RefineResult>("refine_post_region", {
+    region: args.region,
+    full_text: args.fullText ?? "",
+    instruction: args.instruction ?? "",
+    voice: args.voice ?? "",
+    bans: JSON.stringify(args.bans ?? []),
+  });
 }
 
 // ─── Nostr kind-0 profile (served by the wheel; no relay I/O in the FE) ────
