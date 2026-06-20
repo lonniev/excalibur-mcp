@@ -278,6 +278,11 @@ export interface ServiceStatus {
   process_id?: number;
   service?: string;
   slug?: string;
+  build_info?: {
+    fastmcp_cloud_url?: string;
+    fastmcp_cloud_git_commit_sha?: string;
+    fastmcp_cloud_git_repo?: string;
+  };
 }
 
 export async function serviceStatus(): Promise<ServiceStatus> {
@@ -534,4 +539,56 @@ export interface AnthropicKeyResult {
 
 export async function getAnthropicKey(): Promise<AnthropicKeyResult> {
   return callTool<AnthropicKeyResult>("get_anthropic_key", {});
+}
+
+// ─── Coupons (wheel 0.41.0+) ─────────────────────────────────────────────
+
+export interface PatronCoupon {
+  coupon_id: string;
+  name: string;
+  discount_percent: number;
+  valid_from: string;
+  valid_until: string;
+  uses_per_patron: number | null;
+  use_count: number;
+  uses_remaining: number | null;
+  total_uses: number | null;
+  total_remaining: number | null;
+  status: string; // active | window_closed | window_not_started | patron_limit | total_limit
+}
+
+export interface ListMyCouponsResult {
+  success: boolean;
+  count: number;
+  coupons: PatronCoupon[];
+  error?: string;
+}
+
+export interface RedeemCouponResult {
+  success: boolean;
+  coupon_id?: string;
+  name?: string;
+  discount_percent?: number;
+  valid_until?: string;
+  uses_remaining?: number | null;
+  uses_per_patron?: number | null;
+  error?: string;
+}
+
+export interface ForgetCouponResult {
+  success: boolean;
+  coupon_id?: string;
+  error?: string;
+}
+
+export async function listMyCoupons(): Promise<ListMyCouponsResult> {
+  return callTool<ListMyCouponsResult>("list_my_coupons", {});
+}
+
+export async function redeemCoupon(code: string): Promise<RedeemCouponResult> {
+  return callTool<RedeemCouponResult>("redeem_coupon", { code });
+}
+
+export async function forgetCoupon(couponId: string): Promise<ForgetCouponResult> {
+  return callTool<ForgetCouponResult>("forget_coupon", { coupon_id: couponId });
 }

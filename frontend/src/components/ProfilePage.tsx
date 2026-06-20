@@ -4,6 +4,8 @@ import { useTheme, type Theme } from "../lib/theme";
 import { getAccountStatement, type AccountStatementResult } from "../lib/mcp";
 import Avatar from "./Avatar";
 import AvatarPicker from "./AvatarPicker";
+import CouponsPanel from "./CouponsPanel";
+import BuildLicensePanel from "./BuildLicensePanel";
 import { avatarFor, setStoredAvatar } from "../lib/avatar";
 
 const card = "rounded-xl border border-stone-200 dark:border-zinc-800 bg-white dark:bg-zinc-900";
@@ -117,11 +119,13 @@ export default function ProfilePage() {
         )}
       </div>
 
-      <div className="flex items-center justify-between">
-        <span className="text-xs text-stone-400 dark:text-zinc-500">
-          {status?.version && `MCP ${status.version}`}
-          {status?.tollbooth_dpyc_version && ` · SDK ${status.tollbooth_dpyc_version}`}
-        </span>
+      {/* Coupons */}
+      <CouponsPanel />
+
+      {/* Build & license */}
+      <BuildLicensePanel status={status} />
+
+      <div className="flex justify-end">
         <button
           onClick={logOut}
           className="text-sm px-4 py-2 rounded-lg text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors"
