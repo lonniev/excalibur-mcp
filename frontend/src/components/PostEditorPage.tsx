@@ -1,17 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Dispatch, HTMLAttributes, SetStateAction } from "react";
+import type { Dispatch, HTMLAttributes, ReactNode, SetStateAction } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   MessageCircle, Repeat2, Heart, BarChart2, Bookmark, Share, BadgeCheck,
   Sparkles, Flag, GripVertical, Pencil, Trash2, Plus, Calendar, Repeat,
   Octagon, Copy, Check, ChevronUp, ChevronDown, Eye, EyeOff,
-  Wand2, Loader2, Swords, Save,
+  Wand2, Loader2, Swords, Save, Bold, Italic, Code,
 } from "lucide-react";
 import { useSession } from "../App";
 import Avatar from "./Avatar";
 import { avatarFor } from "../lib/avatar";
+import { styleText, type UnicodeStyle } from "../lib/unicodeFormat";
+import { addSnippet, getSnippets, removeSnippet, type Snippet } from "../lib/snippets";
 import {
-  createPost, deletePost, getPost, refinePostRegion, updatePost,
+  createPost, deletePost, getPost, postTweet, refinePostRegion, updatePost,
   type PostRow, type Recurrence,
 } from "../lib/mcp";
 import {
@@ -35,7 +37,7 @@ export default function PostEditorPage() {
   const [blocks, setBlocks] = useState<Block[]>([{ id: uid(), text: "", flags: [] }]);
   const [activeFlag, setActiveFlag] = useState<ActiveFlag | null>(null);
   const [preview, setPreview] = useState(false);
-  const [tab, setTab] = useState<"flags" | "voice" | "schedule">("flags");
+  const [tab, setTab] = useState<"flags" | "voice" | "schedule" | "snippets">("flags");
   const [editingBlock, setEditingBlock] = useState<string | null>(null);
   const [sel, setSel] = useState<Sel | null>(null);
   const [clearPill, setClearPill] = useState<PillPos | null>(null);
@@ -101,6 +103,12 @@ export default function PostEditorPage() {
 
   const composed = useMemo(() => composeText(blocks), [blocks]);
   const charCount = composed.length;
+  // Text offered to "save as snippet": the block being edited, else the
+  // selected block, else the whole composed post.
+  const focusedBlockText =
+    (editingBlock ? blocks.find((b) => b.id === editingBlock)?.text : undefined) ??
+    (sel ? blocks.find((b) => b.id === sel.blockId)?.text : undefined) ??
+    composed;
   const allFlags = useMemo(
     () => blocks.flatMap((b) => b.flags.map((f) => ({ ...f, blockId: b.id, blockText: b.text }))),
     [blocks],
@@ -175,7 +183,8 @@ export default function PostEditorPage() {
         });
         return;
       }
-      const suggestions = r.suggestions ?? [];
+      // Dedup identical suggestions (the model sometimes repeats), keep order.
+      const suggestions = [...new Set((r.suggestions ?? []).map((s) => s.trim()).filter(Boolean))];
       if (!suggestions.length) throw new Error("No suggestions returned.");
       updateFlag(blockId, flag.id, { loading: false, suggestions });
     } catch (e) {
@@ -226,6 +235,10 @@ export default function PostEditorPage() {
   };
 
   const addBlock = () => setBlocks((prev) => [...prev, { id: uid(), text: "New line…", flags: [] }]);
+  const insertSnippet = (text: string) => {
+    setBlocks((prev) => [...prev, { id: uid(), text, flags: [] }]);
+    setHint("Snippet added as a block — drag it where you want.");
+  };
   const deleteBlock = (blockId: string) =>
     setBlocks((prev) => (prev.length > 1 ? prev.filter((b) => b.id !== blockId) : prev));
 
@@ -290,6 +303,38 @@ export default function PostEditorPage() {
     try { await deletePost(postId!, false); nav("/"); } catch (e) { setError((e as Error).message); }
   }
 
+  // Post to X now (paid), then save the post as sent so it lands in the list.
+  async function handlePostNow() {
+    if (!composed.trim()) { setError("Write something first."); return; }
+    setSaving(true);
+    setError(null);
+    try {
+      const r = await postTweet(composed);
+      if (r.error || r.success === false) {
+        setError(r.message || r.error || "Couldn't post to X.");
+        return;
+      }
+      const docPayload = serializeBlocks(blocks);
+      if (isNew) {
+        const c = await createPost({
+          doc: docPayload, textCache: composed, status: "sent", clientReqId: createReqId.current,
+        });
+        if (c.post_id) { nav(`/post/${c.post_id}`, { replace: true }); return; }
+        setHint("Posted to X (couldn't save a copy).");
+      } else {
+        await updatePost({
+          postId: postId!, patch: { doc: docPayload, status: "sent" },
+          textCache: composed, clientReqId: uid(),
+        });
+        setHint("Posted to X.");
+      }
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   if (loading) {
     return <div className="min-h-screen bg-zinc-950 flex items-center justify-center text-zinc-400 text-sm">Loading…</div>;
   }
@@ -339,6 +384,14 @@ export default function PostEditorPage() {
             className="flex items-center gap-1.5 rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:border-zinc-500 hover:text-zinc-100 disabled:opacity-40 transition-colors"
           >
             <Save className="h-4 w-4" /> {saving ? "Saving…" : "Save draft"}
+          </button>
+          <button
+            onClick={() => void handlePostNow()}
+            disabled={saving}
+            title="Post to X now and mark this post sent"
+            className="flex items-center gap-1.5 rounded-md bg-amber-400 px-3 py-1.5 text-sm font-medium text-zinc-950 hover:bg-amber-300 disabled:opacity-40 transition-colors"
+          >
+            <Share className="h-4 w-4" /> Post now
           </button>
           <button
             onClick={() => { setPreview((p) => !p); setSel(null); setClearPill(null); }}
@@ -434,7 +487,7 @@ export default function PostEditorPage() {
         {!preview && (
           <aside className="w-full flex-none border-t border-zinc-800 lg:w-96 lg:border-l lg:border-t-0">
             <nav className="flex border-b border-zinc-800 font-mono text-xs uppercase tracking-widest">
-              {([["flags", `Flags ${openFlagCount ? `(${openFlagCount})` : ""}`], ["voice", "Voice"], ["schedule", "Schedule"]] as const).map(([k, label]) => (
+              {([["flags", `Flags ${openFlagCount ? `(${openFlagCount})` : ""}`], ["voice", "Voice"], ["snippets", "Snippets"], ["schedule", "Schedule"]] as const).map(([k, label]) => (
                 <button key={k} onClick={() => setTab(k)} className={`flex-1 px-3 py-3 transition-colors ${tab === k ? "bg-zinc-900 text-amber-300" : "text-zinc-500 hover:text-zinc-300"}`}>{label}</button>
               ))}
             </nav>
@@ -451,6 +504,13 @@ export default function PostEditorPage() {
                 />
               )}
               {tab === "voice" && <VoiceTab voice={voice} setVoice={setVoice} bans={bans} setBans={setBans} />}
+              {tab === "snippets" && (
+                <SnippetsTab
+                  npub={npub}
+                  currentText={focusedBlockText}
+                  onInsert={insertSnippet}
+                />
+              )}
               {tab === "schedule" && (
                 <ScheduleTab
                   publishAt={publishAt} setPublishAt={setPublishAt}
@@ -483,18 +543,42 @@ function BlockView({
   dragHandlers: HTMLAttributes<HTMLDivElement>;
 }) {
   const ref = useRef<HTMLParagraphElement>(null);
+  const editRef = useRef<HTMLTextAreaElement>(null);
   const segs = useMemo(() => segmentize(block.text, block.flags), [block.text, block.flags]);
 
   if (preview) {
     return <p className="whitespace-pre-wrap break-words text-[15px] leading-normal text-zinc-900">{block.text}</p>;
   }
   if (editing) {
+    const applyStyle = (style: UnicodeStyle) => {
+      const ta = editRef.current;
+      if (!ta || ta.selectionStart === ta.selectionEnd) return;
+      const s = ta.selectionStart, e = ta.selectionEnd;
+      onChange(block.text.slice(0, s) + styleText(block.text.slice(s, e), style) + block.text.slice(e));
+    };
+    const fmtBtn = (label: ReactNode, style: UnicodeStyle, tip: string) => (
+      <button
+        onMouseDown={(ev) => ev.preventDefault()}
+        onClick={() => applyStyle(style)}
+        title={tip}
+        className="rounded px-1.5 py-0.5 text-zinc-700 hover:bg-amber-200"
+      >
+        {label}
+      </button>
+    );
     return (
       <div className="rounded-md ring-1 ring-amber-400">
+        <div className="flex items-center gap-1 rounded-t-md bg-amber-100 px-2 py-1">
+          {fmtBtn(<Bold className="h-3.5 w-3.5" />, "bold", "Bold (Unicode)")}
+          {fmtBtn(<Italic className="h-3.5 w-3.5" />, "italic", "Italic (Unicode)")}
+          {fmtBtn(<Code className="h-3.5 w-3.5" />, "mono", "Monospace (Unicode)")}
+          <span className="ml-2 text-[10px] text-amber-700">select text, then style — X-ready Unicode</span>
+        </div>
         <textarea
+          ref={editRef}
           autoFocus value={block.text} onChange={(e) => onChange(e.target.value)}
           rows={Math.max(2, Math.ceil(block.text.length / 42))}
-          className="w-full resize-none rounded-t-md bg-amber-50 p-2 text-[15px] leading-normal text-zinc-900 outline-none"
+          className="w-full resize-none bg-amber-50 p-2 text-[15px] leading-normal text-zinc-900 outline-none"
         />
         <div className="flex items-center justify-between rounded-b-md bg-amber-100 px-2 py-1">
           <span className="font-mono text-[10px] text-amber-700">editing clears this block's flags</span>
@@ -602,6 +686,80 @@ function FlagsTab({
 }
 
 // ── voice tab ─────────────────────────────────────────────────────────────
+// ── snippets tab ────────────────────────────────────────────────────────────
+function SnippetsTab({
+  npub, currentText, onInsert,
+}: {
+  npub: string;
+  currentText: string;
+  onInsert: (text: string) => void;
+}) {
+  const [snippets, setSnippets] = useState<Snippet[]>(() => getSnippets(npub));
+  const [name, setName] = useState("");
+
+  function save() {
+    const n = name.trim();
+    const t = currentText.trim();
+    if (!n || !t) return;
+    setSnippets(addSnippet(npub, n, t));
+    setName("");
+  }
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <div className="text-xs uppercase tracking-widest text-zinc-500 mb-1">Save the focused block</div>
+        <div className="flex gap-2">
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="My CTA Footer 26jun2026"
+            className="flex-1 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-600 outline-none focus:border-amber-400"
+          />
+          <button
+            onClick={save}
+            disabled={!name.trim() || !currentText.trim()}
+            className="rounded-md bg-amber-400 px-3 py-1.5 text-sm font-medium text-zinc-950 hover:bg-amber-300 disabled:opacity-40 transition-colors"
+          >
+            Save
+          </button>
+        </div>
+        <p className="mt-1 text-[11px] text-zinc-500 line-clamp-2">
+          {currentText.trim()
+            ? `Saves: "${currentText.trim().slice(0, 80)}${currentText.trim().length > 80 ? "…" : ""}"`
+            : "Click into a block first, then save its text as a reusable snippet."}
+        </p>
+      </div>
+
+      <div>
+        <div className="text-xs uppercase tracking-widest text-zinc-500 mb-2">Library</div>
+        {snippets.length === 0 ? (
+          <p className="text-xs text-zinc-500">
+            No snippets yet — save common openings and footers here, then click to drop them into any post.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {snippets.map((s) => (
+              <div key={s.id} className="rounded-lg border border-zinc-800 bg-zinc-900 p-2.5">
+                <div className="flex items-center gap-2">
+                  <span className="flex-1 min-w-0 truncate text-sm text-zinc-200">{s.name}</span>
+                  <button onClick={() => onInsert(s.text)} className="text-xs text-amber-300 hover:text-amber-200" title="Add as a block">
+                    + Insert
+                  </button>
+                  <button onClick={() => setSnippets(removeSnippet(npub, s.id))} className="text-zinc-500 hover:text-rose-400" title="Delete snippet">
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <p className="mt-1 text-[11px] text-zinc-500 line-clamp-2">{s.text}</p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function VoiceTab({ voice, setVoice, bans, setBans }: {
   voice: string; setVoice: (v: string) => void; bans: Ban[]; setBans: Dispatch<SetStateAction<Ban[]>>;
 }) {

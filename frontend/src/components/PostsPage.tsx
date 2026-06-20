@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { deletePost, listPosts, type PostSummary } from "../lib/mcp";
+import { deletePost, getPost, listPosts, postTweet, type PostSummary } from "../lib/mcp";
 
 const STATUS_FILTERS = ["", "draft", "scheduled", "sent", "archived"] as const;
 
@@ -17,6 +17,8 @@ export default function PostsPage() {
   const [filter, setFilter] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [reposting, setReposting] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -46,6 +48,26 @@ export default function PostsPage() {
       await refresh();
     } catch (err) {
       setError((err as Error).message);
+    }
+  }
+
+  async function handleRepost(e: React.MouseEvent, id: string) {
+    e.stopPropagation();
+    e.preventDefault();
+    setError(null);
+    setNotice(null);
+    setReposting(id);
+    try {
+      const row = await getPost(id);
+      const text = (row.text_cache ?? "").trim();
+      if (!text) { setError("Nothing to repost."); return; }
+      const r = await postTweet(text);
+      if (r.error || r.success === false) setError(r.message || r.error || "Repost failed.");
+      else setNotice("Reposted to X.");
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setReposting(null);
     }
   }
 
@@ -88,6 +110,11 @@ export default function PostsPage() {
           {error}
         </div>
       )}
+      {notice && (
+        <div className="rounded-lg p-3 mb-3 text-xs bg-green-50 border border-green-200 text-green-700 dark:bg-green-500/10 dark:border-green-500/30 dark:text-green-400">
+          {notice}
+        </div>
+      )}
 
       {loading && posts.length === 0 ? (
         <p className="text-sm text-stone-400 dark:text-zinc-500 py-10 text-center">Loading…</p>
@@ -116,6 +143,16 @@ export default function PostsPage() {
                   </p>
                 </div>
                 <span className="flex gap-2 shrink-0 text-xs text-stone-400 dark:text-zinc-500">
+                  {p.status === "sent" && (
+                    <span
+                      role="button"
+                      onClick={(e) => handleRepost(e, p.post_id)}
+                      className="hover:text-green-600 dark:hover:text-green-400"
+                      title="Repost to X now"
+                    >
+                      {reposting === p.post_id ? "…" : "repost"}
+                    </span>
+                  )}
                   {p.status !== "archived" && (
                     <span
                       role="button"

@@ -536,6 +536,23 @@ export async function deletePost(postId: string, hard = false): Promise<DeletePo
   return callTool<DeletePostResult>("delete_post", { post_id: postId, hard });
 }
 
+// ─── Post to X (paid) ─────────────────────────────────────────────────────
+
+export interface PostTweetResult {
+  success?: boolean;
+  id?: string;
+  url?: string;
+  error?: string;
+  error_code?: string;
+  message?: string;
+}
+
+/// Post text to X now via the operator's X credentials (paid tool). Markdown
+/// is converted to Unicode server-side; already-styled text passes through.
+export async function postTweet(text: string): Promise<PostTweetResult> {
+  return callTool<PostTweetResult>("post_tweet", { text });
+}
+
 // ─── Refine with Claude (server-side; the operator's key never leaves the BE) ──
 
 export interface RefineResult {
