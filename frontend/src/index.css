@@ -2,7 +2,13 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  background-color: #fafaf9; /* stone-50 */
-  color: #1c1917; /* stone-900 */
+/* color-scheme is set imperatively by lib/theme.ts on <html>. */
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb {
+  background: #d6d3d1; /* stone-300 */
+  border-radius: 6px;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: #3f3f46; /* zinc-700 */
 }

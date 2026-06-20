@@ -246,10 +246,22 @@ export async function receiveNpubProof(patronNpub: string, poison: string): Prom
   });
 }
 
+export interface CreditTranche {
+  id: string;
+  amount_sats: number;
+  remaining_sats: number;
+  expires_at: string | null;
+  created_at: string | null;
+}
+
 export interface CheckBalanceResult {
   success?: boolean;
   balance_api_sats?: number;
+  total_deposited_api_sats?: number;
+  total_consumed_api_sats?: number;
   active_tranches?: number;
+  tranches?: CreditTranche[];
+  next_expiration_iso?: string;
   seed_balance_granted?: boolean;
   vault_unavailable?: boolean;
   warning?: string;
@@ -297,6 +309,37 @@ export interface PurchaseCreditsResult {
 
 export async function purchaseCredits(sats: number): Promise<PurchaseCreditsResult> {
   return callTool<PurchaseCreditsResult>("purchase_credits", { amount_sats: sats });
+}
+
+export interface CheckPaymentResult {
+  success?: boolean;
+  status?: "New" | "Processing" | "Settled" | "Expired" | "Invalid" | string;
+  message?: string;
+  invoice_id?: string;
+  credits_granted?: number;
+  balance_api_sats?: number;
+  error?: string;
+  error_code?: string;
+}
+
+export async function checkPayment(invoiceId: string): Promise<CheckPaymentResult> {
+  return callTool<CheckPaymentResult>("check_payment", { invoice_id: invoiceId });
+}
+
+export interface AccountStatementResult {
+  success?: boolean;
+  npub?: string;
+  balance_api_sats?: number;
+  total_deposited_api_sats?: number;
+  total_consumed_api_sats?: number;
+  total_expired_api_sats?: number;
+  active_tranches?: number;
+  today_usage?: Record<string, { calls: number; api_sats: number }>;
+  error?: string;
+}
+
+export async function getAccountStatement(days = 30): Promise<AccountStatementResult> {
+  return callTool<AccountStatementResult>("account_statement", { days });
 }
 
 // ─── Posts CRUD (paid) ───────────────────────────────────────────────────
