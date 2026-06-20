@@ -5,6 +5,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-06-20
+
+### Changed — "Refine with Claude" is now server-side + metered (BREAKING)
+
+- **Removed `get_anthropic_key`** — it handed the operator's Anthropic key to
+  every proven patron's browser (key exposure) and the resulting direct
+  browser→Anthropic calls bypassed the Lightning toll entirely. Gone.
+- **Added `refine_post_region(region, full_text, instruction, voice, bans, npub, proof)`**
+  — a **paid** tool. The editor sends the flagged region + tweet context +
+  voice/bans; the MCP calls Anthropic with the operator's **vaulted** key
+  (never exposed to the browser) and returns 3 suggestions. The AI cost is a
+  metered tollbooth fare; the fare is **refunded** if no key is configured or
+  the upstream call fails. New module `excalibur_mcp/refine.py`.
+- Frontend: the editor's Refine button now calls `refine_post_region` instead
+  of fetching the key and calling Anthropic directly (deleted `lib/claude.ts`).
+- Operator action after deploy: reconcile the pricing model in Pricing Studio
+  to price the new `refine_post_region` tool (seed hint: flat 25 sats) and drop
+  the stale `get_anthropic_key` entry.
+
 ## [0.10.1] — 2026-06-19
 
 ### Added — FE-direct "Refine with Claude" key delivery (TaxSort tactic)

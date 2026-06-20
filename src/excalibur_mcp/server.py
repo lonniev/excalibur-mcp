@@ -8,6 +8,7 @@ domain-specific X/Twitter tools are defined here.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Annotated, Any
 
@@ -82,10 +83,13 @@ _DOMAIN_TOOLS = [
                  intent="Archive or delete a stored post", pricing_hint_type="flat", pricing_hint_value=3),
     ToolIdentity(tool_id=capability_uuid("create_post"), capability="create_post", category="write",
                  intent="Store a new draft/scheduled post", pricing_hint_type="flat", pricing_hint_value=5),
-    # FE-direct Claude refine (TaxSort tactic): hands the operator's Anthropic key
-    # to a proven patron so the editor calls Claude directly. Free + proof-gated.
-    ToolIdentity(tool_id=capability_uuid("get_anthropic_key"), capability="get_anthropic_key",
-                 category="free", intent="Get the Anthropic API key for FE-direct 'Refine with Claude'"),
+    # Server-side "Refine with Claude": the editor sends a flagged region +
+    # context; the MCP calls Anthropic with the operator's vaulted key (never
+    # exposed to the browser) and returns suggestions. Paid — the AI cost is a
+    # metered tollbooth fare (refunded on no-key / upstream failure).
+    ToolIdentity(tool_id=capability_uuid("refine_post_region"), capability="refine_post_region",
+                 category="heavy", intent="Refine a flagged post region with Claude (server-side, metered)",
+                 pricing_hint_type="flat", pricing_hint_value=25),
     # Operator-only cron entrypoint — fires due scheduled posts. `restricted`
     # gates it to the operator npub (verified by proof) and bills nothing for
     # the trigger itself; each fired post bills its own owner for post_tweet.
@@ -498,31 +502,89 @@ async def delete_post(
 
 
 @tool
-@runtime.paid_tool(capability_uuid("get_anthropic_key"))
-async def get_anthropic_key(
+@runtime.paid_tool(capability_uuid("refine_post_region"), catch_errors=True)
+async def refine_post_region(
+    region: str,
+    full_text: str = "",
+    instruction: str = "",
+    voice: str = "",
+    bans: str = "",
     npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "",
     proof: str = "",
 ) -> dict:
-    """Return the operator's Anthropic API key to a proven patron for the
-    editor's FE-direct "Refine with Claude".
+    """Refine a flagged region of a post with Claude — server-side.
 
-    Free, but **proof-gated** — only a patron who has proven npub ownership
-    receives the key. The key belongs to the operator (delivered via Secure
-    Courier); the editor FE then calls Anthropic directly. Returns
-    ``{"key": "..."}`` or ``{"key": null, "message": ...}`` when none is
-    configured. (Mirrors taxsort-mcp's get_anthropic_key.)
+    The operator's Anthropic key stays in the vault and never leaves the
+    server. Send the flagged ``region``, the surrounding ``full_text``, an
+    optional ``instruction`` (what to change), and the editor's ``voice``
+    profile + ``bans`` (JSON array or comma list of banned constructions).
+    Returns ``{"success": true, "suggestions": [...3 strings...]}``.
+
+    Paid: the AI cost is metered as a tollbooth fare. The fare is refunded if
+    no Anthropic key is configured or the upstream call returns nothing.
+
+    Args:
+        region: The flagged span to rewrite.
+        full_text: The whole tweet, for context.
+        instruction: What the editor wants changed (optional).
+        voice: Voice-profile text fed to the model (optional).
+        bans: Banned constructions — JSON array or comma-separated (optional).
+        npub: Your DPYC patron npub for credit billing.
     """
+    tool_id = capability_uuid("refine_post_region")
+    if not region.strip():
+        await runtime.rollback_debit(tool_id, npub)
+        return {"success": False, "error_code": "tool_input_invalid", "error": "region is required."}
+
     try:
         creds = await runtime.load_credentials(["anthropic_api_key"])
         key = creds.get("anthropic_api_key")
-        if key:
-            return {"key": key}
+    except Exception:
+        key = None
+    if not key:
+        await runtime.rollback_debit(tool_id, npub)
         return {
-            "key": None,
-            "message": "No Anthropic API key configured. The operator must deliver one via Secure Courier.",
+            "success": False,
+            "error_code": "operator_llm_unconfigured",
+            "message": (
+                "Refine is unavailable — the operator hasn't configured an "
+                "Anthropic key yet. No fare was charged."
+            ),
         }
-    except Exception as e:
-        return {"key": None, "error": str(e)}
+
+    ban_list: list[str] = []
+    if bans:
+        try:
+            parsed = json.loads(bans)
+            if isinstance(parsed, list):
+                ban_list = [str(b) for b in parsed if str(b).strip()]
+        except (json.JSONDecodeError, TypeError):
+            ban_list = [b.strip() for b in bans.split(",") if b.strip()]
+
+    from excalibur_mcp.refine import refine_region
+    try:
+        suggestions = await refine_region(
+            api_key=key, region=region, full_text=full_text or region,
+            instruction=instruction, voice=voice, bans=ban_list,
+        )
+    except Exception as exc:
+        await runtime.rollback_debit(tool_id, npub)
+        logger.warning("refine_post_region upstream failed: %s: %s", type(exc).__name__, exc)
+        return {
+            "success": False,
+            "error_code": "llm_upstream_error",
+            "message": "The refine request failed upstream — your fare was refunded. Try again shortly.",
+        }
+
+    if not suggestions:
+        await runtime.rollback_debit(tool_id, npub)
+        return {
+            "success": False,
+            "error_code": "llm_no_output",
+            "message": "No suggestions came back — your fare was refunded.",
+        }
+
+    return {"success": True, "suggestions": suggestions}
 
 
 # ---------------------------------------------------------------------------
