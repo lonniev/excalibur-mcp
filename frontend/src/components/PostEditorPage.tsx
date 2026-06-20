@@ -5,7 +5,7 @@ import {
   MessageCircle, Repeat2, Heart, BarChart2, Bookmark, Share, BadgeCheck,
   Sparkles, Flag, GripVertical, Pencil, Trash2, Plus, Calendar, Repeat,
   Octagon, Copy, Check, ChevronUp, ChevronDown, Eye, EyeOff,
-  Wand2, Loader2, Swords, Save, Bold, Italic, Code, Smile, Star,
+  Wand2, Loader2, Swords, Save, Bold, Italic, Code, Smile, Star, Minus,
 } from "lucide-react";
 import { useSession } from "../App";
 import Avatar from "./Avatar";
@@ -250,6 +250,13 @@ export default function PostEditorPage() {
     setBlocks((prev) => [...prev, { id: uid(), text, flags: [] }]);
     setHint("Snippet added as a block — drag it where you want.");
   };
+  // A 20-char U+2500 horizontal-rule block. X renders no markdown, so a row of
+  // box-drawing chars is how a divider survives to the timeline.
+  const DIVIDER = "─".repeat(20);
+  const insertDivider = () => {
+    setBlocks((prev) => [...prev, { id: uid(), text: DIVIDER, flags: [] }]);
+    setHint("Divider added — X left-aligns text, so it sits at the line start.");
+  };
   const deleteBlock = (blockId: string) =>
     setBlocks((prev) => (prev.length > 1 ? prev.filter((b) => b.id !== blockId) : prev));
 
@@ -488,6 +495,13 @@ export default function PostEditorPage() {
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <button onClick={addBlock} className="flex items-center gap-1.5 rounded-md border border-dashed border-zinc-700 px-3 py-1.5 text-sm text-zinc-400 hover:border-amber-400 hover:text-amber-300 transition-colors">
                   <Plus className="h-4 w-4" /> Add text block
+                </button>
+                <button
+                  onClick={insertDivider}
+                  title="Insert a 20-char divider (────────────────────) as a block"
+                  className="flex items-center gap-1.5 rounded-md border border-dashed border-zinc-700 px-3 py-1.5 text-sm text-zinc-400 hover:border-amber-400 hover:text-amber-300 transition-colors"
+                >
+                  <Minus className="h-4 w-4" /> Divider
                 </button>
                 {snippets.filter((s) => s.favorite).map((s) => (
                   <button
