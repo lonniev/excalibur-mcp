@@ -5,13 +5,20 @@ import {
   MessageCircle, Repeat2, Heart, BarChart2, Bookmark, Share, BadgeCheck,
   Sparkles, Flag, GripVertical, Pencil, Trash2, Plus, Calendar, Repeat,
   Octagon, Copy, Check, ChevronUp, ChevronDown, Eye, EyeOff,
-  Wand2, Loader2, Swords, Save, Bold, Italic, Code,
+  Wand2, Loader2, Swords, Save, Bold, Italic, Code, Smile, Star,
 } from "lucide-react";
 import { useSession } from "../App";
 import Avatar from "./Avatar";
 import { avatarFor } from "../lib/avatar";
 import { styleText, type UnicodeStyle } from "../lib/unicodeFormat";
-import { addSnippet, getSnippets, removeSnippet, type Snippet } from "../lib/snippets";
+import { addSnippet, getSnippets, removeSnippet, toggleFavorite, type Snippet } from "../lib/snippets";
+
+// Curated symbols + emoji for the picker — authors shouldn't memorize code points.
+const EMOJI_PALETTE = [
+  "⚡", "™", "©", "®", "→", "•", "★", "✓", "✗", "—", "…", "₿", "🔗", "✦",
+  "🔥", "💎", "🚀", "✅", "❌", "👇", "👀", "🧵", "📈", "📉", "🪙", "🟢", "🔴",
+  "⏳", "🎯", "💡", "🙌", "🤝", "⚔️", "🛡️", "🏛️", "📜", "🗝️",
+];
 import {
   createPost, deletePost, getPost, postTweet, refinePostRegion, updatePost,
   type PostRow, type Recurrence,
@@ -39,6 +46,7 @@ export default function PostEditorPage() {
   const [preview, setPreview] = useState(false);
   const [tab, setTab] = useState<"flags" | "voice" | "schedule" | "snippets">("flags");
   const [editingBlock, setEditingBlock] = useState<string | null>(null);
+  const [snippets, setSnippets] = useState<Snippet[]>(() => getSnippets(npub));
   const [sel, setSel] = useState<Sel | null>(null);
   const [clearPill, setClearPill] = useState<PillPos | null>(null);
   const [hint, setHint] = useState("");
@@ -474,9 +482,21 @@ export default function PostEditorPage() {
             </div>
 
             {!preview && (
-              <button onClick={addBlock} className="mt-3 flex items-center gap-1.5 rounded-md border border-dashed border-zinc-700 px-3 py-1.5 text-sm text-zinc-400 hover:border-amber-400 hover:text-amber-300 transition-colors">
-                <Plus className="h-4 w-4" /> Add text block
-              </button>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button onClick={addBlock} className="flex items-center gap-1.5 rounded-md border border-dashed border-zinc-700 px-3 py-1.5 text-sm text-zinc-400 hover:border-amber-400 hover:text-amber-300 transition-colors">
+                  <Plus className="h-4 w-4" /> Add text block
+                </button>
+                {snippets.filter((s) => s.favorite).map((s) => (
+                  <button
+                    key={s.id}
+                    onClick={() => insertSnippet(s.text)}
+                    title={`Insert "${s.name}"`}
+                    className="flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-400/10 px-3 py-1.5 text-sm text-amber-300 hover:bg-amber-400/20 transition-colors"
+                  >
+                    <Star className="h-3 w-3 fill-current" /> {s.name}
+                  </button>
+                ))}
+              </div>
             )}
             {hint && <div className="mt-3 font-mono text-xs text-amber-300">{hint}</div>}
             {error && <div className="mt-3 rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{error}</div>}
@@ -509,6 +529,8 @@ export default function PostEditorPage() {
                   npub={npub}
                   currentText={focusedBlockText}
                   onInsert={insertSnippet}
+                  snippets={snippets}
+                  setSnippets={setSnippets}
                 />
               )}
               {tab === "schedule" && (
@@ -544,6 +566,7 @@ function BlockView({
 }) {
   const ref = useRef<HTMLParagraphElement>(null);
   const editRef = useRef<HTMLTextAreaElement>(null);
+  const [showEmoji, setShowEmoji] = useState(false);
   const segs = useMemo(() => segmentize(block.text, block.flags), [block.text, block.flags]);
 
   if (preview) {
@@ -555,6 +578,14 @@ function BlockView({
       if (!ta || ta.selectionStart === ta.selectionEnd) return;
       const s = ta.selectionStart, e = ta.selectionEnd;
       onChange(block.text.slice(0, s) + styleText(block.text.slice(s, e), style) + block.text.slice(e));
+    };
+    const insertAtCursor = (ins: string) => {
+      const ta = editRef.current;
+      const pos = ta ? ta.selectionStart : block.text.length;
+      onChange(block.text.slice(0, pos) + ins + block.text.slice(pos));
+      requestAnimationFrame(() => {
+        if (ta) { ta.focus(); ta.selectionStart = ta.selectionEnd = pos + ins.length; }
+      });
     };
     const fmtBtn = (label: ReactNode, style: UnicodeStyle, tip: string) => (
       <button
@@ -568,11 +599,33 @@ function BlockView({
     );
     return (
       <div className="rounded-md ring-1 ring-amber-400">
-        <div className="flex items-center gap-1 rounded-t-md bg-amber-100 px-2 py-1">
+        <div className="relative flex items-center gap-1 rounded-t-md bg-amber-100 px-2 py-1">
           {fmtBtn(<Bold className="h-3.5 w-3.5" />, "bold", "Bold (Unicode)")}
           {fmtBtn(<Italic className="h-3.5 w-3.5" />, "italic", "Italic (Unicode)")}
           {fmtBtn(<Code className="h-3.5 w-3.5" />, "mono", "Monospace (Unicode)")}
-          <span className="ml-2 text-[10px] text-amber-700">select text, then style — X-ready Unicode</span>
+          <button
+            onMouseDown={(ev) => ev.preventDefault()}
+            onClick={() => setShowEmoji((v) => !v)}
+            title="Insert emoji or symbol"
+            className="rounded px-1.5 py-0.5 text-zinc-700 hover:bg-amber-200"
+          >
+            <Smile className="h-3.5 w-3.5" />
+          </button>
+          <span className="ml-2 text-[10px] text-amber-700">select text to style; ☺ inserts a symbol</span>
+          {showEmoji && (
+            <div className="absolute left-0 top-full z-30 mt-1 grid w-64 grid-cols-8 gap-0.5 rounded-md border border-zinc-300 bg-white p-2 shadow-xl">
+              {EMOJI_PALETTE.map((em) => (
+                <button
+                  key={em}
+                  onMouseDown={(ev) => ev.preventDefault()}
+                  onClick={() => { insertAtCursor(em); setShowEmoji(false); }}
+                  className="rounded p-1 text-lg hover:bg-amber-100"
+                >
+                  {em}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         <textarea
           ref={editRef}
@@ -688,13 +741,14 @@ function FlagsTab({
 // ── voice tab ─────────────────────────────────────────────────────────────
 // ── snippets tab ────────────────────────────────────────────────────────────
 function SnippetsTab({
-  npub, currentText, onInsert,
+  npub, currentText, onInsert, snippets, setSnippets,
 }: {
   npub: string;
   currentText: string;
   onInsert: (text: string) => void;
+  snippets: Snippet[];
+  setSnippets: (s: Snippet[]) => void;
 }) {
-  const [snippets, setSnippets] = useState<Snippet[]>(() => getSnippets(npub));
   const [name, setName] = useState("");
 
   function save() {
@@ -742,6 +796,13 @@ function SnippetsTab({
             {snippets.map((s) => (
               <div key={s.id} className="rounded-lg border border-zinc-800 bg-zinc-900 p-2.5">
                 <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setSnippets(toggleFavorite(npub, s.id))}
+                    title={s.favorite ? "Unfavorite" : "Favorite — adds a one-click chiclet by Add text block"}
+                    className={s.favorite ? "text-amber-400" : "text-zinc-600 hover:text-amber-400"}
+                  >
+                    <Star className={`h-3.5 w-3.5 ${s.favorite ? "fill-current" : ""}`} />
+                  </button>
                   <span className="flex-1 min-w-0 truncate text-sm text-zinc-200">{s.name}</span>
                   <button onClick={() => onInsert(s.text)} className="text-xs text-amber-300 hover:text-amber-200" title="Add as a block">
                     + Insert

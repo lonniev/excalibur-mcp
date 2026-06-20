@@ -6,6 +6,7 @@ export interface Snippet {
   id: string;
   name: string;
   text: string;
+  favorite?: boolean;
 }
 
 function key(npub: string): string {
@@ -40,13 +41,20 @@ function write(npub: string, list: Snippet[]): void {
 
 /// Add a snippet (newest first). Returns the updated list.
 export function addSnippet(npub: string, name: string, text: string): Snippet[] {
-  const list = [{ id: sid(), name: name.trim(), text }, ...getSnippets(npub)];
+  const list = [{ id: sid(), name: name.trim(), text, favorite: false }, ...getSnippets(npub)];
   write(npub, list);
   return list;
 }
 
 export function removeSnippet(npub: string, id: string): Snippet[] {
   const list = getSnippets(npub).filter((s) => s.id !== id);
+  write(npub, list);
+  return list;
+}
+
+/// Toggle a snippet's favorite flag. Favorites surface as one-click chiclets.
+export function toggleFavorite(npub: string, id: string): Snippet[] {
+  const list = getSnippets(npub).map((s) => (s.id === id ? { ...s, favorite: !s.favorite } : s));
   write(npub, list);
   return list;
 }
