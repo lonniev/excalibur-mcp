@@ -206,7 +206,14 @@ export class ProofRequiredError extends Error {
 
 /// Tools whose wheel signature takes no npub/proof envelope. Pydantic
 /// strict mode rejects unexpected kwargs, so we must NOT inject them here.
-const BOOTSTRAP_TOOLS = new Set(["request_npub_proof", "receive_npub_proof", "service_status"]);
+const BOOTSTRAP_TOOLS = new Set([
+  "request_npub_proof",
+  "receive_npub_proof",
+  "service_status",
+  // Public kind-0 profile reads/relays — take explicit npub, no proof envelope.
+  "get_nostr_profile",
+  "publish_nostr_profile",
+]);
 
 async function callTool<T = unknown>(
   toolName: string,
@@ -539,6 +546,51 @@ export interface AnthropicKeyResult {
 
 export async function getAnthropicKey(): Promise<AnthropicKeyResult> {
   return callTool<AnthropicKeyResult>("get_anthropic_key", {});
+}
+
+// ─── Nostr kind-0 profile (served by the wheel; no relay I/O in the FE) ────
+
+export interface Kind0 {
+  name?: string;
+  display_name?: string;
+  about?: string;
+  picture?: string;
+  banner?: string;
+  nip05?: string;
+  website?: string;
+  lud16?: string;
+}
+
+export interface GetNostrProfileResult {
+  success: boolean;
+  npub?: string;
+  profile?: Kind0;
+  error?: string;
+}
+
+/// Read an npub's public kind-0 profile via the operator MCP (free, no proof).
+export async function getNostrProfile(npub: string): Promise<GetNostrProfileResult> {
+  return callTool<GetNostrProfileResult>("get_nostr_profile", { npub });
+}
+
+export interface PublishNostrProfileResult {
+  success: boolean;
+  ok?: number;
+  total?: number;
+  errors?: string[];
+  error?: string;
+}
+
+/// Relay a CLIENT-signed kind-0 event through the operator MCP. The FE signs;
+/// the wheel verifies pubkey+signature and fans out to relays.
+export async function publishNostrProfile(
+  npub: string,
+  signedEvent: string,
+): Promise<PublishNostrProfileResult> {
+  return callTool<PublishNostrProfileResult>("publish_nostr_profile", {
+    npub,
+    signed_event: signedEvent,
+  });
 }
 
 // ─── Coupons (wheel 0.41.0+) ─────────────────────────────────────────────

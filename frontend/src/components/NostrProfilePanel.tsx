@@ -71,12 +71,16 @@ export default function NostrProfilePanel({ npub }: { npub: string }) {
     };
     try {
       const r = await publishProfile(content);
-      setMsg({
-        tone: r.ok > 0 ? "ok" : "err",
-        text:
-          (r.ok > 0 ? `Published to ${r.ok}/${r.total} relays.` : "No relay accepted the event.") +
-          (emojiAvatar ? " (Emoji avatar kept local — Nostr picture must be a URL.)" : ""),
-      });
+      const note = emojiAvatar ? " (Emoji avatar kept local — Nostr picture must be a URL.)" : "";
+      if (r.error) {
+        setMsg({ tone: "err", text: r.error });
+      } else {
+        const ok = r.ok ?? 0;
+        setMsg({
+          tone: ok > 0 ? "ok" : "err",
+          text: (ok > 0 ? `Published to ${ok}/${r.total} relays.` : "No relay accepted the event.") + note,
+        });
+      }
     } catch (e) {
       setMsg({ tone: "err", text: (e as Error).message });
     } finally {
