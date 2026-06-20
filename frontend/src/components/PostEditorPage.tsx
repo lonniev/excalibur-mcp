@@ -11,7 +11,7 @@ import { useSession } from "../App";
 import Avatar from "./Avatar";
 import { avatarFor } from "../lib/avatar";
 import { styleText, type UnicodeStyle } from "../lib/unicodeFormat";
-import { addSnippet, getSnippets, removeSnippet, toggleFavorite, type Snippet } from "../lib/snippets";
+import { addSnippet, loadSnippets, removeSnippet, toggleFavorite, type Snippet } from "../lib/snippets";
 
 // Curated symbols + emoji for the picker — authors shouldn't memorize code points.
 const EMOJI_PALETTE = [
@@ -46,7 +46,10 @@ export default function PostEditorPage() {
   const [preview, setPreview] = useState(false);
   const [tab, setTab] = useState<"flags" | "voice" | "schedule" | "snippets">("flags");
   const [editingBlock, setEditingBlock] = useState<string | null>(null);
-  const [snippets, setSnippets] = useState<Snippet[]>(() => getSnippets(npub));
+  const [snippets, setSnippets] = useState<Snippet[]>([]);
+  useEffect(() => {
+    loadSnippets().then(setSnippets);
+  }, []);
   const [sel, setSel] = useState<Sel | null>(null);
   const [clearPill, setClearPill] = useState<PillPos | null>(null);
   const [hint, setHint] = useState("");
@@ -526,7 +529,6 @@ export default function PostEditorPage() {
               {tab === "voice" && <VoiceTab voice={voice} setVoice={setVoice} bans={bans} setBans={setBans} />}
               {tab === "snippets" && (
                 <SnippetsTab
-                  npub={npub}
                   currentText={focusedBlockText}
                   onInsert={insertSnippet}
                   snippets={snippets}
@@ -741,22 +743,27 @@ function FlagsTab({
 // ── voice tab ─────────────────────────────────────────────────────────────
 // ── snippets tab ────────────────────────────────────────────────────────────
 function SnippetsTab({
-  npub, currentText, onInsert, snippets, setSnippets,
+  currentText, onInsert, snippets, setSnippets,
 }: {
-  npub: string;
   currentText: string;
   onInsert: (text: string) => void;
   snippets: Snippet[];
   setSnippets: (s: Snippet[]) => void;
 }) {
   const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
 
-  function save() {
+  async function save() {
     const n = name.trim();
     const t = currentText.trim();
     if (!n || !t) return;
-    setSnippets(addSnippet(npub, n, t));
-    setName("");
+    setBusy(true);
+    try {
+      setSnippets(await addSnippet(n, t));
+      setName("");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -772,10 +779,10 @@ function SnippetsTab({
           />
           <button
             onClick={save}
-            disabled={!name.trim() || !currentText.trim()}
+            disabled={busy || !name.trim() || !currentText.trim()}
             className="rounded-md bg-amber-400 px-3 py-1.5 text-sm font-medium text-zinc-950 hover:bg-amber-300 disabled:opacity-40 transition-colors"
           >
-            Save
+            {busy ? "…" : "Save"}
           </button>
         </div>
         <p className="mt-1 text-[11px] text-zinc-500 line-clamp-2">
@@ -797,7 +804,7 @@ function SnippetsTab({
               <div key={s.id} className="rounded-lg border border-zinc-800 bg-zinc-900 p-2.5">
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => setSnippets(toggleFavorite(npub, s.id))}
+                    onClick={async () => setSnippets(await toggleFavorite(s.id, !s.favorite))}
                     title={s.favorite ? "Unfavorite" : "Favorite — adds a one-click chiclet by Add text block"}
                     className={s.favorite ? "text-amber-400" : "text-zinc-600 hover:text-amber-400"}
                   >
@@ -807,7 +814,7 @@ function SnippetsTab({
                   <button onClick={() => onInsert(s.text)} className="text-xs text-amber-300 hover:text-amber-200" title="Add as a block">
                     + Insert
                   </button>
-                  <button onClick={() => setSnippets(removeSnippet(npub, s.id))} className="text-zinc-500 hover:text-rose-400" title="Delete snippet">
+                  <button onClick={async () => setSnippets(await removeSnippet(s.id))} className="text-zinc-500 hover:text-rose-400" title="Delete snippet">
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </div>

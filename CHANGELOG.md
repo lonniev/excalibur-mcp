@@ -5,6 +5,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-06-20
+
+### Added — Neon-backed snippet library (server-side, npub-scoped)
+
+- **Snippet library now persists in Neon**, not the browser. Three new free,
+  proof-gated, owner-scoped tools — `list_snippets`, `save_snippet`,
+  `delete_snippet` — store a patron's reusable post fragments (openings,
+  footers, CTAs) under their npub. Favorites surface as one-click chiclets in
+  the editor.
+- New `snippets` table (id, npub, name, body, favorite, timestamps) created
+  idempotently in `db.neon._ensure_domain_schema`; `db.snippets` is the thin
+  owner-scoped SQL layer and `tools.snippets` the validation/dispatch layer.
+- **Free + proof-gated:** managing your own snippets carries no fare, but every
+  call verifies npub ownership and is scoped to `npub = $1`, so a patron can
+  only ever read or write their own snippets. The browser previously kept these
+  in `localStorage` (device-local, unsynced) — they now follow the npub.
+
 ## [0.11.0] — 2026-06-20
 
 ### Changed — "Refine with Claude" is now server-side + metered (BREAKING)
