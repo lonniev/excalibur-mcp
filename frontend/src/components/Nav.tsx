@@ -2,13 +2,24 @@ import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import { useSession } from "../App";
 import { checkBalance } from "../lib/mcp";
+import Avatar from "./Avatar";
+import { avatarFor, AVATAR_EVENT } from "../lib/avatar";
 
 export default function Nav() {
   const { npub, logOut } = useSession();
   const loc = useLocation();
   const [balance, setBalance] = useState<number | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [avatar, setAvatar] = useState(() => avatarFor(npub));
   const menuRef = useRef<HTMLDivElement>(null);
+
+  // Keep the avatar in sync with the picker (same-tab custom event) and npub.
+  useEffect(() => {
+    setAvatar(avatarFor(npub));
+    const h = () => setAvatar(avatarFor(npub));
+    window.addEventListener(AVATAR_EVENT, h);
+    return () => window.removeEventListener(AVATAR_EVENT, h);
+  }, [npub]);
 
   // Refresh balance on navigation (cheap, free tool).
   useEffect(() => {
@@ -67,12 +78,8 @@ export default function Nav() {
         </Link>
 
         <div className="relative" ref={menuRef}>
-          <button
-            onClick={() => setMenuOpen((o) => !o)}
-            title={npub}
-            className="w-8 h-8 rounded-full bg-amber-100 dark:bg-amber-500/15 border border-amber-300 dark:border-amber-500/30 flex items-center justify-center text-xs font-semibold text-amber-800 dark:text-amber-400"
-          >
-            {npub ? npub.slice(5, 7).toUpperCase() : "··"}
+          <button onClick={() => setMenuOpen((o) => !o)} title={npub} className="block rounded-full">
+            <Avatar value={avatar} size={32} />
           </button>
           {menuOpen && (
             <div className="absolute right-0 top-full mt-1.5 w-56 rounded-xl border border-stone-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-lg overflow-hidden z-40">
