@@ -7,6 +7,7 @@ import {
   serviceStatus,
   type ServiceStatus,
 } from "./lib/mcp";
+import { hydrateAvatarFromNostr } from "./lib/avatar";
 import Nav from "./components/Nav";
 import NpubGate from "./components/NpubGate";
 import PostsPage from "./components/PostsPage";
@@ -36,6 +37,11 @@ export default function App() {
   useEffect(() => {
     serviceStatus().then(setStatus).catch(() => setStatus(null));
   }, []);
+
+  // Seed the avatar from the npub's Nostr kind-0 picture (source of truth).
+  useEffect(() => {
+    if (loggedIn && npub) void hydrateAvatarFromNostr(npub);
+  }, [loggedIn, npub]);
 
   function onLogin() {
     setNpub(getStoredNpub());

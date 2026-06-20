@@ -3,6 +3,7 @@
 // dispatches a window event so the Nav and editor update without a reload.
 
 import { AVATAR_CHOICES } from "../components/Avatar";
+import { fetchProfile } from "./nostrProfile";
 
 export const AVATAR_EVENT = "excalibur:avatar-changed";
 
@@ -35,4 +36,18 @@ export function defaultAvatar(npub: string): string {
 
 export function avatarFor(npub: string): string {
   return getStoredAvatar(npub) || defaultAvatar(npub);
+}
+
+/// Pull the npub's kind-0 `picture` from Nostr and cache it locally (so the
+/// sync avatarFor / Nav / editor reflect it). kind-0 is the source of truth;
+/// we only seed the cache when there's no explicit local override, so a
+/// deliberate local pick isn't clobbered on every login.
+export async function hydrateAvatarFromNostr(npub: string): Promise<void> {
+  if (!npub || getStoredAvatar(npub)) return;
+  try {
+    const p = await fetchProfile(npub);
+    if (p?.picture) setStoredAvatar(npub, p.picture);
+  } catch {
+    /* offline / no relay — keep the deterministic glyph */
+  }
 }

@@ -2,11 +2,9 @@ import { useEffect, useState } from "react";
 import { useSession } from "../App";
 import { useTheme, type Theme } from "../lib/theme";
 import { getAccountStatement, type AccountStatementResult } from "../lib/mcp";
-import Avatar from "./Avatar";
-import AvatarPicker from "./AvatarPicker";
+import NostrProfilePanel from "./NostrProfilePanel";
 import CouponsPanel from "./CouponsPanel";
 import BuildLicensePanel from "./BuildLicensePanel";
-import { avatarFor, setStoredAvatar } from "../lib/avatar";
 
 const card = "rounded-xl border border-stone-200 dark:border-zinc-800 bg-white dark:bg-zinc-900";
 
@@ -21,12 +19,6 @@ export default function ProfilePage() {
   const [theme, setTheme] = useTheme();
   const [stmt, setStmt] = useState<AccountStatementResult | null>(null);
   const [copied, setCopied] = useState(false);
-  const [avatar, setAvatar] = useState(() => avatarFor(npub));
-
-  function pickAvatar(next: string) {
-    setStoredAvatar(npub, next);
-    setAvatar(next);
-  }
 
   useEffect(() => {
     getAccountStatement(30).then(setStmt).catch(() => setStmt(null));
@@ -46,19 +38,8 @@ export default function ProfilePage() {
     <div className="max-w-2xl mx-auto px-4 py-6 space-y-5">
       <h1 className="text-lg font-semibold">Profile</h1>
 
-      {/* Avatar */}
-      <div className={`${card} p-5`}>
-        <div className="flex items-center gap-3 mb-3">
-          <Avatar value={avatar} size={56} />
-          <div>
-            <div className="text-sm font-medium">Avatar</div>
-            <p className="text-xs text-stone-500 dark:text-zinc-400">
-              Pick an emoji or an SVG from the catalog. Saved on this device.
-            </p>
-          </div>
-        </div>
-        <AvatarPicker value={avatar} onChange={pickAvatar} />
-      </div>
+      {/* Nostr profile (kind-0) — avatar + contact, self-sovereign */}
+      <NostrProfilePanel npub={npub} />
 
       {/* Theme selection */}
       <div className={`${card} p-5`}>
