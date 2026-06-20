@@ -68,7 +68,7 @@ export default function App() {
           <>
             <TopBar />
             <main className="flex-1">
-              <NpubGate onLogin={onLogin} />
+              <NpubGate onLogin={onLogin} operatorHash={status?.operator_npub_hash} />
             </main>
             <Footer status={status} />
           </>
