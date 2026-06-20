@@ -8,6 +8,8 @@ import {
   Wand2, Loader2, Swords, Save,
 } from "lucide-react";
 import { useSession } from "../App";
+import Avatar from "./Avatar";
+import { avatarFor } from "../lib/avatar";
 import {
   createPost, deletePost, getPost, updatePost, type PostRow, type Recurrence,
 } from "../lib/mcp";
@@ -363,9 +365,7 @@ export default function PostEditorPage() {
 
             <div className={`rounded-2xl bg-white p-4 text-zinc-900 shadow-2xl transition-all ${preview ? "ring-1 ring-zinc-700" : "ring-2 ring-amber-400"}`}>
               <div className="flex gap-3">
-                <div className="flex h-11 w-11 flex-none items-center justify-center rounded-full bg-amber-400 text-zinc-950">
-                  <Swords className="h-6 w-6" />
-                </div>
+                <Avatar value={avatarFor(npub)} size={44} className="flex-none" />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1 text-[15px]">
                     <span className="font-bold text-zinc-900">eXcalibur</span>
