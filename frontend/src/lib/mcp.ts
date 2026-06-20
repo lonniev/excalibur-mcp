@@ -582,6 +582,61 @@ export async function refinePostRegion(args: {
   });
 }
 
+// ─── Snippet library (Neon-backed, npub-scoped, free + proof-gated) ────────
+
+export interface SnippetRow {
+  id: string;
+  name: string;
+  text: string;
+  favorite: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+interface ListSnippetsResult {
+  success?: boolean;
+  snippets?: SnippetRow[];
+  error?: string;
+}
+interface SaveSnippetResult {
+  success?: boolean;
+  snippet?: SnippetRow;
+  error?: string;
+  error_code?: string;
+}
+interface DeleteSnippetResult {
+  success?: boolean;
+  deleted?: boolean;
+  id?: string;
+  error?: string;
+}
+
+/// List the logged-in npub's saved snippets (favorites first). Owner-scoped.
+export async function listSnippets(): Promise<SnippetRow[]> {
+  const r = await callTool<ListSnippetsResult>("list_snippets", {});
+  return r.snippets ?? [];
+}
+
+/// Create (omit id) or update (pass id) a snippet; returns the stored row.
+export async function saveSnippet(opts: {
+  id?: string;
+  name?: string;
+  text?: string;
+  favorite?: boolean;
+}): Promise<SnippetRow | null> {
+  const args: Record<string, unknown> = { favorite: opts.favorite ?? false };
+  if (opts.id) args.snippet_id = opts.id;
+  if (opts.name !== undefined) args.name = opts.name;
+  if (opts.text !== undefined) args.text = opts.text;
+  const r = await callTool<SaveSnippetResult>("save_snippet", args);
+  return r.snippet ?? null;
+}
+
+export async function deleteSnippet(id: string): Promise<boolean> {
+  const r = await callTool<DeleteSnippetResult>("delete_snippet", { snippet_id: id });
+  return r.deleted === true;
+}
+
 // ─── Nostr kind-0 profile (served by the wheel; no relay I/O in the FE) ────
 
 export interface Kind0 {

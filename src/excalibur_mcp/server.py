@@ -90,6 +90,16 @@ _DOMAIN_TOOLS = [
     ToolIdentity(tool_id=capability_uuid("refine_post_region"), capability="refine_post_region",
                  category="heavy", intent="Refine a flagged post region with Claude (server-side, metered)",
                  pricing_hint_type="flat", pricing_hint_value=25),
+    # Snippet library — reusable openings/footers/CTAs the patron saves once and
+    # drops into the editor (favorites become one-click chiclets). Free: managing
+    # your own snippets carries no fare, but every call is proof-gated and
+    # npub-scoped, so a patron only ever touches their own.
+    ToolIdentity(tool_id=capability_uuid("list_snippets"), capability="list_snippets",
+                 category="free", intent="List this patron's saved post snippets"),
+    ToolIdentity(tool_id=capability_uuid("save_snippet"), capability="save_snippet",
+                 category="free", intent="Create or update a saved post snippet"),
+    ToolIdentity(tool_id=capability_uuid("delete_snippet"), capability="delete_snippet",
+                 category="free", intent="Delete a saved post snippet"),
     # Operator-only cron entrypoint — fires due scheduled posts. `restricted`
     # gates it to the operator npub (verified by proof) and bills nothing for
     # the trigger itself; each fired post bills its own owner for post_tweet.
@@ -494,6 +504,57 @@ async def delete_post(
         runtime, capability_uuid("delete_post"),
         post_id=post_id, hard=hard, npub=npub,
     )
+
+
+# ---------------------------------------------------------------------------
+# Snippet library — npub-scoped, free, proof-gated
+# ---------------------------------------------------------------------------
+
+
+@tool
+@runtime.paid_tool(capability_uuid("list_snippets"), catch_errors=True)
+async def list_snippets(
+    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
+    proof: str = "",
+) -> dict:
+    """List your saved post snippets — favorites first, then newest. Free,
+    owner-scoped: returns only the snippets saved under your npub."""
+    from excalibur_mcp.tools import snippets as snippets_tools
+
+    return await snippets_tools.list_(npub)
+
+
+@tool
+@runtime.paid_tool(capability_uuid("save_snippet"), catch_errors=True)
+async def save_snippet(
+    name: str = "",
+    text: str = "",
+    snippet_id: str = "",
+    favorite: bool = False,
+    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
+    proof: str = "",
+) -> dict:
+    """Save a reusable post snippet (opening/footer/CTA). Omit ``snippet_id`` to
+    create a new one; pass it to update an existing snippet in place (name/text/
+    favorite). Free and owner-scoped. Returns ``{"success": true, "snippet": …}``."""
+    from excalibur_mcp.tools import snippets as snippets_tools
+
+    return await snippets_tools.save(
+        npub, snippet_id=snippet_id, name=name, text=text, favorite=favorite,
+    )
+
+
+@tool
+@runtime.paid_tool(capability_uuid("delete_snippet"), catch_errors=True)
+async def delete_snippet(
+    snippet_id: str,
+    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
+    proof: str = "",
+) -> dict:
+    """Delete one of your saved snippets by id. Free and owner-scoped."""
+    from excalibur_mcp.tools import snippets as snippets_tools
+
+    return await snippets_tools.delete(npub, snippet_id=snippet_id)
 
 
 # ---------------------------------------------------------------------------

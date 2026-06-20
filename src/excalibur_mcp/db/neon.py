@@ -30,7 +30,7 @@ _schema_done: bool = False
 
 # Bare domain table names. The wheel's vault._t() schema-prefixes each into the
 # operator's own role/schema, so the logical name stays the contract's ``posts``.
-_DOMAIN_TABLES: tuple[str, ...] = ("posts",)
+_DOMAIN_TABLES: tuple[str, ...] = ("posts", "snippets")
 
 
 async def _get_vault() -> Any:
@@ -90,6 +90,20 @@ async def _ensure_domain_schema(vault: Any) -> None:
 
         f"CREATE INDEX IF NOT EXISTS posts_due_idx ON {t('posts')} (status, publish_at) "
         "WHERE status = 'scheduled'",
+
+        # Reusable post snippets (openings/footers/CTAs), npub-scoped. Favorites
+        # surface as one-click chiclets in the editor.
+        f"CREATE TABLE IF NOT EXISTS {t('snippets')} ("
+        "id UUID PRIMARY KEY DEFAULT gen_random_uuid(), "
+        "npub TEXT NOT NULL, "
+        "name TEXT NOT NULL, "
+        "body TEXT NOT NULL, "
+        "favorite BOOLEAN NOT NULL DEFAULT FALSE, "
+        "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), "
+        "updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
+
+        f"CREATE INDEX IF NOT EXISTS snippets_owner_idx ON {t('snippets')} "
+        "(npub, favorite DESC, created_at DESC)",
     ]
     for stmt in stmts:
         try:
