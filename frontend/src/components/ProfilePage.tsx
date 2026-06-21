@@ -3,6 +3,7 @@ import { useSession } from "../App";
 import { useTheme, type Theme } from "../lib/theme";
 import { getAccountStatement, type AccountStatementResult } from "../lib/mcp";
 import NostrProfilePanel from "./NostrProfilePanel";
+import XConnectPanel from "./XConnectPanel";
 import CouponsPanel from "./CouponsPanel";
 import BuildLicensePanel from "./BuildLicensePanel";
 
@@ -40,6 +41,9 @@ export default function ProfilePage() {
 
       {/* Nostr profile (kind-0) — avatar + contact, self-sovereign */}
       <NostrProfilePanel npub={npub} />
+
+      {/* X account — per-patron OAuth2 connection (required to post) */}
+      <XConnectPanel />
 
       {/* Theme selection */}
       <div className={`${card} p-5`}>
