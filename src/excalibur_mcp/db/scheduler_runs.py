@@ -49,3 +49,34 @@ async def list_runs(limit: int = 25) -> list[dict[str, Any]]:
         "SELECT run_at, summary FROM scheduler_runs ORDER BY run_at DESC LIMIT $1",
         lim,
     )
+
+
+def scope_runs(
+    runs: list[dict[str, Any]], npub: str, operator_npub: str
+) -> list[dict[str, Any]]:
+    """Owner-scope ring rows for the reader.
+
+    The operator sees every run in full. Any other reader sees the per-tick
+    heartbeat (``run_at`` + global ``processed`` count — proof the Worker ran)
+    plus only the per-post entries (posted/skipped/errors) for THEIR OWN posts,
+    keyed by the ``owner`` npub the scheduler records on each entry.
+    """
+    if npub and npub == operator_npub:
+        return runs
+
+    def _mine(items: Any) -> list[dict[str, Any]]:
+        return [e for e in (items or []) if isinstance(e, dict) and e.get("owner") == npub]
+
+    scoped: list[dict[str, Any]] = []
+    for r in runs:
+        s = r.get("summary") or {}
+        scoped.append({
+            "run_at": r.get("run_at"),
+            "summary": {
+                "processed": s.get("processed", 0),
+                "posted": _mine(s.get("posted")),
+                "skipped": _mine(s.get("skipped")),
+                "errors": _mine(s.get("errors")),
+            },
+        })
+    return scoped

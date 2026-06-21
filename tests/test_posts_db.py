@@ -133,6 +133,7 @@ async def test_list_posts_offset_sort_and_total():
         return [
             {"post_id": "id0", "status": "scheduled", "excerpt": "e0",
              "publish_at": None, "updated_at": "t", "created_at": "c", "tweet_url": None,
+             "last_sent_at": "2026-06-21T14:39:00+00:00",
              "last_attempt_at": "2026-06-21T20:00:00+00:00",
              "last_attempt_reason": "insufficient_balance"},
         ]
@@ -150,10 +151,12 @@ async def test_list_posts_offset_sort_and_total():
     assert captured["args"][1] == "draft"
     assert captured["args"][2] == 5  # page_size
     assert captured["args"][3] == 10  # page 2 * size 5
+    assert "last_sent_at" in q
     assert "last_attempt_at, last_attempt_reason" in q
     assert out["total"] == 7
     assert out["page"] == 2 and out["page_size"] == 5
     assert out["posts"][0]["excerpt"] == "e0"
+    assert out["posts"][0]["last_sent_at"] == "2026-06-21T14:39:00+00:00"
     assert out["posts"][0]["last_attempt_reason"] == "insufficient_balance"
     assert out["posts"][0]["last_attempt_at"] == "2026-06-21T20:00:00+00:00"
 

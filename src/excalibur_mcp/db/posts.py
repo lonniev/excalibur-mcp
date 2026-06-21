@@ -170,7 +170,7 @@ async def list_posts(
     rows = await fetch(
         f"""
         SELECT id::text AS post_id, status, left(text_cache, 120) AS excerpt,
-               publish_at, updated_at, created_at, tweet_url,
+               publish_at, updated_at, created_at, tweet_url, last_sent_at,
                last_attempt_at, last_attempt_reason
         FROM posts
         WHERE {where}
@@ -188,6 +188,7 @@ async def list_posts(
             "publish_at": str(r["publish_at"]) if r.get("publish_at") else None,
             "updated_at": str(r.get("updated_at") or ""),
             "tweet_url": r.get("tweet_url") or None,
+            "last_sent_at": str(r["last_sent_at"]) if r.get("last_sent_at") else None,
             "last_attempt_at": str(r["last_attempt_at"]) if r.get("last_attempt_at") else None,
             "last_attempt_reason": r.get("last_attempt_reason") or None,
         }
@@ -313,6 +314,36 @@ async def mark_sent(
         last_sent_at,
         next_status,
         next_publish_at,
+        tweet_url or None,
+    )
+
+
+async def create_sent_occurrence(
+    npub: str,
+    doc: dict[str, Any],
+    text_cache: str | None,
+    tweet_url: str | None,
+    sent_at: str,
+    publish_at: str | None = None,
+) -> None:
+    """Record one fired occurrence of a recurring post as its own immutable Sent
+    post (a snapshot of the text/doc that went out + that occurrence's X URL).
+
+    A recurring post reschedules itself in place, so without this each posting
+    would be invisible — collapsed into the template that just advances its date,
+    with only the latest ``tweet_url`` retained. This leaves a permanent, viewable
+    Sent record per posting instead."""
+    await execute(
+        """
+        INSERT INTO posts
+            (npub, status, doc, text_cache, publish_at, last_sent_at, tweet_url)
+        VALUES ($1, 'sent', $2::jsonb, $3, $4::timestamptz, $5::timestamptz, $6)
+        """,
+        npub,
+        json.dumps(doc),
+        text_cache,
+        publish_at,
+        sent_at,
         tweet_url or None,
     )
 

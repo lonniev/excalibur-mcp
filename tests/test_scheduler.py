@@ -89,28 +89,50 @@ def _due_row(**over):
 
 
 @pytest.mark.asyncio
-async def test_fires_charges_posts_and_reschedules(_stub_record_run):
+async def test_recurring_fire_snapshots_occurrence_and_advances(_stub_record_run):
     rt = _runtime()
-    # x_client.post_tweet returns {tweet_id, tweet_url} — the summary + mark_sent
-    # must read those exact keys (not a bare "id").
+    # x_client.post_tweet returns {tweet_id, tweet_url} — the summary must read
+    # those exact keys (not a bare "id").
     url = "https://x.com/i/status/tw1"
     client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "tw1", "tweet_url": url}))
-    with patch.object(scheduler.posts_db, "list_due", AsyncMock(return_value=[_due_row()])), \
+    with patch.object(scheduler.posts_db, "list_due", AsyncMock(return_value=[_due_row(doc={"blocks": []})])), \
          patch.object(scheduler.posts_db, "mark_sent", AsyncMock()) as mark, \
+         patch.object(scheduler.posts_db, "create_sent_occurrence", AsyncMock()) as occ, \
          patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
         out = await scheduler.process_due_posts(rt)
     assert out["processed"] == 1 and len(out["posted"]) == 1
     rt._apply_billing.assert_awaited_once()
     client.post_tweet.assert_awaited_once()
-    # summary surfaces the real tweet id + url (regression: was reading "id" → null)
     assert out["posted"][0]["tweet_id"] == "tw1"
     assert out["posted"][0]["tweet_url"] == url
-    # rescheduled (daily, within cease) → status scheduled, mark_sent gets the url
+    # recurring → a Sent occurrence is snapshotted WITH the url …
+    occ.assert_awaited_once()
+    assert occ.await_args.kwargs["tweet_url"] == url
+    assert occ.await_args.kwargs["npub"] == NPUB
+    # … and the template just advances (status scheduled, url NOT overwritten on it)
     assert mark.await_args.args[2] == "scheduled"
-    assert mark.await_args.args[4] == url
+    assert mark.await_args.args[4] is None
     rt.rollback_debit.assert_not_awaited()
     # the tick records its summary for FE visibility
     _stub_record_run.assert_awaited_once_with(out)
+
+
+@pytest.mark.asyncio
+async def test_one_shot_fire_marks_row_sent_with_url():
+    rt = _runtime()
+    url = "https://x.com/i/status/tw2"
+    client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "tw2", "tweet_url": url}))
+    # no recurrence → one-shot
+    with patch.object(scheduler.posts_db, "list_due",
+                      AsyncMock(return_value=[_due_row(recurrence=None, cease_at=None)])), \
+         patch.object(scheduler.posts_db, "mark_sent", AsyncMock()) as mark, \
+         patch.object(scheduler.posts_db, "create_sent_occurrence", AsyncMock()) as occ, \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        out = await scheduler.process_due_posts(rt)
+    assert len(out["posted"]) == 1
+    occ.assert_not_called()  # one-shot leaves no separate occurrence
+    assert mark.await_args.args[2] == "sent"  # the row itself becomes Sent
+    assert mark.await_args.args[4] == url
 
 
 @pytest.mark.asyncio
@@ -121,6 +143,7 @@ async def test_record_run_failure_does_not_break_the_tick(_stub_record_run):
     client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "tw1", "tweet_url": "u"}))
     with patch.object(scheduler.posts_db, "list_due", AsyncMock(return_value=[_due_row()])), \
          patch.object(scheduler.posts_db, "mark_sent", AsyncMock()), \
+         patch.object(scheduler.posts_db, "create_sent_occurrence", AsyncMock()), \
          patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
         out = await scheduler.process_due_posts(rt)
     assert out["processed"] == 1 and len(out["posted"]) == 1  # tick still succeeded

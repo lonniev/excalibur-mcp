@@ -204,6 +204,14 @@ export default function PostsPage() {
                   </td>
                   <td className="px-3 py-2.5 align-top max-w-md">
                     <p className="truncate text-stone-800 dark:text-zinc-200">{p.excerpt || "(empty draft)"}</p>
+                    {p.last_sent_at && (
+                      <p
+                        className="mt-0.5 text-[11px] text-green-600 dark:text-green-400"
+                        title={`Last posted to X by the scheduler at ${fmt(p.last_sent_at)}`}
+                      >
+                        ✓ last posted {fmt(p.last_sent_at)}
+                      </p>
+                    )}
                   </td>
                   <td className="px-3 py-2.5 align-top text-xs text-stone-400 dark:text-zinc-500 whitespace-nowrap">
                     {p.publish_at ? fmt(p.publish_at) : "—"}
@@ -213,12 +221,12 @@ export default function PostsPage() {
                   </td>
                   <td className="px-3 py-2.5 align-top text-right whitespace-nowrap">
                     <span className="inline-flex gap-2 text-xs text-stone-400 dark:text-zinc-500">
-                      {p.status === "sent" && p.tweet_url && (
+                      {p.tweet_url && (
                         <span
                           role="button"
                           onClick={(e) => { e.stopPropagation(); e.preventDefault(); setPreview({ url: p.tweet_url!, text: p.excerpt || "" }); }}
                           className="hover:text-sky-600 dark:hover:text-sky-400 cursor-pointer"
-                          title="Preview on X"
+                          title="Preview the last posted tweet on X"
                         >
                           preview
                         </span>

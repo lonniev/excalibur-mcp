@@ -5,6 +5,37 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.17.0] — 2026-06-21
+
+### Changed — every recurring posting becomes a visible Sent record
+
+A recurring scheduled post reschedules itself in place, so each firing was
+invisible: the row flipped back to `scheduled`, advanced its date, and the single
+`tweet_url` was overwritten — no Sent record, no per-occurrence X URL. Now a
+successful recurring fire **snapshots that occurrence as its own immutable Sent
+post** (text + doc + that occurrence's X URL) via `posts.create_sent_occurrence`,
+and the recurring template advances separately. A non-recurring scheduled post is
+unchanged (the row itself becomes Sent).
+
+### Changed — scheduler visibility now reaches the post author, not just the operator
+
+A successful recurring fire was invisible to the author: the post simply
+rescheduled to its next date with no on-list sign it had posted, and the
+scheduler log was operator-gated so the author's FE session (a patron npub, not
+the operator npub) always saw the misleading "no new ticks".
+
+- **Successful fires now show on the post.** `list_posts` surfaces `last_sent_at`;
+  PostsPage shows "✓ last posted <time>" on any post that has fired (including a
+  recurring post back in `scheduled`), and the X preview link now shows whenever
+  a `tweet_url` exists (was `sent`-only).
+- **`get_scheduler_log` is owner-scoped** (was operator-only). It's now free +
+  proof-gated: the operator sees every tick in full; any other proven patron sees
+  the per-tick heartbeat (proof the Worker ran) plus only the per-post outcomes
+  for their own posts. The scheduler tags each summary entry with its `owner`
+  npub; `scheduler_runs.scope_runs` does the filtering.
+- DebugPanel empty/error messages reworded ("no ticks recorded yet (the Worker
+  runs every 10 min)" / proof-needed) — no more "no new ticks".
+
 ## [0.16.0] — 2026-06-21
 
 ### Fixed — scheduler audit ring wrote/read nothing (the "no new ticks" bug)

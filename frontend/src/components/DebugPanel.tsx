@@ -78,10 +78,12 @@ export default function DebugPanel() {
         seen.current.add(r.run_at);
         pushRun(r);
       }
-      if (!silent && fresh.length === 0) debugPush("info", "scheduler: no new ticks");
+      if (!silent && fresh.length === 0) {
+        debugPush("info", "scheduler: no ticks recorded yet (the Worker runs every 10 min)");
+      }
     } catch {
-      // Operator-only: a patron-only session (or missing proof) just sees nothing.
-      if (!silent) debugPush("info", "scheduler log unavailable — sign in as the operator");
+      // Free + proof-gated; a failure here means the npub proof is missing/expired.
+      if (!silent) debugPush("info", "scheduler log needs a valid npub proof — sign in again");
     } finally {
       setBusy(false);
     }
