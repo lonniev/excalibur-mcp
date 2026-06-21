@@ -6,7 +6,12 @@ import {
   type SnippetRow, type SortDir,
 } from "../lib/mcp";
 import { PageControls, SortHeader, TableShell } from "./PagedTable";
+import TableFilter from "./TableFilter";
 
+const DATE_FIELDS = [
+  { value: "created", label: "Created" },
+  { value: "updated", label: "Updated" },
+];
 const PAGE_SIZE = 25;
 
 export default function SnippetsPage() {
@@ -16,6 +21,10 @@ export default function SnippetsPage() {
   const [page, setPage] = useState(0);
   const [sortCol, setSortCol] = useState("favorite");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [search, setSearch] = useState("");
+  const [dateField, setDateField] = useState("created");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -23,7 +32,9 @@ export default function SnippetsPage() {
     setLoading(true);
     setError(null);
     try {
-      const r = await listSnippets({ sortCol, sortDir, page, pageSize: PAGE_SIZE });
+      const r = await listSnippets({
+        sortCol, sortDir, page, pageSize: PAGE_SIZE, search, dateFrom, dateTo, dateField,
+      });
       if (r.error) setError(r.error);
       setSnippets(r.snippets ?? []);
       setTotal(r.total ?? 0);
@@ -32,7 +43,7 @@ export default function SnippetsPage() {
     } finally {
       setLoading(false);
     }
-  }, [sortCol, sortDir, page]);
+  }, [sortCol, sortDir, page, search, dateFrom, dateTo, dateField]);
 
   useEffect(() => {
     refresh();
@@ -85,6 +96,19 @@ export default function SnippetsPage() {
         Reusable content for your posts — favorites appear as one-click chiclets in the editor.
       </p>
 
+      <TableFilter
+        search={search}
+        onSearch={(t) => { setSearch(t); setPage(0); }}
+        dateField={dateField}
+        dateFieldOptions={DATE_FIELDS}
+        onDateField={(v) => { setDateField(v); setPage(0); }}
+        dateFrom={dateFrom}
+        dateTo={dateTo}
+        onDateFrom={(v) => { setDateFrom(v); setPage(0); }}
+        onDateTo={(v) => { setDateTo(v); setPage(0); }}
+        onClear={() => { setSearch(""); setDateFrom(""); setDateTo(""); setDateField("created"); setPage(0); }}
+      />
+
       {error && (
         <div className="rounded-lg p-3 mb-3 text-xs bg-red-50 border border-red-200 text-red-700 dark:bg-red-500/10 dark:border-red-500/30 dark:text-red-400">
           {error}
@@ -94,12 +118,18 @@ export default function SnippetsPage() {
       {loading && snippets.length === 0 ? (
         <p className="text-sm text-stone-400 dark:text-zinc-500 py-10 text-center">Loading…</p>
       ) : snippets.length === 0 ? (
-        <div className="text-center py-12">
-          <p className="text-sm text-stone-400 dark:text-zinc-500 mb-3">No snippets yet.</p>
-          <Link to="/snippets/new" className="text-sm text-amber-600 dark:text-amber-400 hover:underline">
-            Create your first snippet →
-          </Link>
-        </div>
+        (search || dateFrom || dateTo) ? (
+          <div className="text-center py-12">
+            <p className="text-sm text-stone-400 dark:text-zinc-500">No snippets match this filter.</p>
+          </div>
+        ) : (
+          <div className="text-center py-12">
+            <p className="text-sm text-stone-400 dark:text-zinc-500 mb-3">No snippets yet.</p>
+            <Link to="/snippets/new" className="text-sm text-amber-600 dark:text-amber-400 hover:underline">
+              Create your first snippet →
+            </Link>
+          </div>
+        )
       ) : (
         <>
           <TableShell>

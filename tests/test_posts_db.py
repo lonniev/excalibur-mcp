@@ -162,6 +162,46 @@ async def test_list_posts_offset_sort_and_total():
 
 
 @pytest.mark.asyncio
+async def test_list_posts_search_and_date_filter_build_where():
+    captured = {}
+
+    async def fake_fetchrow(query, *args):  # COUNT(*)
+        captured["count_query"] = query
+        captured["count_args"] = args
+        return {"n": 3}
+
+    async def fake_fetch(query, *args):
+        captured["query"] = query
+        captured["args"] = args
+        return []
+
+    with patch.object(posts_db, "fetchrow", fake_fetchrow), \
+         patch.object(posts_db, "fetch", fake_fetch):
+        await posts_db.list_posts(
+            NPUB, search="hel+o", date_from="2026-06-01", date_to="2026-06-30",
+            date_field="scheduled", page=0, page_size=10,
+        )
+    q = captured["query"]
+    assert "text_cache ~* $2" in q  # regex content match
+    assert "publish_at >= $3::date" in q  # date_field=scheduled → publish_at
+    assert "publish_at < ($4::date + interval '1 day')" in q  # end-inclusive
+    # COUNT shares the same filter params (npub, search, from, to)
+    assert captured["count_args"] == (NPUB, "hel+o", "2026-06-01", "2026-06-30")
+    # page params come after the filter params
+    assert captured["args"][:5] == (NPUB, "hel+o", "2026-06-01", "2026-06-30", 10)
+
+
+@pytest.mark.asyncio
+async def test_list_posts_unknown_date_field_falls_back_to_created():
+    with patch.object(posts_db, "fetchrow", AsyncMock(return_value={"n": 0})), \
+         patch.object(posts_db, "fetch", AsyncMock(return_value=[])) as f:
+        await posts_db.list_posts(NPUB, date_from="2026-01-01", date_field="; DROP")
+    q = f.await_args.args[0]
+    assert "created_at >= $2::date" in q  # unknown field → created_at, no raw SQL
+    assert "DROP" not in q
+
+
+@pytest.mark.asyncio
 async def test_list_posts_unknown_sort_falls_back_to_created():
     async def fake_fetchrow(query, *args):
         return {"n": 0}

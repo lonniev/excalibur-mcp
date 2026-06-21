@@ -87,6 +87,30 @@ async def test_create_rejects_bad_recurrence_freq():
 
 
 @pytest.mark.asyncio
+async def test_list_rejects_invalid_regex_search():
+    with pytest.raises(ValueError):
+        await posts_tools.list_(
+            _runtime(), TOOL, status="", sort_col="created", sort_dir="desc",
+            page=0, page_size=25, npub=NPUB, search="(",  # unbalanced → re.error
+        )
+
+
+@pytest.mark.asyncio
+async def test_list_threads_search_and_dates_to_db():
+    with patch.object(posts_tools.posts_db, "list_posts",
+                      new=AsyncMock(return_value={"posts": [], "total": 0, "page": 0, "page_size": 25})) as lp:
+        await posts_tools.list_(
+            _runtime(), TOOL, status="", sort_col="created", sort_dir="desc",
+            page=0, page_size=25, npub=NPUB,
+            search="he.lo", date_from="2026-06-01", date_to="2026-06-30", date_field="scheduled",
+        )
+    kw = lp.await_args.kwargs
+    assert kw["search"] == "he.lo"  # validated + passed
+    assert kw["date_from"] == "2026-06-01" and kw["date_to"] == "2026-06-30"
+    assert kw["date_field"] == "scheduled"
+
+
+@pytest.mark.asyncio
 async def test_get_rejects_non_uuid():
     with pytest.raises(ValueError):
         await posts_tools.get(_runtime(), TOOL, post_id="not-a-uuid", npub=NPUB)

@@ -5,6 +5,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.18.0] — 2026-06-21
+
+### Added — server-side regex + date filtering for Posts and Snippets
+
+Both tables sorted and paginated server-side but had no search. Added a content
+regex filter and a date range, filtered in SQL so pagination and totals reflect
+the filtered set (the TaxSort pattern).
+
+- `list_posts` / `list_snippets` gain `search`, `date_from`, `date_to`,
+  `date_field`. `search` is a case-insensitive regex matched against the content
+  (`text_cache` for posts; name OR body for snippets) via Postgres `~*`;
+  `date_from`/`date_to` (`YYYY-MM-DD`, end-inclusive) bound a whitelisted
+  `date_field` column (posts: created/updated/scheduled/sent; snippets:
+  created/updated). All user input is parameterized; the same WHERE drives the
+  `COUNT(*)` and the page.
+- The regex is validated (`re.compile`) and length-capped in the tool layer —
+  a bad pattern returns a refunded `tool_input_invalid` (new shared
+  `tools/_filters.py`).
+- FE: new shared `TableFilter` (monospace regex box submitted on Enter/button, a
+  date-field selector + from/to range, Clear). Wired into PostsPage and
+  SnippetsPage; every filter change resets to page 0; filtered-empty shows
+  "No … match this filter."
+
 ## [0.17.1] — 2026-06-21
 
 ### Security — no cross-patron leak in the scheduler log
