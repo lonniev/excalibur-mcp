@@ -25,6 +25,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from excalibur_mcp.db import posts as posts_db
+from excalibur_mcp.db import scheduler_runs
 from excalibur_mcp.formatter import markdown_to_unicode
 
 logger = logging.getLogger(__name__)
@@ -170,4 +171,10 @@ async def process_due_posts(runtime: Any) -> dict[str, Any]:
         "scheduler: processed=%d posted=%d skipped=%d errors=%d",
         len(due), len(posted), len(skipped), len(errors),
     )
+    # Record the tick for FE visibility. Best-effort: an audit-write failure must
+    # never undo the posting work we just did.
+    try:
+        await scheduler_runs.record_run(summary)
+    except Exception:  # noqa: BLE001 — audit is non-critical
+        logger.exception("scheduler: failed to record run summary")
     return summary

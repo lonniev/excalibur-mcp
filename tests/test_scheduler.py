@@ -18,6 +18,14 @@ from excalibur_mcp.x_client import XAPIError
 NPUB = "npub1l94pd4qu4eszrl6ek032ftcnsu3tt9a7xvq2zp7eaxeklp6mrpzssmq8pf"
 
 
+@pytest.fixture(autouse=True)
+def _stub_record_run():
+    """Every process_due_posts call records its summary; keep that off Neon and
+    expose the mock so a test can assert the recording contract."""
+    with patch.object(scheduler.scheduler_runs, "record_run", AsyncMock()) as rec:
+        yield rec
+
+
 # -- recurrence math ---------------------------------------------------------
 
 def test_add_months_clamps_end_of_month():
@@ -73,7 +81,7 @@ def _due_row(**over):
 
 
 @pytest.mark.asyncio
-async def test_fires_charges_posts_and_reschedules():
+async def test_fires_charges_posts_and_reschedules(_stub_record_run):
     rt = _runtime()
     # x_client.post_tweet returns {tweet_id, tweet_url} — the summary + mark_sent
     # must read those exact keys (not a bare "id").
@@ -93,6 +101,21 @@ async def test_fires_charges_posts_and_reschedules():
     assert mark.await_args.args[2] == "scheduled"
     assert mark.await_args.args[4] == url
     rt.rollback_debit.assert_not_awaited()
+    # the tick records its summary for FE visibility
+    _stub_record_run.assert_awaited_once_with(out)
+
+
+@pytest.mark.asyncio
+async def test_record_run_failure_does_not_break_the_tick(_stub_record_run):
+    # Audit is best-effort: a recording failure must not undo posting work.
+    _stub_record_run.side_effect = RuntimeError("neon down")
+    rt = _runtime()
+    client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "tw1", "tweet_url": "u"}))
+    with patch.object(scheduler.posts_db, "list_due", AsyncMock(return_value=[_due_row()])), \
+         patch.object(scheduler.posts_db, "mark_sent", AsyncMock()), \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        out = await scheduler.process_due_posts(rt)
+    assert out["processed"] == 1 and len(out["posted"]) == 1  # tick still succeeded
 
 
 @pytest.mark.asyncio

@@ -113,6 +113,18 @@ async def _ensure_domain_schema(vault: Any) -> None:
 
         f"CREATE INDEX IF NOT EXISTS snippets_owner_idx ON {t('snippets')} "
         "(npub, favorite DESC, created_at DESC)",
+
+        # Scheduler-tick audit ring. Each process_scheduled_posts run records its
+        # outcome summary so the FE debug log can surface what the Cloudflare
+        # cron Worker is doing (esp. per-post skip/error reasons). The vault is
+        # single-operator, so no npub column — the whole table is the operator's.
+        f"CREATE TABLE IF NOT EXISTS {t('scheduler_runs')} ("
+        "id UUID PRIMARY KEY DEFAULT gen_random_uuid(), "
+        "run_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), "
+        "summary JSONB NOT NULL)",
+
+        f"CREATE INDEX IF NOT EXISTS scheduler_runs_recent_idx "
+        f"ON {t('scheduler_runs')} (run_at DESC)",
     ]
     for stmt in stmts:
         try:
