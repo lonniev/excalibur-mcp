@@ -205,16 +205,13 @@ export default function PostsPage() {
                   <td className="px-3 py-2.5 align-top max-w-md">
                     <p className="truncate text-stone-800 dark:text-zinc-200">{p.excerpt || "(empty draft)"}</p>
                     {p.last_sent_at && (p.tweet_url ? (
-                      <a
-                        href={p.tweet_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); e.preventDefault(); setPreview({ url: p.tweet_url!, text: p.excerpt || "" }); }}
                         className="mt-0.5 inline-flex items-center gap-1 text-[11px] text-green-600 hover:underline dark:text-green-400"
-                        title={`Posted to X at ${fmt(p.last_sent_at)} — open ${p.tweet_url}`}
+                        title={`Peek at the posted tweet (${fmt(p.last_sent_at)})`}
                       >
-                        ✓ posted {fmt(p.last_sent_at)} ↗
-                      </a>
+                        ✓ posted {fmt(p.last_sent_at)} 👁
+                      </button>
                     ) : (
                       <p
                         className="mt-0.5 text-[11px] text-green-600 dark:text-green-400"
@@ -232,16 +229,6 @@ export default function PostsPage() {
                   </td>
                   <td className="px-3 py-2.5 align-top text-right whitespace-nowrap">
                     <span className="inline-flex gap-2 text-xs text-stone-400 dark:text-zinc-500">
-                      {p.tweet_url && (
-                        <span
-                          role="button"
-                          onClick={(e) => { e.stopPropagation(); e.preventDefault(); setPreview({ url: p.tweet_url!, text: p.excerpt || "" }); }}
-                          className="hover:text-sky-600 dark:hover:text-sky-400 cursor-pointer"
-                          title="Preview the last posted tweet on X"
-                        >
-                          preview
-                        </span>
-                      )}
                       {p.status === "sent" && (
                         <span role="button" onClick={(e) => handleRepost(e, p.post_id)} className="hover:text-green-600 dark:hover:text-green-400 cursor-pointer" title="Repost to X now">
                           {reposting === p.post_id ? "…" : "repost"}
