@@ -210,6 +210,8 @@ const BOOTSTRAP_TOOLS = new Set([
   "request_npub_proof",
   "receive_npub_proof",
   "service_status",
+  // Takes an explicit patron_npub, no proof envelope (free readiness probe).
+  "session_status",
   // Public kind-0 profile reads/relays — take explicit npub, no proof envelope.
   "get_nostr_profile",
   "publish_nostr_profile",
@@ -581,6 +583,67 @@ export async function refinePostRegion(args: {
     bans: JSON.stringify(args.bans ?? []),
   });
 }
+
+// ─── X account OAuth2 (per-patron connect dance) ───────────────────────────
+// post_tweet posts to the logged-in npub's OWN X account, which needs a
+// per-patron OAuth2 token. The dance: begin_oauth → open authorize_url in a
+// browser → check_oauth_status (poll) until status === "completed". The
+// callback lands at the Tollbooth OAuth2 collector; the wheel does the token
+// exchange server-side. Both tools are free but proof-gated (callTool injects).
+
+export interface BeginOauthResult {
+  success?: boolean;
+  status?: string;
+  authorize_url?: string;
+  authorize_url_short?: string;
+  message?: string;
+  error?: string;
+  error_code?: string;
+}
+
+export async function beginOauth(): Promise<BeginOauthResult> {
+  return callTool<BeginOauthResult>("begin_oauth", {});
+}
+
+export interface OauthStatusResult {
+  success?: boolean;
+  status?: string; // "pending" | "completed"
+  message?: string;
+  error?: string;
+}
+
+export async function checkOauthStatus(): Promise<OauthStatusResult> {
+  return callTool<OauthStatusResult>("check_oauth_status", {});
+}
+
+export interface UpstreamOauth {
+  has_access_token?: boolean;
+  has_refresh_token?: boolean;
+  access_token_expires_at?: number;
+  access_token_expires_in_seconds?: number;
+}
+
+interface SessionStatusResult {
+  lifecycle?: string;
+  upstream_oauth?: UpstreamOauth;
+}
+
+/// Whether the logged-in npub has a usable X OAuth token (with expiry), or
+/// null if not connected. Used to render the X-account panel's current state.
+export async function getXConnection(): Promise<UpstreamOauth | null> {
+  try {
+    const r = await callTool<SessionStatusResult>("session_status", {
+      patron_npub: getStoredNpub(),
+    });
+    return r.upstream_oauth ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/// Error codes from a paid X tool that mean "the patron must connect/reconnect
+/// their X account" (vs. a transient or operator-side problem).
+export const OAUTH_NEEDED_CODES = new Set(["oauth_not_yet_authorized", "oauth_token_expired"]);
 
 // ─── Snippet library (Neon-backed, npub-scoped, free + proof-gated) ────────
 

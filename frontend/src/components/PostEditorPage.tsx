@@ -21,7 +21,7 @@ const EMOJI_PALETTE = [
 ];
 import {
   createPost, deletePost, getPost, postTweet, refinePostRegion, updatePost,
-  type PostRow, type Recurrence,
+  OAUTH_NEEDED_CODES, type PostRow, type Recurrence,
 } from "../lib/mcp";
 import {
   charOffset, composeText, DEFAULT_BANS, DEFAULT_VOICE, overlaps, paletteOf,
@@ -72,6 +72,7 @@ export default function PostEditorPage() {
   const [loading, setLoading] = useState(!isNew);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [needsXConnect, setNeedsXConnect] = useState(false);
 
   // ── load ────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -326,10 +327,16 @@ export default function PostEditorPage() {
     if (!composed.trim()) { setError("Write something first."); return; }
     setSaving(true);
     setError(null);
+    setNeedsXConnect(false);
     try {
       const r = await postTweet(composed);
       if (r.error || r.success === false) {
-        setError(r.message || r.error || "Couldn't post to X.");
+        if (r.error_code && OAUTH_NEEDED_CODES.has(r.error_code)) {
+          setNeedsXConnect(true);
+          setError("Connect your X account before posting.");
+        } else {
+          setError(r.message || r.error || "Couldn't post to X.");
+        }
         return;
       }
       const docPayload = serializeBlocks(blocks);
@@ -516,7 +523,19 @@ export default function PostEditorPage() {
               </div>
             )}
             {hint && <div className="mt-3 font-mono text-xs text-amber-300">{hint}</div>}
-            {error && <div className="mt-3 rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{error}</div>}
+            {error && (
+              <div className="mt-3 flex flex-wrap items-center gap-3 rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
+                <span>{error}</span>
+                {needsXConnect && (
+                  <button
+                    onClick={() => nav("/profile")}
+                    className="ml-auto rounded bg-amber-400 px-2.5 py-1 font-medium text-zinc-950 hover:bg-amber-300"
+                  >
+                    Connect X →
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </main>
 
