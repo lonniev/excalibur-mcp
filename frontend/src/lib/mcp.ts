@@ -456,6 +456,7 @@ export interface PostSummary {
   excerpt: string;
   publish_at: string | null;
   updated_at: string | null;
+  tweet_url?: string | null;
 }
 
 export interface ListPostsResult {
@@ -484,6 +485,7 @@ export interface PostRow {
   recurrence?: unknown;
   cease_at?: string | null;
   last_sent_at?: string | null;
+  tweet_url?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
   error?: string;
@@ -514,6 +516,7 @@ export async function createPost(opts: {
   recurrence?: Recurrence;
   ceaseAt?: string;
   clientReqId?: string;
+  tweetUrl?: string;
 }): Promise<CreatePostResult> {
   const args: Record<string, unknown> = {
     doc: opts.doc,
@@ -524,6 +527,7 @@ export async function createPost(opts: {
   if (opts.recurrence) args.recurrence = opts.recurrence;
   if (opts.ceaseAt) args.cease_at = opts.ceaseAt;
   if (opts.clientReqId) args.client_req_id = opts.clientReqId;
+  if (opts.tweetUrl) args.tweet_url = opts.tweetUrl;
   return callTool<CreatePostResult>("create_post", args);
 }
 
@@ -565,8 +569,9 @@ export async function deletePost(postId: string, hard = false): Promise<DeletePo
 
 export interface PostTweetResult {
   success?: boolean;
-  id?: string;
-  url?: string;
+  tweet_id?: string;
+  tweet_url?: string;
+  text_posted?: string;
   error?: string;
   error_code?: string;
   message?: string;

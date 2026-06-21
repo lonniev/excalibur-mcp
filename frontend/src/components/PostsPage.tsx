@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { deletePost, getPost, listPosts, postTweet, type PostSummary } from "../lib/mcp";
+import TweetPreviewModal from "./TweetPreviewModal";
 
 const STATUS_FILTERS = ["", "draft", "scheduled", "sent", "archived"] as const;
 
@@ -19,6 +20,7 @@ export default function PostsPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [reposting, setReposting] = useState<string | null>(null);
+  const [preview, setPreview] = useState<{ url: string; text: string } | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -73,6 +75,9 @@ export default function PostsPage() {
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-6">
+      {preview && (
+        <TweetPreviewModal url={preview.url} text={preview.text} onClose={() => setPreview(null)} />
+      )}
       <div className="flex items-center mb-4">
         <h1 className="text-lg font-semibold">Posts</h1>
         <Link
@@ -143,6 +148,16 @@ export default function PostsPage() {
                   </p>
                 </div>
                 <span className="flex gap-2 shrink-0 text-xs text-stone-400 dark:text-zinc-500">
+                  {p.status === "sent" && p.tweet_url && (
+                    <span
+                      role="button"
+                      onClick={(e) => { e.stopPropagation(); e.preventDefault(); setPreview({ url: p.tweet_url!, text: p.excerpt || "" }); }}
+                      className="hover:text-sky-600 dark:hover:text-sky-400"
+                      title="Preview on X"
+                    >
+                      preview
+                    </span>
+                  )}
                   {p.status === "sent" && (
                     <span
                       role="button"

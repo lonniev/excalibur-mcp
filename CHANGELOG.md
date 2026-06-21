@@ -5,6 +5,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-06-20
+
+### Added — every send stamps last_sent_at + stores the tweet URL
+
+- **`last_sent_at` is now stamped on every send.** Transitioning a post to
+  `sent` (the FE's Post It, via create or update) stamps `last_sent_at = NOW()`
+  server-side; the scheduler already did. So manual and scheduled posts both
+  record their fire time.
+- **The posted tweet's URL is stored on the post.** New `tweet_url` column
+  (idempotent `ADD COLUMN IF NOT EXISTS` for existing tables); `create_post`
+  and `update_post` accept it, `mark_sent` persists it (COALESCE-guarded for
+  recurrence), and it's returned by `get_post` and `list_posts`.
+
 ## [0.12.1] — 2026-06-20
 
 ### Fixed — posts can be marked "sent" (Post It now flips the row)

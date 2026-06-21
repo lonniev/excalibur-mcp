@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 # a brand-new draft) and patch (Post It on an existing draft).
 _CREATE_STATUS = {"draft", "scheduled", "sent"}
 _PATCH_STATUS = {"draft", "scheduled", "archived", "sent"}
-_PATCHABLE = {"doc", "publish_at", "recurrence", "cease_at", "status"}
+_PATCHABLE = {"doc", "publish_at", "recurrence", "cease_at", "status", "tweet_url"}
 _FREQ = {"daily", "weekly", "monthly"}
 
 
@@ -69,6 +69,7 @@ async def create(
     status: str,
     client_req_id: str,
     npub: str,
+    tweet_url: str = "",
 ) -> dict[str, Any]:
     if not isinstance(doc, dict) or not doc:
         raise ValueError("doc must be a non-empty object")
@@ -94,7 +95,7 @@ async def create(
         npub=npub, doc=doc, text_cache=text_cache or None,
         publish_at=publish_at or None, recurrence=recurrence,
         cease_at=cease_at or None, status=status,
-        client_req_id=client_req_id or None,
+        client_req_id=client_req_id or None, tweet_url=tweet_url or None,
     )
     return {
         "post_id": row["post_id"],

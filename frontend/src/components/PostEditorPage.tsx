@@ -24,6 +24,7 @@ import {
   OAUTH_NEEDED_CODES, type PostRow, type Recurrence,
 } from "../lib/mcp";
 import { debugPush } from "../lib/debugLog";
+import TweetPreviewModal from "./TweetPreviewModal";
 import {
   charOffset, composeText, DEFAULT_BANS, DEFAULT_VOICE, overlaps, paletteOf,
   parsePostDoc, segmentize, serializeBlocks, uid,
@@ -74,6 +75,7 @@ export default function PostEditorPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [needsXConnect, setNeedsXConnect] = useState(false);
+  const [postedUrl, setPostedUrl] = useState<string | null>(null);
 
   // ── load ────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -342,20 +344,22 @@ export default function PostEditorPage() {
         }
         return;
       }
+      const tweetUrl = r.tweet_url ?? "";
       const docPayload = serializeBlocks(blocks);
       if (isNew) {
         const c = await createPost({
-          doc: docPayload, textCache: composed, status: "sent", clientReqId: createReqId.current,
+          doc: docPayload, textCache: composed, status: "sent",
+          clientReqId: createReqId.current, tweetUrl,
         });
-        if (c.post_id) { nav(`/post/${c.post_id}`, { replace: true }); return; }
-        setHint("Posted to X (couldn't save a copy).");
+        if (!c.post_id) setHint("Posted to X (couldn't save a copy).");
       } else {
         await updatePost({
-          postId: postId!, patch: { doc: docPayload, status: "sent" },
+          postId: postId!, patch: { doc: docPayload, status: "sent", tweet_url: tweetUrl },
           textCache: composed, clientReqId: uid(),
         });
-        setHint("Posted to X.");
       }
+      setHint("Posted to X.");
+      setPostedUrl(tweetUrl);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -372,6 +376,13 @@ export default function PostEditorPage() {
 
   return (
     <div className="min-h-screen w-full bg-zinc-950 text-zinc-200 flex flex-col">
+      {postedUrl !== null && (
+        <TweetPreviewModal
+          url={postedUrl}
+          text={composed}
+          onClose={() => { setPostedUrl(null); nav("/"); }}
+        />
+      )}
       {sel && !preview && (
         <button
           onClick={flagSelection}

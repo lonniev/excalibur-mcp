@@ -154,9 +154,11 @@ async def process_due_posts(runtime: Any) -> dict[str, Any]:
         next_status, next_publish = _next_state(
             sent_at, _as_dict(row.get("recurrence")), row.get("cease_at"),
         )
+        tweet_url = (result or {}).get("tweet_url") if isinstance(result, dict) else None
         await posts_db.mark_sent(
             pid, sent_at.isoformat(), next_status,
             next_publish.isoformat() if next_publish else None,
+            tweet_url,
         )
         posted.append({"post_id": pid, "next_status": next_status,
                        "tweet_id": (result or {}).get("id") if isinstance(result, dict) else None})
