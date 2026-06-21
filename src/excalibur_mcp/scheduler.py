@@ -110,11 +110,12 @@ async def process_due_posts(runtime: Any) -> dict[str, Any]:
     skipped: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
 
-    async def _hold(bucket: list[dict[str, Any]], pid: str, reason: str, **extra: Any) -> None:
+    async def _hold(bucket: list[dict[str, Any]], pid: str, owner: str, reason: str, **extra: Any) -> None:
         """Record an attempt the scheduler held back: report it in the summary AND
         stamp the post (when/why) so it visibly shows it was tried — never silently
-        sitting ``scheduled``. Stamping is best-effort; it can't abort the run."""
-        bucket.append({"post_id": pid, "reason": reason, **extra})
+        sitting ``scheduled``. ``owner`` is carried so the log can be owner-scoped.
+        Stamping is best-effort; it can't abort the run."""
+        bucket.append({"post_id": pid, "owner": owner, "reason": reason, **extra})
         try:
             await posts_db.mark_attempt(pid, datetime.now(timezone.utc).isoformat(), reason)
         except Exception:  # noqa: BLE001 — stamping is non-critical
@@ -126,25 +127,25 @@ async def process_due_posts(runtime: Any) -> dict[str, Any]:
         text = (row.get("text_cache") or "").strip()
 
         if not text:  # content reason
-            await _hold(skipped, pid, "empty_text_cache")
+            await _hold(skipped, pid, owner, "empty_text_cache")
             continue
 
         # 1. Resolve the owner's X bearer (no billing yet). — access reason
         client, situation = await _resolve_x_client(owner)
         if client is None:
             code = (situation or {}).get("error_code", "oauth_unavailable")
-            await _hold(skipped, pid, code)
+            await _hold(skipped, pid, owner, code)
             continue
 
         # 2. Price + bill the owner for post_tweet (tranche-expiry guard inside).
         cost, denial = await runtime._resolve_pricing(post_tweet_id, "post_tweet", "write", {})
         if denial is not None:
-            await _hold(errors, pid, denial.get("error_code", "pricing_unavailable"))
+            await _hold(errors, pid, owner, denial.get("error_code", "pricing_unavailable"))
             continue
         billing = await runtime._apply_billing(owner, "post_tweet", cost, [])
         if isinstance(billing, dict):
             # Insufficient / expired balance — leave it scheduled, report it. — finance reason
-            await _hold(skipped, pid, "insufficient_balance", cost_sats=cost)
+            await _hold(skipped, pid, owner, "insufficient_balance", cost_sats=cost)
             continue
 
         # 3. Post. On failure, refund the owner and leave the post scheduled. — network reason
@@ -152,11 +153,11 @@ async def process_due_posts(runtime: Any) -> dict[str, Any]:
             result = await client.post_tweet(markdown_to_unicode(text))
         except XAPIError as exc:
             await runtime.rollback_debit(post_tweet_id, owner)
-            await _hold(errors, pid, f"x_api_error: {exc}")
+            await _hold(errors, pid, owner, f"x_api_error: {exc}")
             continue
         except Exception as exc:  # noqa: BLE001 — money path, refund then report
             await runtime.rollback_debit(post_tweet_id, owner)
-            await _hold(errors, pid, str(exc))
+            await _hold(errors, pid, owner, str(exc))
             continue
 
         # 4. Stamp the fire and reschedule (or retire past cease_at).
@@ -170,7 +171,7 @@ async def process_due_posts(runtime: Any) -> dict[str, Any]:
             next_publish.isoformat() if next_publish else None,
             tweet_url,
         )
-        posted.append({"post_id": pid, "next_status": next_status,
+        posted.append({"post_id": pid, "owner": owner, "next_status": next_status,
                        "tweet_id": (result or {}).get("tweet_id") if isinstance(result, dict) else None,
                        "tweet_url": tweet_url})
 

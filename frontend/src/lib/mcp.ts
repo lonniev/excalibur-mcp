@@ -460,6 +460,9 @@ export interface PostSummary {
   publish_at: string | null;
   updated_at: string | null;
   tweet_url?: string | null;
+  // Set when the scheduler last successfully fired this post (even a recurring
+  // post that then rescheduled to its next date). Pairs with tweet_url.
+  last_sent_at?: string | null;
   // Set when the scheduler TRIED to fire a scheduled post but held it back —
   // the reason (insufficient_balance / oauth_token_expired / x_api_error / …)
   // and when. The post stays scheduled and retries on the next due tick.

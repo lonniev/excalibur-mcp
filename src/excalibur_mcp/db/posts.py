@@ -170,7 +170,7 @@ async def list_posts(
     rows = await fetch(
         f"""
         SELECT id::text AS post_id, status, left(text_cache, 120) AS excerpt,
-               publish_at, updated_at, created_at, tweet_url,
+               publish_at, updated_at, created_at, tweet_url, last_sent_at,
                last_attempt_at, last_attempt_reason
         FROM posts
         WHERE {where}
@@ -188,6 +188,7 @@ async def list_posts(
             "publish_at": str(r["publish_at"]) if r.get("publish_at") else None,
             "updated_at": str(r.get("updated_at") or ""),
             "tweet_url": r.get("tweet_url") or None,
+            "last_sent_at": str(r["last_sent_at"]) if r.get("last_sent_at") else None,
             "last_attempt_at": str(r["last_attempt_at"]) if r.get("last_attempt_at") else None,
             "last_attempt_reason": r.get("last_attempt_reason") or None,
         }

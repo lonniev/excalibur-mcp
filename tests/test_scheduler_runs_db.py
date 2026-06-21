@@ -59,3 +59,39 @@ async def test_list_runs_floor_limit():
     with patch.object(sr, "fetch", AsyncMock(return_value=[])) as f:
         await sr.list_runs(limit=0)
     assert f.await_args.args[1] == 1  # clamped to min
+
+
+OP = "npub1operator"
+ALICE = "npub1alice"
+BOB = "npub1bob"
+
+
+def _run():
+    return {
+        "run_at": "t",
+        "summary": {
+            "processed": 2,
+            "posted": [{"post_id": "a1", "owner": ALICE, "tweet_url": "u"}],
+            "skipped": [{"post_id": "b1", "owner": BOB, "reason": "insufficient_balance"}],
+            "errors": [],
+        },
+    }
+
+
+def test_scope_runs_operator_sees_everything():
+    runs = [_run()]
+    assert sr.scope_runs(runs, OP, OP) is runs  # full, unfiltered
+
+
+def test_scope_runs_owner_sees_heartbeat_plus_only_their_entries():
+    scoped = sr.scope_runs([_run()], ALICE, OP)
+    s = scoped[0]["summary"]
+    assert s["processed"] == 2  # global heartbeat preserved (proof it ran)
+    assert [e["post_id"] for e in s["posted"]] == ["a1"]  # alice's own
+    assert s["skipped"] == []  # bob's skip is hidden from alice
+
+
+def test_scope_runs_owner_with_no_posts_still_sees_heartbeat():
+    scoped = sr.scope_runs([_run()], "npub1carol", OP)
+    s = scoped[0]["summary"]
+    assert s["processed"] == 2 and s["posted"] == [] and s["skipped"] == []
