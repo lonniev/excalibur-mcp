@@ -16,15 +16,6 @@ NPUB = "npub1l94pd4qu4eszrl6ek032ftcnsu3tt9a7xvq2zp7eaxeklp6mrpzssmq8pf"
 PID = "11111111-1111-1111-1111-111111111111"
 
 
-def test_cursor_round_trip():
-    cur = posts_db._encode_cursor("2026-06-19T00:00:00+00:00", PID)
-    assert posts_db._decode_cursor(cur) == ("2026-06-19T00:00:00+00:00", PID)
-
-
-def test_cursor_decode_garbage_is_none():
-    assert posts_db._decode_cursor("@@not-base64@@") is None
-
-
 @pytest.mark.asyncio
 async def test_create_post_serializes_json_and_scopes_npub():
     captured = {}
@@ -108,17 +99,57 @@ async def test_mark_sent_persists_tweet_url():
 
 
 @pytest.mark.asyncio
-async def test_list_posts_pagination_emits_next_cursor():
-    rows = [
-        {"post_id": f"id{i}", "status": "draft", "excerpt": f"e{i}",
-         "publish_at": None, "updated_at": "t", "created_at": f"2026-06-1{i}T00:00:00+00:00"}
-        for i in range(3)
-    ]
-    with patch.object(posts_db, "fetch", AsyncMock(return_value=rows)):
-        out = await posts_db.list_posts(NPUB, limit=2)
-    assert len(out["posts"]) == 2  # extra row trimmed
-    assert out["next_cursor"] is not None
+async def test_list_posts_offset_sort_and_total():
+    captured = {}
+
+    async def fake_fetchrow(query, *args):  # COUNT(*)
+        captured["count_query"] = query
+        captured["count_args"] = args
+        return {"n": 7}
+
+    async def fake_fetch(query, *args):  # paged rows
+        captured["query"] = query
+        captured["args"] = args
+        return [
+            {"post_id": "id0", "status": "draft", "excerpt": "e0",
+             "publish_at": None, "updated_at": "t", "created_at": "c", "tweet_url": None},
+        ]
+
+    with patch.object(posts_db, "fetchrow", fake_fetchrow), \
+         patch.object(posts_db, "fetch", fake_fetch):
+        out = await posts_db.list_posts(
+            NPUB, status="draft", sort_col="updated", sort_dir="asc",
+            page=2, page_size=5,
+        )
+    q = captured["query"]
+    assert "ORDER BY updated_at ASC, created_at DESC" in q
+    assert "LIMIT $3 OFFSET $4" in q
+    assert captured["args"][0] == NPUB
+    assert captured["args"][1] == "draft"
+    assert captured["args"][2] == 5  # page_size
+    assert captured["args"][3] == 10  # page 2 * size 5
+    assert out["total"] == 7
+    assert out["page"] == 2 and out["page_size"] == 5
     assert out["posts"][0]["excerpt"] == "e0"
+
+
+@pytest.mark.asyncio
+async def test_list_posts_unknown_sort_falls_back_to_created():
+    async def fake_fetchrow(query, *args):
+        return {"n": 0}
+
+    captured = {}
+
+    async def fake_fetch(query, *args):
+        captured["query"] = query
+        return []
+
+    with patch.object(posts_db, "fetchrow", fake_fetchrow), \
+         patch.object(posts_db, "fetch", fake_fetch):
+        await posts_db.list_posts(NPUB, sort_col="; DROP TABLE posts; --")
+    # Unknown key never reaches the query as raw SQL — falls back to created_at.
+    assert "ORDER BY created_at DESC, created_at DESC" in captured["query"]
+    assert "DROP TABLE" not in captured["query"]
 
 
 @pytest.mark.asyncio

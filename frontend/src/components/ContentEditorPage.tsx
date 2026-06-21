@@ -20,7 +20,8 @@ const EMOJI_PALETTE = [
   "⏳", "🎯", "💡", "🙌", "🤝", "⚔️", "🛡️", "🏛️", "📜", "🗝️",
 ];
 import {
-  createPost, deletePost, getPost, postTweet, refinePostRegion, updatePost,
+  createPost, deletePost, getPost, getSnippet, postTweet, refinePostRegion,
+  saveSnippet, updatePost,
   OAUTH_NEEDED_CODES, type PostRow, type Recurrence,
 } from "../lib/mcp";
 import { debugPush } from "../lib/debugLog";
@@ -31,19 +32,27 @@ import {
   type Ban, type Block, type Flag as FlagT,
 } from "../lib/editorDoc";
 
+type Kind = "post" | "snippet";
 type Freq = "none" | "daily" | "weekly" | "monthly";
 interface Sel { blockId: string; start: number; end: number; x: number; y: number }
 interface ActiveFlag { blockId: string; flagId: string }
 interface PillPos { blockId: string; flagId: string; x: number; y: number }
 
-export default function PostEditorPage() {
-  const { postId } = useParams();
-  const isNew = !postId;
+// The two content kinds share the entire block editor; they differ only in
+// where they load/save and which actions (post/schedule) are offered. A Post is
+// tweet content (postable + schedulable); a Snippet is reusable content.
+export default function ContentEditorPage({ kind }: { kind: Kind }) {
+  const isSnippet = kind === "snippet";
+  const { postId, snippetId } = useParams();
+  const id = isSnippet ? snippetId : postId;
+  const isNew = !id;
+  const listPath = isSnippet ? "/snippets" : "/";
   const nav = useNavigate();
   const { npub } = useSession();
   const createReqId = useRef(uid());
 
   const [blocks, setBlocks] = useState<Block[]>([{ id: uid(), text: "", flags: [] }]);
+  const [name, setName] = useState(""); // snippet-only
   const [activeFlag, setActiveFlag] = useState<ActiveFlag | null>(null);
   const [preview, setPreview] = useState(false);
   const [tab, setTab] = useState<"flags" | "voice" | "schedule" | "snippets">("flags");
@@ -86,7 +95,19 @@ export default function PostEditorPage() {
     }
     let live = true;
     setLoading(true);
-    getPost(postId!)
+    if (isSnippet) {
+      getSnippet(id!)
+        .then((row) => {
+          if (!live) return;
+          if (!row) { setError("Snippet not found."); setLoading(false); return; }
+          setBlocks(parsePostDoc(row.doc, row.text));
+          setName(row.name ?? "");
+          setLoading(false);
+        })
+        .catch((e) => { if (live) { setError((e as Error).message); setLoading(false); } });
+      return () => { live = false; };
+    }
+    getPost(id!)
       .then((row: PostRow) => {
         if (!live) return;
         if (row.error) { setError(row.error); setLoading(false); return; }
@@ -99,7 +120,7 @@ export default function PostEditorPage() {
       })
       .catch((e) => { if (live) { setError((e as Error).message); setLoading(false); } });
     return () => { live = false; };
-  }, [postId, isNew]);
+  }, [id, isNew, isSnippet]);
 
   useEffect(() => { localStorage.setItem("excalibur:voice", voice); }, [voice]);
   useEffect(() => { localStorage.setItem("excalibur:bans", JSON.stringify(bans)); }, [bans]);
@@ -119,7 +140,7 @@ export default function PostEditorPage() {
   const composed = useMemo(() => composeText(blocks), [blocks]);
   const charCount = composed.length;
   // Text offered to "save as snippet": the block being edited, else the
-  // selected block, else the whole composed post.
+  // selected block, else the whole composed content.
   const focusedBlockText =
     (editingBlock ? blocks.find((b) => b.id === editingBlock)?.text : undefined) ??
     (sel ? blocks.find((b) => b.id === sel.blockId)?.text : undefined) ??
@@ -308,7 +329,7 @@ export default function PostEditorPage() {
         if (publishIso) patch.publish_at = publishIso;
         if (recurrence) patch.recurrence = recurrence;
         if (ceaseIso) patch.cease_at = ceaseIso;
-        const r = await updatePost({ postId: postId!, patch, textCache: composed, clientReqId: uid() });
+        const r = await updatePost({ postId: id!, patch, textCache: composed, clientReqId: uid() });
         if (r.error) setError(r.error);
         else setHint(scheduled ? "Scheduled." : "Saved.");
       }
@@ -319,10 +340,39 @@ export default function PostEditorPage() {
     }
   }
 
+  // Save the document as a named snippet (snippet kind's primary action).
+  async function persistSnippet() {
+    if (!name.trim()) { setError("Name your snippet first."); return; }
+    if (!composed.trim()) { setError("Write something first."); return; }
+    setSaving(true);
+    setError(null);
+    try {
+      const row = await saveSnippet({
+        id: isNew ? undefined : id,
+        name: name.trim(),
+        text: composed,
+        doc: serializeBlocks(blocks),
+      });
+      if (!row) { setError("Couldn't save the snippet."); return; }
+      if (isNew) nav(`/snippet/${row.id}`, { replace: true });
+      else setHint("Saved.");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function handleDiscard() {
-    if (isNew) { nav("/"); return; }
+    if (isSnippet) {
+      if (isNew) { nav(listPath); return; }
+      if (!window.confirm("Delete this snippet?")) return;
+      try { await removeSnippet(id!); nav(listPath); } catch (e) { setError((e as Error).message); }
+      return;
+    }
+    if (isNew) { nav(listPath); return; }
     if (!window.confirm("Archive this post?")) return;
-    try { await deletePost(postId!, false); nav("/"); } catch (e) { setError((e as Error).message); }
+    try { await deletePost(id!, false); nav(listPath); } catch (e) { setError((e as Error).message); }
   }
 
   // Post to X now (paid), then save the post as sent so it lands in the list.
@@ -354,7 +404,7 @@ export default function PostEditorPage() {
         if (!c.post_id) setHint("Posted to X (couldn't save a copy).");
       } else {
         await updatePost({
-          postId: postId!, patch: { doc: docPayload, status: "sent", tweet_url: tweetUrl },
+          postId: id!, patch: { doc: docPayload, status: "sent", tweet_url: tweetUrl },
           textCache: composed, clientReqId: uid(),
         });
       }
@@ -373,6 +423,9 @@ export default function PostEditorPage() {
 
   const openFlagCount = allFlags.length;
   const handle = npub ? `@${npub.slice(4, 13)}…` : "@excalibur";
+  const railTabs = isSnippet
+    ? ([["flags", `Flags ${openFlagCount ? `(${openFlagCount})` : ""}`], ["voice", "Voice"], ["snippets", "Snippets"]] as const)
+    : ([["flags", `Flags ${openFlagCount ? `(${openFlagCount})` : ""}`], ["voice", "Voice"], ["snippets", "Snippets"], ["schedule", "Schedule"]] as const);
 
   return (
     <div className="min-h-screen w-full bg-zinc-950 text-zinc-200 flex flex-col">
@@ -380,7 +433,7 @@ export default function PostEditorPage() {
         <TweetPreviewModal
           url={postedUrl}
           text={composed}
-          onClose={() => { setPostedUrl(null); nav("/"); }}
+          onClose={() => { setPostedUrl(null); nav(listPath); }}
         />
       )}
       {sel && !preview && (
@@ -405,33 +458,49 @@ export default function PostEditorPage() {
       {/* top bar */}
       <header className="flex items-center justify-between gap-4 border-b border-zinc-800 px-5 py-3">
         <div className="flex items-center gap-3">
-          <button onClick={() => nav("/")} className="flex h-8 w-8 items-center justify-center rounded-md bg-amber-400 text-zinc-950" title="Back to posts">
+          <button onClick={() => nav(listPath)} className="flex h-8 w-8 items-center justify-center rounded-md bg-amber-400 text-zinc-950" title={isSnippet ? "Back to snippets" : "Back to posts"}>
             <Swords className="h-5 w-5" />
           </button>
           <div className="leading-tight">
-            <div className="font-serif text-lg text-zinc-50">eXcalibur Posts Manager</div>
-            <div className="font-mono text-[11px] uppercase tracking-widest text-zinc-500">draft → refine → schedule</div>
+            <div className="font-serif text-lg text-zinc-50">
+              {isSnippet ? "eXcalibur Snippet" : "eXcalibur Posts Manager"}
+            </div>
+            <div className="font-mono text-[11px] uppercase tracking-widest text-zinc-500">
+              {isSnippet ? "reusable content" : "draft → refine → schedule"}
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-3">
           <div className="font-mono text-sm tabular-nums text-zinc-400">
             {charCount.toLocaleString()}<span className="ml-1 text-zinc-600">chars</span>
           </div>
-          <button
-            onClick={() => persist(false)}
-            disabled={saving}
-            className="flex items-center gap-1.5 rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:border-zinc-500 hover:text-zinc-100 disabled:opacity-40 transition-colors"
-          >
-            <Save className="h-4 w-4" /> {saving ? "Saving…" : "Save draft"}
-          </button>
-          <button
-            onClick={() => void handlePostNow()}
-            disabled={saving}
-            title="Post to X now and mark this post sent"
-            className="flex items-center gap-1.5 rounded-md bg-amber-400 px-3 py-1.5 text-sm font-medium text-zinc-950 hover:bg-amber-300 disabled:opacity-40 transition-colors"
-          >
-            <Share className="h-4 w-4" /> Post now
-          </button>
+          {isSnippet ? (
+            <button
+              onClick={() => void persistSnippet()}
+              disabled={saving}
+              className="flex items-center gap-1.5 rounded-md bg-amber-400 px-3 py-1.5 text-sm font-medium text-zinc-950 hover:bg-amber-300 disabled:opacity-40 transition-colors"
+            >
+              <Save className="h-4 w-4" /> {saving ? "Saving…" : "Save snippet"}
+            </button>
+          ) : (
+            <>
+              <button
+                onClick={() => persist(false)}
+                disabled={saving}
+                className="flex items-center gap-1.5 rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:border-zinc-500 hover:text-zinc-100 disabled:opacity-40 transition-colors"
+              >
+                <Save className="h-4 w-4" /> {saving ? "Saving…" : "Save draft"}
+              </button>
+              <button
+                onClick={() => void handlePostNow()}
+                disabled={saving}
+                title="Post to X now and mark this post sent"
+                className="flex items-center gap-1.5 rounded-md bg-amber-400 px-3 py-1.5 text-sm font-medium text-zinc-950 hover:bg-amber-300 disabled:opacity-40 transition-colors"
+              >
+                <Share className="h-4 w-4" /> Post now
+              </button>
+            </>
+          )}
           <button
             onClick={() => { setPreview((p) => !p); setSel(null); setClearPill(null); }}
             className="flex items-center gap-1.5 rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:border-zinc-500 hover:text-zinc-100 transition-colors"
@@ -447,6 +516,17 @@ export default function PostEditorPage() {
         <main className="relative flex flex-1 items-start justify-center overflow-y-auto px-4 py-10">
           <div className="pointer-events-none absolute inset-x-0 top-0 h-64 bg-gradient-to-b from-amber-400 to-transparent opacity-5" />
           <div className="relative w-full max-w-xl">
+            {isSnippet && !preview && (
+              <div className="mb-3">
+                <label className="mb-1.5 block font-mono text-[11px] uppercase tracking-widest text-zinc-500">Snippet name</label>
+                <input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="My CTA Footer"
+                  className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-amber-400"
+                />
+              </div>
+            )}
             <div className="mb-3 flex items-center justify-between">
               <span className="font-mono text-[11px] uppercase tracking-widest text-zinc-500">
                 {preview ? "as it appears on X" : "editing stage"}
@@ -502,12 +582,14 @@ export default function PostEditorPage() {
                     ))}
                   </div>
 
-                  <div className="mt-4 flex max-w-md items-center justify-between text-zinc-500">
-                    {([[MessageCircle, "24"], [Repeat2, "18"], [Heart, "212"], [BarChart2, "9.4K"]] as const).map(([Icon, n], i) => (
-                      <div key={i} className="flex items-center gap-1.5 text-[13px]"><Icon className="h-[18px] w-[18px]" /> {n}</div>
-                    ))}
-                    <div className="flex items-center gap-3"><Bookmark className="h-[18px] w-[18px]" /><Share className="h-[18px] w-[18px]" /></div>
-                  </div>
+                  {!isSnippet && (
+                    <div className="mt-4 flex max-w-md items-center justify-between text-zinc-500">
+                      {([[MessageCircle, "24"], [Repeat2, "18"], [Heart, "212"], [BarChart2, "9.4K"]] as const).map(([Icon, n], i) => (
+                        <div key={i} className="flex items-center gap-1.5 text-[13px]"><Icon className="h-[18px] w-[18px]" /> {n}</div>
+                      ))}
+                      <div className="flex items-center gap-3"><Bookmark className="h-[18px] w-[18px]" /><Share className="h-[18px] w-[18px]" /></div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -536,6 +618,14 @@ export default function PostEditorPage() {
                 ))}
               </div>
             )}
+            {isSnippet && !preview && (
+              <button
+                onClick={handleDiscard}
+                className="mt-3 text-xs text-zinc-600 hover:text-rose-400 transition-colors"
+              >
+                {isNew ? "Discard" : "Delete snippet"}
+              </button>
+            )}
             {hint && <div className="mt-3 font-mono text-xs text-amber-300">{hint}</div>}
             {error && (
               <div className="mt-3 flex flex-wrap items-center gap-3 rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
@@ -557,7 +647,7 @@ export default function PostEditorPage() {
         {!preview && (
           <aside className="w-full flex-none border-t border-zinc-800 lg:w-96 lg:border-l lg:border-t-0">
             <nav className="flex border-b border-zinc-800 font-mono text-xs uppercase tracking-widest">
-              {([["flags", `Flags ${openFlagCount ? `(${openFlagCount})` : ""}`], ["voice", "Voice"], ["snippets", "Snippets"], ["schedule", "Schedule"]] as const).map(([k, label]) => (
+              {railTabs.map(([k, label]) => (
                 <button key={k} onClick={() => setTab(k)} className={`flex-1 px-3 py-3 transition-colors ${tab === k ? "bg-zinc-900 text-amber-300" : "text-zinc-500 hover:text-zinc-300"}`}>{label}</button>
               ))}
             </nav>
@@ -582,7 +672,7 @@ export default function PostEditorPage() {
                   setSnippets={setSnippets}
                 />
               )}
-              {tab === "schedule" && (
+              {tab === "schedule" && !isSnippet && (
                 <ScheduleTab
                   publishAt={publishAt} setPublishAt={setPublishAt}
                   freq={freq} setFreq={setFreq}
@@ -787,7 +877,6 @@ function FlagsTab({
   );
 }
 
-// ── voice tab ─────────────────────────────────────────────────────────────
 // ── snippets tab ────────────────────────────────────────────────────────────
 function SnippetsTab({
   currentText, onInsert, snippets, setSnippets,

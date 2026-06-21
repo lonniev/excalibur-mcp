@@ -5,11 +5,14 @@ drops into the editor. Every statement carries ``npub = $1`` so a patron only
 ever touches their own snippets — there is no cross-npub read or write here.
 Business rules (validation) live in the tool layer; these are thin SQL.
 
-The Neon HTTP SQL API returns ``rowCount`` (capital C), not ``rowcount``.
+A snippet carries the same ``doc`` block/flag document a post does, so the
+editor is identical for both. ``doc`` is JSONB; the Neon HTTP SQL API returns
+``rowCount`` (capital C), not ``rowcount``.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -18,26 +21,82 @@ from excalibur_mcp.db.neon import execute, fetch, fetchrow
 logger = logging.getLogger(__name__)
 
 # ``body`` is the column; the wire/tool contract calls it ``text``.
-_COLS = "id::text AS id, name, body AS text, favorite, created_at, updated_at"
+_COLS = "id::text AS id, name, body AS text, doc, favorite, created_at, updated_at"
+
+# Whitelisted sort keys → column expressions. Caller input only selects a key,
+# so an unknown value falls back to a safe default rather than reaching the
+# query as raw SQL (same safety posture as optionality-mcp's journal list).
+_SORT_MAP: dict[str, str] = {
+    "created": "created_at",
+    "updated": "updated_at",
+    "name": "lower(name)",
+    "favorite": "favorite",
+}
 
 
-async def list_snippets(npub: str) -> list[dict[str, Any]]:
-    """All of a patron's snippets — favorites first, then newest."""
-    return await fetch(
+async def list_snippets(
+    npub: str,
+    sort_col: str = "favorite",
+    sort_dir: str = "desc",
+    page: int = 0,
+    page_size: int = 25,
+) -> dict[str, Any]:
+    """Server-side sorted, offset-paginated snippet list for the owner.
+
+    Returns FULL rows (incl. ``text`` and ``doc``) — snippets are small and the
+    editor's favorite chiclets need the full text to insert. Shape:
+    ``{snippets, total, page, page_size}``. ORDER BY comes from the fixed
+    ``_SORT_MAP`` whitelist; ``favorite`` always carries ``created_at DESC`` as
+    a stable tiebreak so favorites stay newest-first within the group.
+    """
+    psize = max(1, min(200, page_size))
+    pg = max(0, page)
+    offset = pg * psize
+
+    sort_expr = _SORT_MAP.get(sort_col, "favorite")
+    row_dir = "DESC" if str(sort_dir).lower() == "desc" else "ASC"
+
+    total_row = await fetchrow(
+        "SELECT COUNT(*) AS n FROM snippets WHERE npub = $1", npub
+    )
+    total = int(total_row["n"]) if total_row and total_row.get("n") is not None else 0
+
+    snippets = await fetch(
         f"SELECT {_COLS} FROM snippets WHERE npub = $1 "
-        "ORDER BY favorite DESC, created_at DESC",
+        f"ORDER BY {sort_expr} {row_dir}, created_at DESC "
+        "LIMIT $2 OFFSET $3",
         npub,
+        psize,
+        offset,
+    )
+    return {"snippets": snippets, "total": total, "page": pg, "page_size": psize}
+
+
+async def get_snippet(npub: str, snippet_id: str) -> dict[str, Any] | None:
+    """Full snippet row, scoped to the owner (mirror of posts.get_post)."""
+    return await fetchrow(
+        f"SELECT {_COLS} FROM snippets WHERE id = $2::uuid AND npub = $1",
+        npub,
+        snippet_id,
     )
 
 
 async def create_snippet(
-    npub: str, name: str, text: str, favorite: bool
+    npub: str,
+    name: str,
+    text: str,
+    favorite: bool,
+    doc: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Insert a new snippet; returns the stored row."""
     row = await fetchrow(
-        f"INSERT INTO snippets (npub, name, body, favorite) "
-        f"VALUES ($1, $2, $3, $4) RETURNING {_COLS}",
-        npub, name, text, favorite,
+        f"INSERT INTO snippets (npub, name, body, favorite, doc) "
+        f"VALUES ($1, $2, $3, $4, $5::jsonb) RETURNING {_COLS}",
+        npub,
+        name,
+        text,
+        favorite,
+        json.dumps(doc) if doc is not None else None,
     )
     assert row is not None  # INSERT … RETURNING always yields a row
     return row
@@ -50,6 +109,7 @@ async def update_snippet(
     name: str | None = None,
     text: str | None = None,
     favorite: bool | None = None,
+    doc: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Patch the provided fields of one owner-scoped snippet.
 
@@ -67,6 +127,9 @@ async def update_snippet(
     if favorite is not None:
         args.append(favorite)
         sets.append(f"favorite = ${len(args)}")
+    if doc is not None:
+        args.append(json.dumps(doc))
+        sets.append(f"doc = ${len(args)}::jsonb")
     if not sets:
         # Nothing to change — return the current row as-is.
         return await fetchrow(

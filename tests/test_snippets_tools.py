@@ -90,9 +90,58 @@ async def test_delete_missing_row_is_not_found():
 
 
 @pytest.mark.asyncio
-async def test_list_passes_through():
-    rows = [{"id": SID, "name": "Footer", "text": "thanks", "favorite": True}]
+async def test_list_passes_paged_shape_through():
+    paged = {
+        "snippets": [{"id": SID, "name": "Footer", "text": "thanks", "favorite": True}],
+        "total": 1, "page": 0, "page_size": 25,
+    }
     with patch.object(snippets_tools.snippets_db, "list_snippets",
-                      new=AsyncMock(return_value=rows)):
-        out = await snippets_tools.list_(NPUB)
-    assert out == {"success": True, "snippets": rows}
+                      new=AsyncMock(return_value=paged)) as lst:
+        out = await snippets_tools.list_(NPUB, sort_col="name", sort_dir="asc", page=2)
+    lst.assert_awaited_once_with(NPUB, sort_col="name", sort_dir="asc", page=2, page_size=25)
+    assert out == {"success": True, **paged}
+
+
+# -- doc handling -----------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_save_rejects_non_object_doc():
+    with pytest.raises(ValueError):
+        await snippets_tools.save(NPUB, name="Footer", text="hi", doc="not-an-object")
+
+
+@pytest.mark.asyncio
+async def test_save_threads_doc_to_create():
+    doc = {"blocks": [{"text": "hi", "flags": []}]}
+    row = {"id": SID, "name": "Footer", "text": "hi", "favorite": False, "doc": doc}
+    with patch.object(snippets_tools.snippets_db, "create_snippet",
+                      new=AsyncMock(return_value=row)) as create:
+        out = await snippets_tools.save(NPUB, name="Footer", text="hi", doc=doc)
+    create.assert_awaited_once_with(NPUB, "Footer", "hi", False, doc=doc)
+    assert out["snippet"]["doc"] == doc
+
+
+# -- get --------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_get_rejects_bad_uuid():
+    with pytest.raises(ValueError):
+        await snippets_tools.get(NPUB, snippet_id="not-a-uuid")
+
+
+@pytest.mark.asyncio
+async def test_get_missing_row_is_not_found():
+    with patch.object(snippets_tools.snippets_db, "get_snippet",
+                      new=AsyncMock(return_value=None)):
+        out = await snippets_tools.get(NPUB, snippet_id=SID)
+    assert out["success"] is False
+    assert out["error_code"] == "snippet_not_found"
+
+
+@pytest.mark.asyncio
+async def test_get_returns_row():
+    row = {"id": SID, "name": "Footer", "text": "thanks", "favorite": True, "doc": None}
+    with patch.object(snippets_tools.snippets_db, "get_snippet",
+                      new=AsyncMock(return_value=row)):
+        out = await snippets_tools.get(NPUB, snippet_id=SID)
+    assert out == {"success": True, "snippet": row}

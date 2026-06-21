@@ -96,15 +96,20 @@ async def _ensure_domain_schema(vault: Any) -> None:
         "WHERE status = 'scheduled'",
 
         # Reusable post snippets (openings/footers/CTAs), npub-scoped. Favorites
-        # surface as one-click chiclets in the editor.
+        # surface as one-click chiclets in the editor. ``doc`` carries the same
+        # block/flag document a post does, so the editor is identical for both.
         f"CREATE TABLE IF NOT EXISTS {t('snippets')} ("
         "id UUID PRIMARY KEY DEFAULT gen_random_uuid(), "
         "npub TEXT NOT NULL, "
         "name TEXT NOT NULL, "
         "body TEXT NOT NULL, "
+        "doc JSONB, "
         "favorite BOOLEAN NOT NULL DEFAULT FALSE, "
         "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), "
         "updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
+
+        # Idempotent column add for snippets tables created before doc existed.
+        f"ALTER TABLE {t('snippets')} ADD COLUMN IF NOT EXISTS doc JSONB",
 
         f"CREATE INDEX IF NOT EXISTS snippets_owner_idx ON {t('snippets')} "
         "(npub, favorite DESC, created_at DESC)",

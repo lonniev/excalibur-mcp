@@ -13,7 +13,8 @@ import Hero from "./components/Hero";
 import NpubGate from "./components/NpubGate";
 import DebugPanel from "./components/DebugPanel";
 import PostsPage from "./components/PostsPage";
-import PostEditorPage from "./components/PostEditorPage";
+import SnippetsPage from "./components/SnippetsPage";
+import ContentEditorPage from "./components/ContentEditorPage";
 import WalletPage from "./components/WalletPage";
 import ProfilePage from "./components/ProfilePage";
 
@@ -64,8 +65,11 @@ export default function App() {
             <Routes>
               <Route element={<Layout />}>
                 <Route index element={<PostsPage />} />
-                <Route path="new" element={<PostEditorPage />} />
-                <Route path="post/:postId" element={<PostEditorPage />} />
+                <Route path="new" element={<ContentEditorPage kind="post" />} />
+                <Route path="post/:postId" element={<ContentEditorPage kind="post" />} />
+                <Route path="snippets" element={<SnippetsPage />} />
+                <Route path="snippets/new" element={<ContentEditorPage kind="snippet" />} />
+                <Route path="snippet/:snippetId" element={<ContentEditorPage kind="snippet" />} />
                 <Route path="wallet" element={<WalletPage />} />
                 <Route path="profile" element={<ProfilePage />} />
                 <Route path="*" element={<Navigate to="/" replace />} />

@@ -5,6 +5,32 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-06-21
+
+### Added — Snippets are a first-class peer of Posts
+
+- **Snippets are now editable like Posts.** A snippet carries the same `doc`
+  block/flag document a post does (new idempotent `doc JSONB` column on
+  `snippets`), so the editor — emoji picker, divider, Unicode formatting,
+  flag→refine — is identical for both. New `get_snippet(snippet_id)` tool
+  (free, owner-scoped) reads one snippet's full row; `save_snippet` accepts an
+  optional `doc`.
+- **Snippets have their own page + nav entry**, peer to Posts. Both Posts and
+  Snippets render as sortable, paginated tables; the snippet editor reuses the
+  shared block editor (no Post-now/Schedule), and the editor's insert-snippet /
+  save-block-as-snippet affordances work while editing either kind.
+
+### Changed — list tools adopt the Journal offset/sort pagination model
+
+- **BREAKING: `list_posts` and `list_snippets` switched from cursor to
+  server-side sort + offset pagination** (the Optionality Journal model). Both
+  now take `sort_col` / `sort_dir` / `page` / `page_size` and return
+  `{… , total, page, page_size}`. The opaque-cursor codec is removed. Sort keys
+  come from a fixed whitelist (`list_posts`: `created|updated|status|scheduled`;
+  `list_snippets`: `favorite|created|updated|name`) — caller input only selects
+  a key, never reaching the query as raw SQL. `list_snippets` returns full rows
+  (incl. `doc`) so editor chiclets can insert text directly.
+
 ## [0.13.0] — 2026-06-20
 
 ### Added — every send stamps last_sent_at + stores the tweet URL

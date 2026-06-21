@@ -459,18 +459,29 @@ export interface PostSummary {
   tweet_url?: string | null;
 }
 
+export type SortDir = "asc" | "desc";
+
 export interface ListPostsResult {
   posts?: PostSummary[];
-  next_cursor?: string | null;
+  total?: number;
+  page?: number;
+  page_size?: number;
   error?: string;
 }
 
+/// Server-side sorted + offset-paginated post list (the Journal-tab model).
+/// `sortCol` ∈ created|updated|status|scheduled. Returns `{posts, total, page,
+/// page_size}`.
 export async function listPosts(
-  opts: { status?: string; limit?: number; cursor?: string } = {},
+  opts: { status?: string; sortCol?: string; sortDir?: SortDir; page?: number; pageSize?: number } = {},
 ): Promise<ListPostsResult> {
-  const args: Record<string, unknown> = { limit: opts.limit ?? 25 };
+  const args: Record<string, unknown> = {
+    sort_col: opts.sortCol ?? "created",
+    sort_dir: opts.sortDir ?? "desc",
+    page: opts.page ?? 0,
+    page_size: opts.pageSize ?? 25,
+  };
   if (opts.status) args.status = opts.status;
-  if (opts.cursor) args.cursor = opts.cursor;
   return callTool<ListPostsResult>("list_posts", args);
 }
 
@@ -679,17 +690,27 @@ export interface SnippetRow {
   id: string;
   name: string;
   text: string;
+  doc?: unknown;
   favorite: boolean;
   created_at?: string;
   updated_at?: string;
 }
 
-interface ListSnippetsResult {
+export interface ListSnippetsResult {
   success?: boolean;
   snippets?: SnippetRow[];
+  total?: number;
+  page?: number;
+  page_size?: number;
   error?: string;
 }
 interface SaveSnippetResult {
+  success?: boolean;
+  snippet?: SnippetRow;
+  error?: string;
+  error_code?: string;
+}
+interface GetSnippetResult {
   success?: boolean;
   snippet?: SnippetRow;
   error?: string;
@@ -702,23 +723,41 @@ interface DeleteSnippetResult {
   error?: string;
 }
 
-/// List the logged-in npub's saved snippets (favorites first). Owner-scoped.
-export async function listSnippets(): Promise<SnippetRow[]> {
-  const r = await callTool<ListSnippetsResult>("list_snippets", {});
-  return r.snippets ?? [];
+/// Server-side sorted + offset-paginated snippet list (the Journal-tab model).
+/// `sortCol` ∈ favorite|created|updated|name. Returns full rows (incl. `doc`)
+/// so editor chiclets can insert the text directly.
+export async function listSnippets(
+  opts: { sortCol?: string; sortDir?: SortDir; page?: number; pageSize?: number } = {},
+): Promise<ListSnippetsResult> {
+  return callTool<ListSnippetsResult>("list_snippets", {
+    sort_col: opts.sortCol ?? "favorite",
+    sort_dir: opts.sortDir ?? "desc",
+    page: opts.page ?? 0,
+    page_size: opts.pageSize ?? 25,
+  });
+}
+
+/// Read one snippet by id (full row incl. `doc`) — used when the editor opens
+/// `/snippet/:id`. Mirrors `getPost`.
+export async function getSnippet(id: string): Promise<SnippetRow | null> {
+  const r = await callTool<GetSnippetResult>("get_snippet", { snippet_id: id });
+  return r.snippet ?? null;
 }
 
 /// Create (omit id) or update (pass id) a snippet; returns the stored row.
+/// `doc` is the same block/flag document a post carries.
 export async function saveSnippet(opts: {
   id?: string;
   name?: string;
   text?: string;
   favorite?: boolean;
+  doc?: unknown;
 }): Promise<SnippetRow | null> {
   const args: Record<string, unknown> = { favorite: opts.favorite ?? false };
   if (opts.id) args.snippet_id = opts.id;
   if (opts.name !== undefined) args.name = opts.name;
   if (opts.text !== undefined) args.text = opts.text;
+  if (opts.doc !== undefined) args.doc = opts.doc;
   const r = await callTool<SaveSnippetResult>("save_snippet", args);
   return r.snippet ?? null;
 }
