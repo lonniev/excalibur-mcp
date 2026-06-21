@@ -6,7 +6,6 @@ import {
   Sparkles, Flag, GripVertical, Pencil, Trash2, Plus, Calendar, Repeat,
   Octagon, Check, ChevronUp, ChevronDown, Eye, EyeOff,
   Wand2, Loader2, Swords, Save, Bold, Italic, Code, Smile, Star, Minus,
-  ExternalLink,
 } from "lucide-react";
 import { useSession } from "../App";
 import Avatar from "./Avatar";
@@ -88,6 +87,9 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   // The tweet URL of a post that has already gone out — hydrated on load and on
   // a fresh Post-now — so a Sent post always shows its actual X link.
   const [tweetUrl, setTweetUrl] = useState<string | null>(null);
+  // Peek at the posted tweet in a modal (no navigation), distinct from postedUrl
+  // (the post-now flow whose modal returns to the list on close).
+  const [peekUrl, setPeekUrl] = useState<string | null>(null);
 
   // ── load ────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -422,6 +424,9 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
           onClose={() => { setPostedUrl(null); nav(listPath); }}
         />
       )}
+      {peekUrl !== null && (
+        <TweetPreviewModal url={peekUrl} text={composed} onClose={() => setPeekUrl(null)} />
+      )}
       {sel && !preview && (
         <button
           onClick={flagSelection}
@@ -497,20 +502,19 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
         </div>
       </header>
 
-      {/* Posted-to-X banner: a Sent post always shows its actual X link. */}
+      {/* Posted-to-X banner: a Sent post always shows its actual X link; clicking
+          peeks at the tweet in a modal (no jumping out of the site). */}
       {!isSnippet && tweetUrl && (
         <div className="flex items-center gap-2 border-b border-zinc-800 bg-green-500/10 px-5 py-2 text-sm">
           <Check className="h-4 w-4 shrink-0 text-green-400" />
           <span className="text-green-400">Posted to X:</span>
-          <a
-            href={tweetUrl}
-            target="_blank"
-            rel="noopener noreferrer"
+          <button
+            onClick={() => setPeekUrl(tweetUrl)}
             className="inline-flex items-center gap-1 truncate font-mono text-xs text-sky-400 hover:text-sky-300 hover:underline"
-            title={tweetUrl}
+            title={`Peek at ${tweetUrl}`}
           >
-            {tweetUrl} <ExternalLink className="h-3.5 w-3.5 shrink-0" />
-          </a>
+            {tweetUrl} <Eye className="h-3.5 w-3.5 shrink-0" />
+          </button>
         </div>
       )}
 
