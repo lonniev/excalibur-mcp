@@ -204,14 +204,25 @@ export default function PostsPage() {
                   </td>
                   <td className="px-3 py-2.5 align-top max-w-md">
                     <p className="truncate text-stone-800 dark:text-zinc-200">{p.excerpt || "(empty draft)"}</p>
-                    {p.last_sent_at && (
+                    {p.last_sent_at && (p.tweet_url ? (
+                      <a
+                        href={p.tweet_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="mt-0.5 inline-flex items-center gap-1 text-[11px] text-green-600 hover:underline dark:text-green-400"
+                        title={`Posted to X at ${fmt(p.last_sent_at)} — open ${p.tweet_url}`}
+                      >
+                        ✓ posted {fmt(p.last_sent_at)} ↗
+                      </a>
+                    ) : (
                       <p
                         className="mt-0.5 text-[11px] text-green-600 dark:text-green-400"
-                        title={`Last posted to X by the scheduler at ${fmt(p.last_sent_at)}`}
+                        title={`Posted to X at ${fmt(p.last_sent_at)}`}
                       >
-                        ✓ last posted {fmt(p.last_sent_at)}
+                        ✓ posted {fmt(p.last_sent_at)}
                       </p>
-                    )}
+                    ))}
                   </td>
                   <td className="px-3 py-2.5 align-top text-xs text-stone-400 dark:text-zinc-500 whitespace-nowrap">
                     {p.publish_at ? fmt(p.publish_at) : "—"}
