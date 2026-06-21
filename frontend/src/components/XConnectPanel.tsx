@@ -8,7 +8,7 @@
 
 import { useEffect, useState } from "react";
 import { Twitter, ExternalLink, CheckCircle2, Loader2, RefreshCw } from "lucide-react";
-import { beginOauth, checkOauthStatus, getXConnection } from "../lib/mcp";
+import { beginOauth, checkOauthStatus, getXConnection, getXProfile } from "../lib/mcp";
 
 const card = "rounded-xl border border-stone-200 dark:border-zinc-800 bg-white dark:bg-zinc-900";
 
@@ -21,12 +21,19 @@ export default function XConnectPanel() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
+  const [handle, setHandle] = useState("");
 
   async function refreshConnection() {
     const u = await getXConnection();
     if (u?.has_access_token) {
       setExpiresInSec(u.access_token_expires_in_seconds ?? null);
       setStage("connected");
+      try {
+        const p = await getXProfile();
+        if (p.username) setHandle(`@${p.username}`);
+      } catch {
+        /* handle is a nicety — ignore */
+      }
     } else {
       setStage((s) => (s === "authorizing" ? "authorizing" : "disconnected"));
     }
@@ -88,7 +95,7 @@ export default function XConnectPanel() {
         <span className="text-sm font-medium">X account</span>
         {stage === "connected" && (
           <span className="ml-auto inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
-            <CheckCircle2 className="h-3.5 w-3.5" /> Connected
+            <CheckCircle2 className="h-3.5 w-3.5" /> Connected{handle && ` · ${handle}`}
           </span>
         )}
       </div>
@@ -153,7 +160,7 @@ export default function XConnectPanel() {
       {stage === "connected" && (
         <>
           <p className="mb-3 text-xs leading-relaxed text-stone-500 dark:text-zinc-400">
-            eXcalibur can post to your X account.
+            eXcalibur can post to your X account{handle ? ` as ${handle}` : ""}.
             {expiresInSec != null && expiresInSec > 0 && ` Access renews in about ${fmtDuration(expiresInSec)}.`}
           </p>
           <button

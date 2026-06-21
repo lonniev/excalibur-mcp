@@ -219,3 +219,35 @@ class XClient:
         result = await self.post_tweet(text, media_ids=[media_id])
         result["media_id"] = media_id
         return result
+
+    async def get_me(self) -> dict:
+        """Fetch the authenticated user's X profile (v2 ``/users/me``).
+
+        Returns ``{id, username, name, profile_image_url}`` — used to show the
+        real @handle on the editor's tweet-card preview."""
+        url = f"{X_API_BASE}/users/me"
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                url,
+                params={"user.fields": "profile_image_url,name,username"},
+                headers={"Authorization": self._auth_header()},
+            )
+
+        if response.status_code in (401, 403):
+            body = response.json()
+            detail = body.get("detail", body.get("title", "Authentication failed"))
+            raise XAPIError(response.status_code, detail, body)
+        if response.status_code != 200:
+            try:
+                body = response.json()
+            except Exception:
+                body = {"raw": response.text}
+            raise XAPIError(response.status_code, f"Unexpected response: {response.status_code}", body)
+
+        data = response.json().get("data", {})
+        return {
+            "id": data.get("id", ""),
+            "username": data.get("username", ""),
+            "name": data.get("name", ""),
+            "profile_image_url": data.get("profile_image_url", ""),
+        }

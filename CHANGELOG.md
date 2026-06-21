@@ -5,6 +5,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0] — 2026-06-21
+
+### Added — show the connected X @handle (personalization)
+
+- New free, proof-gated `get_x_profile` tool calls X's `/users/me` with the
+  patron's vaulted OAuth token and returns `{connected, username, name,
+  profile_image_url}` (`x_client.get_me`).
+- FE: the editor tweet-card preview now shows the author's real X **@handle**,
+  display name, and avatar (cached per npub via `lib/xProfile.ts`, revalidated on
+  open; falls back to the placeholder when X isn't connected). The Profile page's
+  X panel shows "Connected · @handle".
+
 ## [0.18.0] — 2026-06-21
 
 ### Added — server-side regex + date filtering for Posts and Snippets

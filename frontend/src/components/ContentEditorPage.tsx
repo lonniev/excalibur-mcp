@@ -10,6 +10,8 @@ import {
 import { useSession } from "../App";
 import Avatar from "./Avatar";
 import { avatarFor } from "../lib/avatar";
+import { cachedXProfile, refreshXProfile } from "../lib/xProfile";
+import type { XProfile } from "../lib/mcp";
 import { styleText, type UnicodeStyle } from "../lib/unicodeFormat";
 import { addSnippet, loadSnippets, removeSnippet, toggleFavorite, type Snippet } from "../lib/snippets";
 import QuoteScroller from "./QuoteScroller";
@@ -99,6 +101,8 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   // Peek at the posted tweet in a modal (no navigation), distinct from postedUrl
   // (the post-now flow whose modal returns to the list on close).
   const [peekUrl, setPeekUrl] = useState<string | null>(null);
+  // Connected X identity for the tweet-card preview (cached, revalidated on open).
+  const [xProfile, setXProfile] = useState<XProfile | null>(() => (npub ? cachedXProfile(npub) : null));
 
   // ── load ────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -136,6 +140,14 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
       .catch((e) => { if (live) { setError((e as Error).message); setLoading(false); } });
     return () => { live = false; };
   }, [id, isNew, isSnippet]);
+
+  // Revalidate the connected X identity for the preview card (best-effort).
+  useEffect(() => {
+    if (isSnippet || !npub) return;
+    let live = true;
+    refreshXProfile(npub).then((p) => { if (live && p) setXProfile(p); });
+    return () => { live = false; };
+  }, [npub, isSnippet]);
 
   useEffect(() => { localStorage.setItem("excalibur:voice", voice); }, [voice]);
   useEffect(() => { localStorage.setItem("excalibur:bans", JSON.stringify(bans)); }, [bans]);
@@ -423,7 +435,11 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   }
 
   const openFlagCount = allFlags.length;
-  const handle = npub ? `@${npub.slice(4, 13)}…` : "@excalibur";
+  const handle = xProfile?.username
+    ? `@${xProfile.username}`
+    : npub ? `@${npub.slice(4, 13)}…` : "@excalibur";
+  const displayName = xProfile?.name || "eXcalibur";
+  const cardAvatar = xProfile?.profile_image_url || avatarFor(npub);
   const railTabs = isSnippet
     ? ([["flags", `Flags ${openFlagCount ? `(${openFlagCount})` : ""}`], ["voice", "Voice"], ["snippets", "Snippets"]] as const)
     : ([["flags", `Flags ${openFlagCount ? `(${openFlagCount})` : ""}`], ["voice", "Voice"], ["snippets", "Snippets"], ["schedule", "Schedule"]] as const);
@@ -560,12 +576,12 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
 
             <div className={`rounded-2xl bg-white p-4 text-zinc-900 shadow-2xl transition-all ${preview ? "ring-1 ring-zinc-700" : "ring-2 ring-amber-400"}`}>
               <div className="flex gap-3">
-                <Avatar value={avatarFor(npub)} size={44} className="flex-none" />
+                <Avatar value={cardAvatar} size={44} className="flex-none" />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1 text-[15px]">
-                    <span className="font-bold text-zinc-900">eXcalibur</span>
-                    <BadgeCheck className="h-4 w-4 text-amber-500" />
-                    <span className="text-zinc-500">{handle} · now</span>
+                    <span className="truncate font-bold text-zinc-900">{displayName}</span>
+                    <BadgeCheck className="h-4 w-4 flex-none text-amber-500" />
+                    <span className="truncate text-zinc-500">{handle} · now</span>
                   </div>
                   <div className="mt-1 space-y-3">
                     {blocks.map((b, idx) => (
