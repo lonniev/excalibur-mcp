@@ -106,7 +106,7 @@ function TopBar() {
     <header className="border-b border-stone-200 dark:border-zinc-800 px-4 py-3 flex items-center gap-2">
       <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
       <span className="font-semibold tracking-wide">eXcalibur</span>
-      <span className="text-sm text-stone-400 dark:text-zinc-500">Editorial</span>
+      <span className="text-sm text-stone-400 dark:text-zinc-500">Posts Manager</span>
     </header>
   );
 }
@@ -115,7 +115,7 @@ function Footer({ status }: { status: ServiceStatus | null }) {
   return (
     <footer className="border-t border-stone-100 px-4 py-3 text-center text-xs text-stone-400 dark:border-zinc-900 dark:text-zinc-600 space-y-0.5">
       <div>
-        eXcalibur Editorial v{__APP_VERSION__} · {__BUILD_COMMIT__}
+        eXcalibur Posts Manager v{__APP_VERSION__} · {__BUILD_COMMIT__}
         {status?.version && ` · MCP ${status.version}`}
         {status?.tollbooth_dpyc_version && ` · SDK ${status.tollbooth_dpyc_version}`}
       </div>

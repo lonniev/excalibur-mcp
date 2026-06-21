@@ -388,7 +388,7 @@ export default function PostEditorPage() {
             <Swords className="h-5 w-5" />
           </button>
           <div className="leading-tight">
-            <div className="font-serif text-lg text-zinc-50">eXcalibur Editorial</div>
+            <div className="font-serif text-lg text-zinc-50">eXcalibur Posts Manager</div>
             <div className="font-mono text-[11px] uppercase tracking-widest text-zinc-500">draft → refine → schedule</div>
           </div>
         </div>

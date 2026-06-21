@@ -1,15 +1,17 @@
-# eXcalibur Editorial
+# eXcalibur Posts Manager
 
-> A composer for X (Twitter) posts, monetized per call in Bitcoin Lightning.
-> Write block-structured drafts, refine flagged passages with Claude
-> server-side, schedule and repost, and keep a reusable snippet library —
-> then publish to X. Identity is a Nostr keypair (npub); usage is metered in
-> satoshis — no account, no email, no subscription, no KYC.
+> An AI-assisted Content Management System for your X (Twitter) posts, built on
+> eXcalibur MCP — the monetized MCP for X posting. Write block-structured
+> drafts, refine flagged passages with Claude server-side, schedule and repost,
+> and keep a reusable snippet library — then publish to X. Identity is a Nostr
+> keypair (npub); usage is metered in Bitcoin Lightning satoshis — no account,
+> no email, no subscription, no KYC.
 
-eXcalibur is a single-page web app backed by an MCP (Model Context Protocol)
-server. Humans use the web UI; AI agents can call the same MCP tools directly.
-The operator holds the X API credentials in an encrypted vault; patrons pay
-per published post rather than supplying their own keys.
+eXcalibur Posts Manager is a single-page web app (the CMS) backed by eXcalibur
+MCP, a Model Context Protocol server. Humans use the web UI; AI agents can call
+the same MCP tools directly. The operator holds the X API credentials in an
+encrypted vault; patrons pay per published post rather than supplying their own
+keys.
 
 ## What is on this site
 
