@@ -45,9 +45,37 @@ def _clean_body(text: str) -> str:
     return text
 
 
-async def list_(npub: str) -> dict[str, Any]:
-    rows = await snippets_db.list_snippets(npub)
-    return {"success": True, "snippets": rows}
+def _clean_doc(doc: Any) -> dict[str, Any] | None:
+    """A snippet's block/flag document is optional, but must be an object when
+    present — tool input is treated as adversarial."""
+    if doc is None:
+        return None
+    if not isinstance(doc, dict):
+        raise ValueError("doc must be an object or null")
+    return doc
+
+
+async def list_(
+    npub: str,
+    *,
+    sort_col: str = "favorite",
+    sort_dir: str = "desc",
+    page: int = 0,
+    page_size: int = 25,
+) -> dict[str, Any]:
+    out = await snippets_db.list_snippets(
+        npub, sort_col=sort_col, sort_dir=sort_dir, page=page, page_size=page_size,
+    )
+    return {"success": True, **out}
+
+
+async def get(npub: str, *, snippet_id: str) -> dict[str, Any]:
+    sid = _require_uuid(snippet_id)
+    row = await snippets_db.get_snippet(npub, sid)
+    if row is None:
+        return {"success": False, "error_code": "snippet_not_found",
+                "message": "No snippet with that id for this npub."}
+    return {"success": True, "snippet": row}
 
 
 async def save(
@@ -57,8 +85,10 @@ async def save(
     name: str = "",
     text: str = "",
     favorite: bool = False,
+    doc: Any = None,
 ) -> dict[str, Any]:
     """Upsert: create when ``snippet_id`` is empty, else patch in place."""
+    clean_doc = _clean_doc(doc)
     if snippet_id:
         sid = _require_uuid(snippet_id)
         row = await snippets_db.update_snippet(
@@ -66,6 +96,7 @@ async def save(
             name=_clean_name(name) if name else None,
             text=_clean_body(text) if text else None,
             favorite=favorite,
+            doc=clean_doc,
         )
         if row is None:
             return {"success": False, "error_code": "snippet_not_found",
@@ -73,7 +104,7 @@ async def save(
         return {"success": True, "snippet": row}
 
     row = await snippets_db.create_snippet(
-        npub, _clean_name(name), _clean_body(text), bool(favorite)
+        npub, _clean_name(name), _clean_body(text), bool(favorite), doc=clean_doc,
     )
     return {"success": True, "snippet": row}
 

@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { deletePost, getPost, listPosts, postTweet, type PostSummary } from "../lib/mcp";
+import {
+  deletePost, getPost, listPosts, postTweet,
+  type PostSummary, type SortDir,
+} from "../lib/mcp";
 import TweetPreviewModal from "./TweetPreviewModal";
+import { PageControls, SortHeader, TableShell } from "./PagedTable";
 
 const STATUS_FILTERS = ["", "draft", "scheduled", "sent", "archived"] as const;
+const PAGE_SIZE = 25;
 
 const statusStyle: Record<string, string> = {
   draft: "bg-stone-100 text-stone-600 dark:bg-zinc-800 dark:text-zinc-300",
@@ -15,7 +20,11 @@ const statusStyle: Record<string, string> = {
 export default function PostsPage() {
   const nav = useNavigate();
   const [posts, setPosts] = useState<PostSummary[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(0);
   const [filter, setFilter] = useState("");
+  const [sortCol, setSortCol] = useState("created");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -26,19 +35,33 @@ export default function PostsPage() {
     setLoading(true);
     setError(null);
     try {
-      const r = await listPosts({ status: filter || undefined, limit: 50 });
+      const r = await listPosts({
+        status: filter || undefined, sortCol, sortDir, page, pageSize: PAGE_SIZE,
+      });
       if (r.error) setError(r.error);
       setPosts(r.posts ?? []);
+      setTotal(r.total ?? 0);
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setLoading(false);
     }
-  }, [filter]);
+  }, [filter, sortCol, sortDir, page]);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  function onSort(col: string, dir: SortDir) {
+    setSortCol(col);
+    setSortDir(dir);
+    setPage(0);
+  }
+
+  function onFilter(s: string) {
+    setFilter(s);
+    setPage(0);
+  }
 
   async function handleDelete(e: React.MouseEvent, id: string, hard: boolean) {
     e.stopPropagation();
@@ -73,8 +96,10 @@ export default function PostsPage() {
     }
   }
 
+  const action = "hover:text-amber-600 dark:hover:text-amber-400 cursor-pointer";
+
   return (
-    <div className="max-w-3xl mx-auto px-4 py-6">
+    <div className="max-w-4xl mx-auto px-4 py-6">
       {preview && (
         <TweetPreviewModal url={preview.url} text={preview.text} onClose={() => setPreview(null)} />
       )}
@@ -92,7 +117,7 @@ export default function PostsPage() {
         {STATUS_FILTERS.map((s) => (
           <button
             key={s || "all"}
-            onClick={() => setFilter(s)}
+            onClick={() => onFilter(s)}
             className={`px-2.5 py-1 rounded-lg capitalize transition-colors ${
               filter === s
                 ? "bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-400"
@@ -131,66 +156,71 @@ export default function PostsPage() {
           </Link>
         </div>
       ) : (
-        <ul className="space-y-2">
-          {posts.map((p) => (
-            <li key={p.post_id}>
-              <button
-                onClick={() => nav(`/post/${p.post_id}`)}
-                className="w-full text-left rounded-lg border border-stone-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-3 flex items-start gap-3 hover:border-amber-300 dark:hover:border-amber-500/40 transition-colors"
-              >
-                <span className={`text-xs px-2 py-0.5 rounded-full shrink-0 capitalize ${statusStyle[p.status] ?? statusStyle.draft}`}>
-                  {p.status}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm truncate">{p.excerpt || "(empty draft)"}</p>
-                  <p className="text-xs text-stone-400 dark:text-zinc-500 mt-0.5">
-                    {p.publish_at ? `scheduled → ${fmt(p.publish_at)}` : p.updated_at ? `edited ${fmt(p.updated_at)}` : ""}
-                  </p>
-                </div>
-                <span className="flex gap-2 shrink-0 text-xs text-stone-400 dark:text-zinc-500">
-                  {p.status === "sent" && p.tweet_url && (
-                    <span
-                      role="button"
-                      onClick={(e) => { e.stopPropagation(); e.preventDefault(); setPreview({ url: p.tweet_url!, text: p.excerpt || "" }); }}
-                      className="hover:text-sky-600 dark:hover:text-sky-400"
-                      title="Preview on X"
-                    >
-                      preview
+        <>
+          <TableShell>
+            <thead className="border-b border-stone-200 dark:border-zinc-800">
+              <tr>
+                <SortHeader label="Status" col="status" activeCol={sortCol} dir={sortDir} onSort={onSort} />
+                <SortHeader label="Post" activeCol={sortCol} dir={sortDir} onSort={onSort} />
+                <SortHeader label="Scheduled" col="scheduled" activeCol={sortCol} dir={sortDir} onSort={onSort} />
+                <SortHeader label="Edited" col="updated" activeCol={sortCol} dir={sortDir} onSort={onSort} />
+                <SortHeader label="" activeCol={sortCol} dir={sortDir} onSort={onSort} className="text-right" />
+              </tr>
+            </thead>
+            <tbody>
+              {posts.map((p) => (
+                <tr
+                  key={p.post_id}
+                  onClick={() => nav(`/post/${p.post_id}`)}
+                  className="border-b border-stone-100 last:border-0 dark:border-zinc-900 hover:bg-stone-50 dark:hover:bg-zinc-900/60 cursor-pointer"
+                >
+                  <td className="px-3 py-2.5 align-top">
+                    <span className={`text-xs px-2 py-0.5 rounded-full capitalize ${statusStyle[p.status] ?? statusStyle.draft}`}>
+                      {p.status}
                     </span>
-                  )}
-                  {p.status === "sent" && (
-                    <span
-                      role="button"
-                      onClick={(e) => handleRepost(e, p.post_id)}
-                      className="hover:text-green-600 dark:hover:text-green-400"
-                      title="Repost to X now"
-                    >
-                      {reposting === p.post_id ? "…" : "repost"}
+                  </td>
+                  <td className="px-3 py-2.5 align-top max-w-md">
+                    <p className="truncate text-stone-800 dark:text-zinc-200">{p.excerpt || "(empty draft)"}</p>
+                  </td>
+                  <td className="px-3 py-2.5 align-top text-xs text-stone-400 dark:text-zinc-500 whitespace-nowrap">
+                    {p.publish_at ? fmt(p.publish_at) : "—"}
+                  </td>
+                  <td className="px-3 py-2.5 align-top text-xs text-stone-400 dark:text-zinc-500 whitespace-nowrap">
+                    {p.updated_at ? fmt(p.updated_at) : "—"}
+                  </td>
+                  <td className="px-3 py-2.5 align-top text-right whitespace-nowrap">
+                    <span className="inline-flex gap-2 text-xs text-stone-400 dark:text-zinc-500">
+                      {p.status === "sent" && p.tweet_url && (
+                        <span
+                          role="button"
+                          onClick={(e) => { e.stopPropagation(); e.preventDefault(); setPreview({ url: p.tweet_url!, text: p.excerpt || "" }); }}
+                          className="hover:text-sky-600 dark:hover:text-sky-400 cursor-pointer"
+                          title="Preview on X"
+                        >
+                          preview
+                        </span>
+                      )}
+                      {p.status === "sent" && (
+                        <span role="button" onClick={(e) => handleRepost(e, p.post_id)} className="hover:text-green-600 dark:hover:text-green-400 cursor-pointer" title="Repost to X now">
+                          {reposting === p.post_id ? "…" : "repost"}
+                        </span>
+                      )}
+                      {p.status !== "archived" && (
+                        <span role="button" onClick={(e) => handleDelete(e, p.post_id, false)} className={action} title="Archive">
+                          archive
+                        </span>
+                      )}
+                      <span role="button" onClick={(e) => handleDelete(e, p.post_id, true)} className="hover:text-red-500 dark:hover:text-red-400 cursor-pointer" title="Delete permanently">
+                        delete
+                      </span>
                     </span>
-                  )}
-                  {p.status !== "archived" && (
-                    <span
-                      role="button"
-                      onClick={(e) => handleDelete(e, p.post_id, false)}
-                      className="hover:text-amber-600 dark:hover:text-amber-400"
-                      title="Archive"
-                    >
-                      archive
-                    </span>
-                  )}
-                  <span
-                    role="button"
-                    onClick={(e) => handleDelete(e, p.post_id, true)}
-                    className="hover:text-red-500 dark:hover:text-red-400"
-                    title="Delete permanently"
-                  >
-                    delete
-                  </span>
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </TableShell>
+          <PageControls page={page} pageSize={PAGE_SIZE} total={total} onPage={setPage} />
+        </>
       )}
     </div>
   );

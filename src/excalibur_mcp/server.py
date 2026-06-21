@@ -96,6 +96,8 @@ _DOMAIN_TOOLS = [
     # npub-scoped, so a patron only ever touches their own.
     ToolIdentity(tool_id=capability_uuid("list_snippets"), capability="list_snippets",
                  category="free", intent="List this patron's saved post snippets"),
+    ToolIdentity(tool_id=capability_uuid("get_snippet"), capability="get_snippet",
+                 category="free", intent="Read one of this patron's saved snippets"),
     ToolIdentity(tool_id=capability_uuid("save_snippet"), capability="save_snippet",
                  category="free", intent="Create or update a saved post snippet"),
     ToolIdentity(tool_id=capability_uuid("delete_snippet"), capability="delete_snippet",
@@ -454,17 +456,22 @@ async def get_post(
 @runtime.paid_tool(capability_uuid("list_posts"), catch_errors=True)
 async def list_posts(
     status: str = "",
-    limit: int = 25,
-    cursor: str = "",
+    sort_col: str = "created",
+    sort_dir: str = "desc",
+    page: int = 0,
+    page_size: int = 25,
     npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "", proof: str = "",
 ) -> dict:
-    """List your stored posts, newest first. Optional ``status`` filter; opaque
-    ``cursor`` paginates. Returns ``{posts:[…], next_cursor}``."""
+    """List your stored posts, server-side sorted and offset-paginated. Optional
+    ``status`` filter. ``sort_col`` is one of ``created|updated|status|scheduled``
+    (default ``created``); ``sort_dir`` is ``asc|desc``. ``page`` is 0-indexed;
+    ``page_size`` is 1..100. Returns ``{posts:[…], total, page, page_size}``."""
     from excalibur_mcp.tools import posts as posts_tools
 
     return await posts_tools.list_(
         runtime, capability_uuid("list_posts"),
-        status=status, limit=limit, cursor=cursor, npub=npub,
+        status=status, sort_col=sort_col, sort_dir=sort_dir,
+        page=page, page_size=page_size, npub=npub,
     )
 
 
@@ -515,14 +522,38 @@ async def delete_post(
 @tool
 @runtime.paid_tool(capability_uuid("list_snippets"), catch_errors=True)
 async def list_snippets(
+    sort_col: str = "favorite",
+    sort_dir: str = "desc",
+    page: int = 0,
+    page_size: int = 25,
     npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
     proof: str = "",
 ) -> dict:
-    """List your saved post snippets — favorites first, then newest. Free,
-    owner-scoped: returns only the snippets saved under your npub."""
+    """List your saved post snippets, server-side sorted and offset-paginated.
+    ``sort_col`` is one of ``favorite|created|updated|name`` (default
+    ``favorite``); ``sort_dir`` is ``asc|desc``. ``page`` is 0-indexed;
+    ``page_size`` is 1..200. Free, owner-scoped. Returns ``{snippets:[…], total,
+    page, page_size}``."""
     from excalibur_mcp.tools import snippets as snippets_tools
 
-    return await snippets_tools.list_(npub)
+    return await snippets_tools.list_(
+        npub, sort_col=sort_col, sort_dir=sort_dir, page=page, page_size=page_size,
+    )
+
+
+@tool
+@runtime.paid_tool(capability_uuid("get_snippet"), catch_errors=True)
+async def get_snippet(
+    snippet_id: str,
+    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
+    proof: str = "",
+) -> dict:
+    """Read one of your saved snippets by id (full row incl. ``doc`` block
+    document). Free and owner-scoped. Returns ``{"success": true, "snippet": …}``
+    or ``snippet_not_found``."""
+    from excalibur_mcp.tools import snippets as snippets_tools
+
+    return await snippets_tools.get(npub, snippet_id=snippet_id)
 
 
 @tool
@@ -532,16 +563,20 @@ async def save_snippet(
     text: str = "",
     snippet_id: str = "",
     favorite: bool = False,
+    doc: dict | None = None,
     npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
     proof: str = "",
 ) -> dict:
     """Save a reusable post snippet (opening/footer/CTA). Omit ``snippet_id`` to
     create a new one; pass it to update an existing snippet in place (name/text/
-    favorite). Free and owner-scoped. Returns ``{"success": true, "snippet": …}``."""
+    favorite/doc). ``doc`` is the same block/flag document a post carries, so the
+    editor is identical for both. Free and owner-scoped. Returns
+    ``{"success": true, "snippet": …}``."""
     from excalibur_mcp.tools import snippets as snippets_tools
 
     return await snippets_tools.save(
         npub, snippet_id=snippet_id, name=name, text=text, favorite=favorite,
+        doc=doc,
     )
 
 

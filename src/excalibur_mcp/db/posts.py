@@ -13,7 +13,6 @@ deliberately thin SQL.
 
 from __future__ import annotations
 
-import base64
 import json
 import logging
 from typing import Any
@@ -29,6 +28,16 @@ _FULL_COLS = (
     "created_at, updated_at"
 )
 
+# Whitelisted sort keys → column expressions. Caller input only selects a key,
+# so an unknown value falls back to a safe default rather than reaching the
+# query as raw SQL (same safety posture as optionality-mcp's journal list).
+_SORT_MAP: dict[str, str] = {
+    "created": "created_at",
+    "updated": "updated_at",
+    "status": "status",
+    "scheduled": "publish_at",
+}
+
 # Patch keys a caller may set on update, mapped to their column cast. Caller
 # input only selects a key; the column expression never comes from the caller,
 # so an unknown patch key can't reach the query as raw SQL.
@@ -41,19 +50,6 @@ _PATCHABLE: dict[str, str] = {
     "tweet_url": "",
 }
 _JSON_KEYS = {"doc", "recurrence"}
-
-
-def _encode_cursor(created_at: Any, post_id: str) -> str:
-    return base64.urlsafe_b64encode(f"{created_at}|{post_id}".encode()).decode()
-
-
-def _decode_cursor(cursor: str) -> tuple[str, str] | None:
-    try:
-        raw = base64.urlsafe_b64decode(cursor.encode()).decode()
-        created_at, post_id = raw.split("|", 1)
-        return created_at, post_id
-    except Exception:
-        return None
 
 
 async def create_post(
@@ -135,48 +131,52 @@ async def current_req_id(npub: str, post_id: str) -> str | None:
 async def list_posts(
     npub: str,
     status: str | None = None,
-    limit: int = 25,
-    cursor: str | None = None,
+    sort_col: str = "created",
+    sort_dir: str = "desc",
+    page: int = 0,
+    page_size: int = 25,
 ) -> dict[str, Any]:
-    """Keyset-paginated list for the owner, newest first.
+    """Server-side sorted, offset-paginated list for the owner.
 
-    Orders by ``(created_at DESC, id DESC)``; ``cursor`` is an opaque token
-    encoding the last row's ``(created_at, id)``. Returns
-    ``{posts:[{post_id,status,excerpt,publish_at,updated_at}], next_cursor}``.
+    Sorting runs in SQL so each page is a slice of the fully-ordered dataset.
+    ORDER BY comes from the fixed ``_SORT_MAP`` whitelist; ``created_at DESC``
+    is a stable tiebreak. Returns ``{posts:[{post_id,status,excerpt,publish_at,
+    updated_at,tweet_url}], total, page, page_size}``.
     """
-    lim = max(1, min(100, limit))
+    psize = max(1, min(100, page_size))
+    pg = max(0, page)
+    offset = pg * psize
+
+    sort_expr = _SORT_MAP.get(sort_col, "created_at")
+    row_dir = "DESC" if str(sort_dir).lower() == "desc" else "ASC"
+
     params: list[Any] = [npub]
     where = "npub = $1"
     if status:
         params.append(status)
         where += f" AND status = ${len(params)}"
-    decoded = _decode_cursor(cursor) if cursor else None
-    if decoded:
-        params.append(decoded[0])
-        ca_idx = len(params)
-        params.append(decoded[1])
-        id_idx = len(params)
-        where += f" AND (created_at, id) < (${ca_idx}::timestamptz, ${id_idx}::uuid)"
 
-    # Fetch one extra row to determine whether a next page exists.
-    params.append(lim + 1)
+    total_row = await fetchrow(
+        f"SELECT COUNT(*) AS n FROM posts WHERE {where}", *params
+    )
+    total = int(total_row["n"]) if total_row and total_row.get("n") is not None else 0
+
+    params.append(psize)
+    limit_idx = len(params)
+    params.append(offset)
+    offset_idx = len(params)
+
     rows = await fetch(
         f"""
         SELECT id::text AS post_id, status, left(text_cache, 120) AS excerpt,
                publish_at, updated_at, created_at, tweet_url
         FROM posts
         WHERE {where}
-        ORDER BY created_at DESC, id DESC
-        LIMIT ${len(params)}
+        ORDER BY {sort_expr} {row_dir}, created_at DESC
+        LIMIT ${limit_idx} OFFSET ${offset_idx}
         """,
         *params,
     )
-
-    next_cursor: str | None = None
-    if len(rows) > lim:
-        last = rows[lim - 1]
-        next_cursor = _encode_cursor(last.get("created_at"), last["post_id"])
-        rows = rows[:lim]
 
     posts = [
         {
@@ -189,7 +189,7 @@ async def list_posts(
         }
         for r in rows
     ]
-    return {"posts": posts, "next_cursor": next_cursor}
+    return {"posts": posts, "total": total, "page": pg, "page_size": psize}
 
 
 async def update_post(

@@ -7,11 +7,14 @@ import { deleteSnippet, listSnippets, saveSnippet, type SnippetRow } from "./mcp
 
 export type Snippet = SnippetRow;
 
-/// Load the logged-in npub's snippets (favorites first). Network errors yield
-/// an empty list so the editor still opens if the MCP is warming up.
+/// Load the logged-in npub's snippets for the editor (favorites first, full
+/// rows incl. text+doc). One big page is plenty — snippet libraries are small.
+/// Network errors yield an empty list so the editor still opens if the MCP is
+/// warming up.
 export async function loadSnippets(): Promise<Snippet[]> {
   try {
-    return await listSnippets();
+    const r = await listSnippets({ sortCol: "favorite", sortDir: "desc", pageSize: 200 });
+    return r.snippets ?? [];
   } catch {
     return [];
   }

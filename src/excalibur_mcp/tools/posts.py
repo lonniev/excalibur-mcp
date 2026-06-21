@@ -126,10 +126,12 @@ async def get(runtime: Any, tool_id: str, *, post_id: str, npub: str) -> dict[st
 
 
 async def list_(
-    runtime: Any, tool_id: str, *, status: str, limit: int, cursor: str, npub: str,
+    runtime: Any, tool_id: str, *, status: str, sort_col: str, sort_dir: str,
+    page: int, page_size: int, npub: str,
 ) -> dict[str, Any]:
     return await posts_db.list_posts(
-        npub, status=status or None, limit=limit, cursor=cursor or None,
+        npub, status=status or None, sort_col=sort_col, sort_dir=sort_dir,
+        page=page, page_size=page_size,
     )
 
 

@@ -36,3 +36,6 @@ coverage.xml
 # OS
 .DS_Store
 Thumbs.db
+
+# Cloudflare wrangler local cache (account creds, build cache)
+.wrangler/
