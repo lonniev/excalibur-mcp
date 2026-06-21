@@ -94,8 +94,28 @@ async def test_mark_sent_persists_tweet_url():
             PID, "2026-06-21T03:20:00+00:00", "sent", None,
             "https://x.com/i/status/456",
         )
-    assert "tweet_url    = COALESCE($5, tweet_url)" in captured["query"]
+    assert "tweet_url            = COALESCE($5, tweet_url)" in captured["query"]
     assert "https://x.com/i/status/456" in captured["args"]
+    # a successful fire clears any prior held-attempt reason
+    assert "last_attempt_reason  = NULL" in captured["query"]
+
+
+@pytest.mark.asyncio
+async def test_mark_attempt_stamps_reason_and_time():
+    captured = {}
+
+    async def fake_execute(query, *args):
+        captured["query"] = query
+        captured["args"] = args
+        return {"rowCount": 1}
+
+    with patch.object(posts_db, "execute", fake_execute):
+        await posts_db.mark_attempt(PID, "2026-06-21T20:00:00+00:00", "insufficient_balance")
+    q = captured["query"]
+    assert "last_attempt_at     = $2::timestamptz" in q
+    assert "last_attempt_reason = $3" in q
+    assert "WHERE id = $1::uuid" in q
+    assert captured["args"] == (PID, "2026-06-21T20:00:00+00:00", "insufficient_balance")
 
 
 @pytest.mark.asyncio
@@ -111,8 +131,10 @@ async def test_list_posts_offset_sort_and_total():
         captured["query"] = query
         captured["args"] = args
         return [
-            {"post_id": "id0", "status": "draft", "excerpt": "e0",
-             "publish_at": None, "updated_at": "t", "created_at": "c", "tweet_url": None},
+            {"post_id": "id0", "status": "scheduled", "excerpt": "e0",
+             "publish_at": None, "updated_at": "t", "created_at": "c", "tweet_url": None,
+             "last_attempt_at": "2026-06-21T20:00:00+00:00",
+             "last_attempt_reason": "insufficient_balance"},
         ]
 
     with patch.object(posts_db, "fetchrow", fake_fetchrow), \
@@ -128,9 +150,12 @@ async def test_list_posts_offset_sort_and_total():
     assert captured["args"][1] == "draft"
     assert captured["args"][2] == 5  # page_size
     assert captured["args"][3] == 10  # page 2 * size 5
+    assert "last_attempt_at, last_attempt_reason" in q
     assert out["total"] == 7
     assert out["page"] == 2 and out["page_size"] == 5
     assert out["posts"][0]["excerpt"] == "e0"
+    assert out["posts"][0]["last_attempt_reason"] == "insufficient_balance"
+    assert out["posts"][0]["last_attempt_at"] == "2026-06-21T20:00:00+00:00"
 
 
 @pytest.mark.asyncio

@@ -30,7 +30,7 @@ _schema_done: bool = False
 
 # Bare domain table names. The wheel's vault._t() schema-prefixes each into the
 # operator's own role/schema, so the logical name stays the contract's ``posts``.
-_DOMAIN_TABLES: tuple[str, ...] = ("posts", "snippets")
+_DOMAIN_TABLES: tuple[str, ...] = ("posts", "snippets", "scheduler_runs")
 
 
 async def _get_vault() -> Any:
@@ -83,12 +83,16 @@ async def _ensure_domain_schema(vault: Any) -> None:
         "cease_at TIMESTAMPTZ, "
         "last_sent_at TIMESTAMPTZ, "
         "tweet_url TEXT, "
+        "last_attempt_at TIMESTAMPTZ, "    # when the scheduler last TRIED to fire it
+        "last_attempt_reason TEXT, "       # why a try didn't post (skip/error reason)
         "client_req_id TEXT, "
         "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), "
         "updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
 
-        # Idempotent column add for tables created before tweet_url existed.
+        # Idempotent column adds for tables created before these columns existed.
         f"ALTER TABLE {t('posts')} ADD COLUMN IF NOT EXISTS tweet_url TEXT",
+        f"ALTER TABLE {t('posts')} ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMPTZ",
+        f"ALTER TABLE {t('posts')} ADD COLUMN IF NOT EXISTS last_attempt_reason TEXT",
 
         f"CREATE INDEX IF NOT EXISTS posts_owner_idx ON {t('posts')} (npub, status)",
 

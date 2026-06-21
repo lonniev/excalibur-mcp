@@ -17,6 +17,21 @@ const statusStyle: Record<string, string> = {
   archived: "bg-stone-100 text-stone-400 dark:bg-zinc-800 dark:text-zinc-500",
 };
 
+// Friendly labels for a held-attempt reason recorded by the scheduler Worker.
+// Anything unmapped (e.g. a raw x_api_error string) shows verbatim.
+function attemptLabel(reason: string): string {
+  if (reason.startsWith("x_api_error")) return "X network error";
+  return (
+    {
+      insufficient_balance: "out of credits",
+      oauth_token_expired: "X access expired",
+      oauth_unavailable: "X not connected",
+      empty_text_cache: "empty content",
+      pricing_unavailable: "pricing unavailable",
+    } as Record<string, string>
+  )[reason] ?? reason;
+}
+
 export default function PostsPage() {
   const nav = useNavigate();
   const [posts, setPosts] = useState<PostSummary[]>([]);
@@ -178,6 +193,14 @@ export default function PostsPage() {
                     <span className={`text-xs px-2 py-0.5 rounded-full capitalize ${statusStyle[p.status] ?? statusStyle.draft}`}>
                       {p.status}
                     </span>
+                    {p.status === "scheduled" && p.last_attempt_reason && (
+                      <span
+                        className="mt-1 flex items-center gap-1 text-[11px] text-rose-600 dark:text-rose-400"
+                        title={`Scheduler tried to post${p.last_attempt_at ? ` at ${fmt(p.last_attempt_at)}` : ""} but held it back: ${p.last_attempt_reason}. It will retry on the next tick.`}
+                      >
+                        ⚠ {attemptLabel(p.last_attempt_reason)}
+                      </span>
+                    )}
                   </td>
                   <td className="px-3 py-2.5 align-top max-w-md">
                     <p className="truncate text-stone-800 dark:text-zinc-200">{p.excerpt || "(empty draft)"}</p>

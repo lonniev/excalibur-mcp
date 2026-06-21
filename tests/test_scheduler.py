@@ -26,6 +26,14 @@ def _stub_record_run():
         yield rec
 
 
+@pytest.fixture(autouse=True)
+def _stub_mark_attempt():
+    """Held attempts stamp the post (last_attempt_at/reason); keep that off Neon
+    and expose the mock so a test can assert the stamping contract."""
+    with patch.object(scheduler.posts_db, "mark_attempt", AsyncMock()) as m:
+        yield m
+
+
 # -- recurrence math ---------------------------------------------------------
 
 def test_add_months_clamps_end_of_month():
@@ -119,7 +127,7 @@ async def test_record_run_failure_does_not_break_the_tick(_stub_record_run):
 
 
 @pytest.mark.asyncio
-async def test_insufficient_balance_skips_without_posting():
+async def test_insufficient_balance_skips_without_posting(_stub_mark_attempt):
     rt = _runtime(billing={"success": False, "error_code": "insufficient_balance"})
     client = SimpleNamespace(post_tweet=AsyncMock())
     with patch.object(scheduler.posts_db, "list_due", AsyncMock(return_value=[_due_row()])), \
@@ -129,6 +137,10 @@ async def test_insufficient_balance_skips_without_posting():
     assert out["skipped"] and out["skipped"][0]["reason"] == "insufficient_balance"
     client.post_tweet.assert_not_awaited()
     mark.assert_not_called()
+    # the held post is stamped "attempted" with the finance reason
+    _stub_mark_attempt.assert_awaited_once()
+    assert _stub_mark_attempt.await_args.args[0] == "p1"
+    assert _stub_mark_attempt.await_args.args[2] == "insufficient_balance"
 
 
 @pytest.mark.asyncio

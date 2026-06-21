@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 _FULL_COLS = (
     "id::text AS post_id, npub, status, doc, text_cache, "
     "publish_at, recurrence, cease_at, last_sent_at, tweet_url, "
+    "last_attempt_at, last_attempt_reason, "
     "created_at, updated_at"
 )
 
@@ -169,7 +170,8 @@ async def list_posts(
     rows = await fetch(
         f"""
         SELECT id::text AS post_id, status, left(text_cache, 120) AS excerpt,
-               publish_at, updated_at, created_at, tweet_url
+               publish_at, updated_at, created_at, tweet_url,
+               last_attempt_at, last_attempt_reason
         FROM posts
         WHERE {where}
         ORDER BY {sort_expr} {row_dir}, created_at DESC
@@ -186,6 +188,8 @@ async def list_posts(
             "publish_at": str(r["publish_at"]) if r.get("publish_at") else None,
             "updated_at": str(r.get("updated_at") or ""),
             "tweet_url": r.get("tweet_url") or None,
+            "last_attempt_at": str(r["last_attempt_at"]) if r.get("last_attempt_at") else None,
+            "last_attempt_reason": r.get("last_attempt_reason") or None,
         }
         for r in rows
     ]
@@ -291,15 +295,18 @@ async def mark_sent(
     tweet_url: str | None = None,
 ) -> None:
     """Record a fire: stamp last_sent_at, set the next status/publish_at, and
-    store the posted tweet's URL (COALESCE keeps a prior URL on recurrence)."""
+    store the posted tweet's URL (COALESCE keeps a prior URL on recurrence).
+    A successful fire clears any prior ``last_attempt_reason`` (the hold is over)."""
     await execute(
         """
         UPDATE posts
-        SET last_sent_at = $2::timestamptz,
-            status       = $3,
-            publish_at   = $4::timestamptz,
-            tweet_url    = COALESCE($5, tweet_url),
-            updated_at   = NOW()
+        SET last_sent_at         = $2::timestamptz,
+            status               = $3,
+            publish_at           = $4::timestamptz,
+            tweet_url            = COALESCE($5, tweet_url),
+            last_attempt_at      = $2::timestamptz,
+            last_attempt_reason  = NULL,
+            updated_at           = NOW()
         WHERE id = $1::uuid
         """,
         post_id,
@@ -307,4 +314,25 @@ async def mark_sent(
         next_status,
         next_publish_at,
         tweet_url or None,
+    )
+
+
+async def mark_attempt(post_id: str, at_iso: str, reason: str) -> None:
+    """Stamp a scheduled post the scheduler TRIED to fire but held back.
+
+    Records when and why (the skip/error reason — access/finance/network/content)
+    so the post visibly shows it was attempted, and the FE can surface the hold
+    instead of the post silently sitting ``scheduled``. The post keeps its
+    ``scheduled`` status so the next due tick retries it."""
+    await execute(
+        """
+        UPDATE posts
+        SET last_attempt_at     = $2::timestamptz,
+            last_attempt_reason = $3,
+            updated_at          = NOW()
+        WHERE id = $1::uuid
+        """,
+        post_id,
+        at_iso,
+        reason,
     )
