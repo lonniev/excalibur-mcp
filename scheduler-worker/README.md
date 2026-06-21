@@ -1,7 +1,6 @@
 # eXcalibur Scheduler Worker
 
-A Cloudflare Worker cron that fires eXcalibur's due scheduled posts. **Deploy is
-deferred** — the source is here; wire it up when the operator opts in.
+A Cloudflare Worker cron that fires eXcalibur's due scheduled posts.
 
 ## What it does
 
@@ -14,11 +13,15 @@ and reschedules from `recurrence` or retires the post past `cease_at`.
 ## No stored secrets — it honors the npub-proof protocol
 
 A worker acting on an npub's behalf is just another actor. It does **not** hold
-the operator's nsec and does **not** bake a proof token into a secret. It runs
-the same Secure Courier dance the FE and the Claude.ai chat use, and caches only
-the short-lived token it gets back (in KV — the role localStorage plays for the
-FE):
+the operator's nsec and does **not** bake a proof token into a secret — and it
+isn't even provisioned with the operator's npub. The MCP **is** the operator (it
+holds the nsec), so each tick the worker asks it "who are you?" via the free,
+unauthenticated `list_canonical_identities` tool, which returns `operator_npub`.
+It then runs the same Secure Courier dance the FE and the Claude.ai chat use, and
+caches only the short-lived token it gets back (in KV — the role localStorage
+plays for the FE):
 
+0. **Ask the MCP its npub** → `list_canonical_identities()` → `operator_npub`.
 1. **No/expired token** → `request_npub_proof(operator_npub)` sends a Secure
    Courier DM to the operator npub. (Both proof tools are bootstrap — callable
    without prior auth.)
@@ -33,12 +36,12 @@ FE):
    rejected token is cleared automatically; scheduled posts are never lost — they
    just wait for the next authorized tick.
 
-The only configuration is **public**: the operator's npub and the MCP URL.
+The only configuration is **public**: the MCP URL. The operator npub is
+discovered from the MCP at runtime, not provisioned.
 
 ## One-time setup (at deploy)
 
-1. **Set the operator npub** in `wrangler.toml` (`OPERATOR_NPUB`) and confirm
-   `MCP_URL`.
+1. Confirm `MCP_URL` in `wrangler.toml` (no npub to set — it's self-discovered).
 2. **Create the KV namespace** and paste its id into `wrangler.toml`:
    ```sh
    wrangler kv namespace create PROOF_KV

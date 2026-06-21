@@ -5,10 +5,15 @@
  * NOT store that npub's nsec or a baked proof token. It obtains authorization
  * the same way the FE and the Claude.ai chat do — the Secure Courier npub-proof
  * dance — and caches only the short-lived token it gets back (in KV, the way the
- * FE caches its proof in localStorage). The only configuration is the operator's
- * PUBLIC npub and the PUBLIC MCP URL. No secrets.
+ * FE caches its proof in localStorage).
+ *
+ * It doesn't even carry the operator's npub. The MCP IS the operator (it holds
+ * the operator nsec), so the worker just asks it "who are you?" via the free,
+ * unauthenticated `list_canonical_identities` tool, which returns `operator_npub`.
+ * The only configuration is the PUBLIC MCP URL. No secrets, no provisioned npub.
  *
  * Per tick:
+ *   0. Ask the MCP for its operator npub (list_canonical_identities).
  *   1. Valid cached token  → call process_scheduled_posts (steady state; no
  *      courier traffic at all).
  *   2. Pending proof       → receive_npub_proof (poison-scoped, so polling only
@@ -26,7 +31,6 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 
 export interface Env {
   MCP_URL: string; // public streamable-HTTP endpoint
-  OPERATOR_NPUB: string; // PUBLIC npub the worker proxies — not a secret
   PROOF_KV: KVNamespace; // caches the protocol-issued, short-lived proof token
 }
 
@@ -57,33 +61,41 @@ async function tick(env: Env): Promise<string> {
   const now = Date.now();
 
   return withClient(env.MCP_URL, async (call) => {
+    // 0) Ask the MCP who it is — it holds the operator nsec, so it's the source
+    // of truth for its own npub. Free, unauthenticated, no npub input.
+    const whoami = await call("list_canonical_identities");
+    const operatorNpub = String(whoami?.operator_npub ?? "");
+    if (!operatorNpub.startsWith("npub1")) {
+      return `could not resolve operator npub from MCP: ${JSON.stringify(whoami).slice(0, 200)}`;
+    }
+
     // 1) Fresh cached token → fire due posts. No courier traffic.
     if (state?.phase === "active" && state.expiresAt - now > RENEW_BEFORE_MS) {
-      return fire(call, env, state.token);
+      return fire(call, env, operatorNpub, state.token);
     }
 
     // 2) Proof in flight → try to complete it (poison-scoped: safe to poll).
     if (state?.phase === "pending") {
       const r = await call("receive_npub_proof", {
-        patron_npub: env.OPERATOR_NPUB,
+        patron_npub: operatorNpub,
         poison: state.poison,
       });
       if (r?.success && r?.proof_token) {
         const expiresAt = now + (Number(r.expires_in_seconds) || 0) * 1000;
         await env.PROOF_KV.put(KEY, JSON.stringify({ phase: "active", token: r.proof_token, expiresAt }));
-        return fire(call, env, r.proof_token);
+        return fire(call, env, operatorNpub, r.proof_token);
       }
-      if (now - state.requestedAt > REREQUEST_AFTER_MS) return request(call, env);
+      if (now - state.requestedAt > REREQUEST_AFTER_MS) return request(call, env, operatorNpub);
       return "Awaiting operator reply to the proof DM.";
     }
 
     // 3) No / expiring token → request a fresh proof (DMs the operator npub).
-    return request(call, env);
+    return request(call, env, operatorNpub);
   });
 }
 
-async function request(call: Call, env: Env): Promise<string> {
-  const r = await call("request_npub_proof", { patron_npub: env.OPERATOR_NPUB });
+async function request(call: Call, env: Env, operatorNpub: string): Promise<string> {
+  const r = await call("request_npub_proof", { patron_npub: operatorNpub });
   if (!r?.proof_token) return `request_npub_proof returned no session phrase: ${JSON.stringify(r)}`;
   await env.PROOF_KV.put(
     KEY,
@@ -92,8 +104,8 @@ async function request(call: Call, env: Env): Promise<string> {
   return "Sent a proof-request DM to the operator npub — reply from a key-holder (Studio) to authorize the scheduler.";
 }
 
-async function fire(call: Call, env: Env, proof: string): Promise<string> {
-  const r = await call("process_scheduled_posts", { npub: env.OPERATOR_NPUB, proof });
+async function fire(call: Call, env: Env, operatorNpub: string, proof: string): Promise<string> {
+  const r = await call("process_scheduled_posts", { npub: operatorNpub, proof });
   // If the token was rejected (expired/revoked), drop it so the next tick
   // re-runs the proof dance rather than wedging on a dead token.
   const code = String(r?.error_code ?? "").toLowerCase();

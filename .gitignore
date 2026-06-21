@@ -39,3 +39,6 @@ Thumbs.db
 
 # Cloudflare wrangler local cache (account creds, build cache)
 .wrangler/
+
+# Node dependencies (any subproject, e.g. scheduler-worker)
+node_modules/
