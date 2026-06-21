@@ -227,6 +227,8 @@ const QUIET_TOOLS = new Set([
   // The scheduler-log poll feeds the debug panel its own synthesized entries;
   // logging the poll call itself would just be noise.
   "get_scheduler_log",
+  // Background personalization hydration (the editor's @handle) — not noteworthy.
+  "get_x_profile",
 ]);
 
 async function callTool<T = unknown>(
@@ -827,6 +829,23 @@ interface SchedulerLogResult {
 export async function getSchedulerLog(limit = 25): Promise<SchedulerRun[]> {
   const r = await callTool<SchedulerLogResult>("get_scheduler_log", { limit });
   return r.runs ?? [];
+}
+
+// ─── Connected X account (for personalizing the editor preview) ────────────
+
+export interface XProfile {
+  connected?: boolean;
+  username?: string;
+  name?: string;
+  profile_image_url?: string;
+  error?: string;
+  error_code?: string;
+}
+
+/// The connected X account's handle/name for the active npub (free, proof-gated).
+/// Returns `{connected:false,...}` / an oauth situation when X isn't linked.
+export async function getXProfile(): Promise<XProfile> {
+  return callTool<XProfile>("get_x_profile", {});
 }
 
 // ─── Nostr kind-0 profile (served by the wheel; no relay I/O in the FE) ────

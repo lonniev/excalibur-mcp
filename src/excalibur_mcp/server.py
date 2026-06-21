@@ -98,6 +98,10 @@ _DOMAIN_TOOLS = [
                  category="free", intent="List this patron's saved post snippets"),
     ToolIdentity(tool_id=capability_uuid("get_snippet"), capability="get_snippet",
                  category="free", intent="Read one of this patron's saved snippets"),
+    # Reads the connected X account's handle/name for personalization (the editor
+    # tweet-card preview). Free + proof-gated to the npub owner.
+    ToolIdentity(tool_id=capability_uuid("get_x_profile"), capability="get_x_profile",
+                 category="free", intent="Read your connected X account handle"),
     ToolIdentity(tool_id=capability_uuid("save_snippet"), capability="save_snippet",
                  category="free", intent="Create or update a saved post snippet"),
     ToolIdentity(tool_id=capability_uuid("delete_snippet"), capability="delete_snippet",
@@ -344,6 +348,30 @@ async def post_tweet(
         return _x_api_error_to_response(exc)
 
     return result
+
+
+@tool
+@runtime.paid_tool(capability_uuid("get_x_profile"), catch_errors=True)
+async def get_x_profile(
+    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
+    proof: str = "",
+) -> dict:
+    """Fetch the connected X account's handle and name for this patron (free).
+
+    Uses the patron's vaulted X OAuth token to call X's ``/users/me``. Returns
+    ``{connected: true, username, name, profile_image_url}`` when connected, or
+    the OAuth situation (``connected`` absent) when X isn't linked yet. Used to
+    show the real @handle on the editor's tweet-card preview."""
+    from excalibur_mcp.x_client import XAPIError
+
+    client, situation = await _resolve_x_client(npub)
+    if client is None:
+        return situation or {"connected": False, "error_code": "oauth_unavailable"}
+    try:
+        me = await client.get_me()
+    except XAPIError as exc:
+        return _x_api_error_to_response(exc)
+    return {"connected": True, **me}
 
 
 @tool

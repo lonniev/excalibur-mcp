@@ -373,6 +373,42 @@ class TestPostTweetWithImage:
         assert result["media_id"] == "media_99"
 
 
+class TestGetMe:
+    @pytest.mark.asyncio
+    async def test_success(self, client):
+        mock_resp = _mock_response(200, {
+            "data": {"id": "42", "username": "satoshi", "name": "Satoshi",
+                     "profile_image_url": "https://pbs.twimg.com/a.jpg"}
+        })
+        with patch("excalibur_mcp.x_client.httpx.AsyncClient") as MockClient:
+            mock_instance = AsyncMock()
+            mock_instance.get = AsyncMock(return_value=mock_resp)
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = mock_instance
+
+            me = await client.get_me()
+            call = mock_instance.get.call_args
+        assert "users/me" in call.args[0]
+        assert call.kwargs["headers"]["Authorization"].startswith("Bearer ")
+        assert me == {"id": "42", "username": "satoshi", "name": "Satoshi",
+                      "profile_image_url": "https://pbs.twimg.com/a.jpg"}
+
+    @pytest.mark.asyncio
+    async def test_auth_error_401(self, client):
+        mock_resp = _mock_response(401, {"detail": "Unauthorized"})
+        with patch("excalibur_mcp.x_client.httpx.AsyncClient") as MockClient:
+            mock_instance = AsyncMock()
+            mock_instance.get = AsyncMock(return_value=mock_resp)
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = mock_instance
+
+            with pytest.raises(XAPIError) as exc_info:
+                await client.get_me()
+            assert exc_info.value.status_code == 401
+
+
 # ---------------------------------------------------------------------------
 # PostImg upload
 # ---------------------------------------------------------------------------
