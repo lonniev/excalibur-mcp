@@ -66,6 +66,45 @@ async def test_update_post_sets_only_patched_columns():
     assert "client_req_id = $5" in q
     assert "updated_at = NOW()" in q
     assert "WHERE id = $2::uuid AND npub = $1" in q
+    assert "last_sent_at" not in q  # not sent → no fire stamp
+
+
+@pytest.mark.asyncio
+async def test_update_post_to_sent_stamps_last_sent_at_and_stores_tweet_url():
+    captured = {}
+
+    async def fake_fetchrow(query, *args):
+        captured["query"] = query
+        captured["args"] = args
+        return {"post_id": PID, "status": "sent", "updated_at": "2026-06-21T03:20:00+00:00"}
+
+    with patch.object(posts_db, "fetchrow", fake_fetchrow):
+        await posts_db.update_post(
+            NPUB, PID, {"status": "sent", "tweet_url": "https://x.com/i/status/123"},
+            text_cache="composed", client_req_id="r2",
+        )
+    q = captured["query"]
+    assert "last_sent_at = NOW()" in q  # transitioning to sent stamps the fire
+    assert "tweet_url = $" in q  # url persisted as a patched column
+    assert "https://x.com/i/status/123" in captured["args"]
+
+
+@pytest.mark.asyncio
+async def test_mark_sent_persists_tweet_url():
+    captured = {}
+
+    async def fake_execute(query, *args):
+        captured["query"] = query
+        captured["args"] = args
+        return {"rowCount": 1}
+
+    with patch.object(posts_db, "execute", fake_execute):
+        await posts_db.mark_sent(
+            PID, "2026-06-21T03:20:00+00:00", "sent", None,
+            "https://x.com/i/status/456",
+        )
+    assert "tweet_url    = COALESCE($5, tweet_url)" in captured["query"]
+    assert "https://x.com/i/status/456" in captured["args"]
 
 
 @pytest.mark.asyncio

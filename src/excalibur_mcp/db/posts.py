@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # Columns returned for a full single-post read.
 _FULL_COLS = (
     "id::text AS post_id, npub, status, doc, text_cache, "
-    "publish_at, recurrence, cease_at, last_sent_at, "
+    "publish_at, recurrence, cease_at, last_sent_at, tweet_url, "
     "created_at, updated_at"
 )
 
@@ -38,6 +38,7 @@ _PATCHABLE: dict[str, str] = {
     "recurrence": "::jsonb",
     "cease_at": "::timestamptz",
     "status": "",
+    "tweet_url": "",
 }
 _JSON_KEYS = {"doc", "recurrence"}
 
@@ -64,13 +65,20 @@ async def create_post(
     cease_at: str | None,
     status: str,
     client_req_id: str | None,
+    tweet_url: str | None = None,
 ) -> dict[str, Any]:
-    """Insert a post; return ``{post_id, status, created_at}``."""
+    """Insert a post; return ``{post_id, status, created_at}``.
+
+    A post created already ``sent`` (the FE's Post It on a brand-new draft)
+    stamps ``last_sent_at`` server-side, so every send records its time.
+    """
     row = await fetchrow(
         """
         INSERT INTO posts
-            (npub, status, doc, text_cache, publish_at, recurrence, cease_at, client_req_id)
-        VALUES ($1, $2, $3::jsonb, $4, $5::timestamptz, $6::jsonb, $7::timestamptz, $8)
+            (npub, status, doc, text_cache, publish_at, recurrence, cease_at,
+             client_req_id, tweet_url, last_sent_at)
+        VALUES ($1, $2, $3::jsonb, $4, $5::timestamptz, $6::jsonb, $7::timestamptz,
+                $8, $9, CASE WHEN $2 = 'sent' THEN NOW() ELSE NULL END)
         RETURNING id::text AS post_id, status, created_at
         """,
         npub,
@@ -81,6 +89,7 @@ async def create_post(
         json.dumps(recurrence) if recurrence is not None else None,
         cease_at,
         client_req_id or None,
+        tweet_url or None,
     )
     if not row:
         raise RuntimeError("create_post: INSERT … RETURNING returned no row")
@@ -154,7 +163,7 @@ async def list_posts(
     rows = await fetch(
         f"""
         SELECT id::text AS post_id, status, left(text_cache, 120) AS excerpt,
-               publish_at, updated_at, created_at
+               publish_at, updated_at, created_at, tweet_url
         FROM posts
         WHERE {where}
         ORDER BY created_at DESC, id DESC
@@ -176,6 +185,7 @@ async def list_posts(
             "excerpt": r.get("excerpt") or "",
             "publish_at": str(r["publish_at"]) if r.get("publish_at") else None,
             "updated_at": str(r.get("updated_at") or ""),
+            "tweet_url": r.get("tweet_url") or None,
         }
         for r in rows
     ]
@@ -210,6 +220,11 @@ async def update_post(
     if text_cache is not None:
         params.append(text_cache)
         set_parts.append(f"text_cache = ${len(params)}")
+
+    # Transitioning to "sent" (the FE's Post It) stamps the fire time server-side,
+    # so every send records last_sent_at without the caller having to.
+    if patch.get("status") == "sent":
+        set_parts.append("last_sent_at = NOW()")
 
     params.append(client_req_id or None)
     set_parts.append(f"client_req_id = ${len(params)}")
@@ -273,14 +288,17 @@ async def mark_sent(
     last_sent_at: str,
     next_status: str,
     next_publish_at: str | None,
+    tweet_url: str | None = None,
 ) -> None:
-    """Record a fire: stamp last_sent_at and set the next status/publish_at."""
+    """Record a fire: stamp last_sent_at, set the next status/publish_at, and
+    store the posted tweet's URL (COALESCE keeps a prior URL on recurrence)."""
     await execute(
         """
         UPDATE posts
         SET last_sent_at = $2::timestamptz,
             status       = $3,
             publish_at   = $4::timestamptz,
+            tweet_url    = COALESCE($5, tweet_url),
             updated_at   = NOW()
         WHERE id = $1::uuid
         """,
@@ -288,4 +306,5 @@ async def mark_sent(
         last_sent_at,
         next_status,
         next_publish_at,
+        tweet_url or None,
     )

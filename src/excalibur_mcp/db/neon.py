@@ -82,9 +82,13 @@ async def _ensure_domain_schema(vault: Any) -> None:
         "recurrence JSONB, "
         "cease_at TIMESTAMPTZ, "
         "last_sent_at TIMESTAMPTZ, "
+        "tweet_url TEXT, "
         "client_req_id TEXT, "
         "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), "
         "updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
+
+        # Idempotent column add for tables created before tweet_url existed.
+        f"ALTER TABLE {t('posts')} ADD COLUMN IF NOT EXISTS tweet_url TEXT",
 
         f"CREATE INDEX IF NOT EXISTS posts_owner_idx ON {t('posts')} (npub, status)",
 

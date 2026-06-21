@@ -412,6 +412,7 @@ async def create_post(
     cease_at: str | None = None,
     status: str = "draft",
     client_req_id: str = "",
+    tweet_url: str = "",
     npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "", proof: str = "",
 ) -> dict:
     """Store a new post (draft or scheduled). Returns its ``post_id``.
@@ -433,7 +434,7 @@ async def create_post(
         runtime, capability_uuid("create_post"),
         doc=doc, text_cache=text_cache, publish_at=publish_at,
         recurrence=recurrence, cease_at=cease_at, status=status,
-        client_req_id=client_req_id, npub=npub,
+        client_req_id=client_req_id, npub=npub, tweet_url=tweet_url,
     )
 
 
