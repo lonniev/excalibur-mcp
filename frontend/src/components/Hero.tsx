@@ -27,21 +27,22 @@ export default function Hero() {
           </span>
           <div>
             <div className="text-2xl font-semibold tracking-tight">
-              eXcalibur <span className="font-normal text-stone-400 dark:text-zinc-500">Editorial</span>
+              eXcalibur <span className="font-normal text-stone-400 dark:text-zinc-500">MCP</span>
             </div>
             <div className="text-xs uppercase tracking-widest text-amber-600 dark:text-amber-400">
-              X posting, metered in sats
+              AI-assisted CMS for X
             </div>
           </div>
         </div>
 
         <h1 className="max-w-2xl text-3xl font-semibold leading-tight tracking-tight sm:text-4xl">
-          An editor for X posts that bills by the call.
+          An AI-assisted Content Management System for your X posts.
         </h1>
         <p className="mt-4 max-w-2xl text-base leading-relaxed text-stone-600 dark:text-zinc-400">
-          Sign in with a Nostr key, pre-fund a Bitcoin Lightning balance, and pay only for what you
-          publish — no account, no subscription, no KYC. Your drafts, schedule, and snippet library
-          follow your npub across devices.
+          Draft in a block editor, refine flagged passages with Claude, schedule and repost, and
+          keep a reusable snippet library — then publish to X. Sign in with a Nostr key and pay per
+          use in Bitcoin Lightning; your posts, schedule, and snippets live with your npub, not a
+          login.
         </p>
 
         <div className="mt-8 grid max-w-3xl gap-3 sm:grid-cols-3">
