@@ -318,6 +318,36 @@ async def mark_sent(
     )
 
 
+async def create_sent_occurrence(
+    npub: str,
+    doc: dict[str, Any],
+    text_cache: str | None,
+    tweet_url: str | None,
+    sent_at: str,
+    publish_at: str | None = None,
+) -> None:
+    """Record one fired occurrence of a recurring post as its own immutable Sent
+    post (a snapshot of the text/doc that went out + that occurrence's X URL).
+
+    A recurring post reschedules itself in place, so without this each posting
+    would be invisible — collapsed into the template that just advances its date,
+    with only the latest ``tweet_url`` retained. This leaves a permanent, viewable
+    Sent record per posting instead."""
+    await execute(
+        """
+        INSERT INTO posts
+            (npub, status, doc, text_cache, publish_at, last_sent_at, tweet_url)
+        VALUES ($1, 'sent', $2::jsonb, $3, $4::timestamptz, $5::timestamptz, $6)
+        """,
+        npub,
+        json.dumps(doc),
+        text_cache,
+        publish_at,
+        sent_at,
+        tweet_url or None,
+    )
+
+
 async def mark_attempt(post_id: str, at_iso: str, reason: str) -> None:
     """Stamp a scheduled post the scheduler TRIED to fire but held back.
 

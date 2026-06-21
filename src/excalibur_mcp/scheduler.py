@@ -166,11 +166,25 @@ async def process_due_posts(runtime: Any) -> dict[str, Any]:
             sent_at, _as_dict(row.get("recurrence")), row.get("cease_at"),
         )
         tweet_url = (result or {}).get("tweet_url") if isinstance(result, dict) else None
-        await posts_db.mark_sent(
-            pid, sent_at.isoformat(), next_status,
-            next_publish.isoformat() if next_publish else None,
-            tweet_url,
-        )
+
+        if next_status == "scheduled":
+            # Recurring: snapshot THIS occurrence as its own Sent post (with the X
+            # URL), then advance the recurring template — so every posting stays
+            # visible instead of collapsing into a row that silently reschedules.
+            await posts_db.create_sent_occurrence(
+                npub=owner, doc=_as_dict(row.get("doc")) or {}, text_cache=text,
+                tweet_url=tweet_url, sent_at=sent_at.isoformat(),
+                publish_at=str(row.get("publish_at")) if row.get("publish_at") else None,
+            )
+            await posts_db.mark_sent(
+                pid, sent_at.isoformat(), "scheduled",
+                next_publish.isoformat() if next_publish else None,
+                None,  # the occurrence carries the URL; the template just advances
+            )
+        else:
+            # One-shot: the row itself becomes the Sent record.
+            await posts_db.mark_sent(pid, sent_at.isoformat(), "sent", None, tweet_url)
+
         posted.append({"post_id": pid, "owner": owner, "next_status": next_status,
                        "tweet_id": (result or {}).get("tweet_id") if isinstance(result, dict) else None,
                        "tweet_url": tweet_url})

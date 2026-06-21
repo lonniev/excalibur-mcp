@@ -7,6 +7,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.17.0] — 2026-06-21
 
+### Changed — every recurring posting becomes a visible Sent record
+
+A recurring scheduled post reschedules itself in place, so each firing was
+invisible: the row flipped back to `scheduled`, advanced its date, and the single
+`tweet_url` was overwritten — no Sent record, no per-occurrence X URL. Now a
+successful recurring fire **snapshots that occurrence as its own immutable Sent
+post** (text + doc + that occurrence's X URL) via `posts.create_sent_occurrence`,
+and the recurring template advances separately. A non-recurring scheduled post is
+unchanged (the row itself becomes Sent).
+
 ### Changed — scheduler visibility now reaches the post author, not just the operator
 
 A successful recurring fire was invisible to the author: the post simply
