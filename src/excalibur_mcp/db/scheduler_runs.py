@@ -57,9 +57,11 @@ def scope_runs(
     """Owner-scope ring rows for the reader.
 
     The operator sees every run in full. Any other reader sees the per-tick
-    heartbeat (``run_at`` + global ``processed`` count — proof the Worker ran)
-    plus only the per-post entries (posted/skipped/errors) for THEIR OWN posts,
-    keyed by the ``owner`` npub the scheduler records on each entry.
+    heartbeat (``run_at`` — proof the Worker ran) plus only the per-post entries
+    (posted/skipped/errors) for THEIR OWN posts, keyed by the ``owner`` npub the
+    scheduler records on each entry. ``processed`` is recomputed to the reader's
+    OWN entry count — never the global total — so no cross-patron activity (not
+    even an aggregate count) leaks between patrons.
     """
     if npub and npub == operator_npub:
         return runs
@@ -70,13 +72,16 @@ def scope_runs(
     scoped: list[dict[str, Any]] = []
     for r in runs:
         s = r.get("summary") or {}
+        posted = _mine(s.get("posted"))
+        skipped = _mine(s.get("skipped"))
+        errors = _mine(s.get("errors"))
         scoped.append({
             "run_at": r.get("run_at"),
             "summary": {
-                "processed": s.get("processed", 0),
-                "posted": _mine(s.get("posted")),
-                "skipped": _mine(s.get("skipped")),
-                "errors": _mine(s.get("errors")),
+                "processed": len(posted) + len(skipped) + len(errors),
+                "posted": posted,
+                "skipped": skipped,
+                "errors": errors,
             },
         })
     return scoped

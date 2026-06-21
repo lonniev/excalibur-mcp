@@ -5,6 +5,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.17.1] — 2026-06-21
+
+### Security — no cross-patron leak in the scheduler log
+
+One worker serves all patrons, so `scheduler_runs` records every patron's
+outcomes together. `get_scheduler_log` already owner-scoped the per-post entries,
+but it still passed the **global `processed` count** through to every patron — a
+cross-patron aggregate. `scheduler_runs.scope_runs` now recomputes `processed` to
+the reader's own entry count; a patron's heartbeat is conveyed by `run_at` alone.
+The operator still sees every tick in full.
+
 ## [0.17.0] — 2026-06-21
 
 ### Changed — every recurring posting becomes a visible Sent record
