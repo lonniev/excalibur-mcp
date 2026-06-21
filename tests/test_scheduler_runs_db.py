@@ -83,15 +83,18 @@ def test_scope_runs_operator_sees_everything():
     assert sr.scope_runs(runs, OP, OP) is runs  # full, unfiltered
 
 
-def test_scope_runs_owner_sees_heartbeat_plus_only_their_entries():
+def test_scope_runs_owner_sees_only_their_entries_and_own_count():
     scoped = sr.scope_runs([_run()], ALICE, OP)
     s = scoped[0]["summary"]
-    assert s["processed"] == 2  # global heartbeat preserved (proof it ran)
     assert [e["post_id"] for e in s["posted"]] == ["a1"]  # alice's own
     assert s["skipped"] == []  # bob's skip is hidden from alice
+    assert s["processed"] == 1  # alice's OWN count, NOT the global 2 (no leak)
+    assert scoped[0]["run_at"] == "t"  # heartbeat (proof it ran) still present
 
 
-def test_scope_runs_owner_with_no_posts_still_sees_heartbeat():
+def test_scope_runs_owner_with_no_posts_sees_heartbeat_but_no_global_count():
     scoped = sr.scope_runs([_run()], "npub1carol", OP)
     s = scoped[0]["summary"]
-    assert s["processed"] == 2 and s["posted"] == [] and s["skipped"] == []
+    assert scoped[0]["run_at"] == "t"  # worker ran (heartbeat)
+    # no cross-patron leak: not the global 2, and none of bob's/alice's entries
+    assert s["processed"] == 0 and s["posted"] == [] and s["skipped"] == [] and s["errors"] == []
