@@ -6,6 +6,7 @@ import {
   Sparkles, Flag, GripVertical, Pencil, Trash2, Plus, Calendar, Repeat,
   Octagon, Check, ChevronUp, ChevronDown, Eye, EyeOff,
   Wand2, Loader2, Swords, Save, Bold, Italic, Code, Smile, Star, Minus,
+  ExternalLink,
 } from "lucide-react";
 import { useSession } from "../App";
 import Avatar from "./Avatar";
@@ -84,6 +85,9 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   const [error, setError] = useState<string | null>(null);
   const [needsXConnect, setNeedsXConnect] = useState(false);
   const [postedUrl, setPostedUrl] = useState<string | null>(null);
+  // The tweet URL of a post that has already gone out — hydrated on load and on
+  // a fresh Post-now — so a Sent post always shows its actual X link.
+  const [tweetUrl, setTweetUrl] = useState<string | null>(null);
 
   // ── load ────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -115,6 +119,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
         const rec = row.recurrence as Recurrence | undefined;
         if (rec?.freq) { setFreq(rec.freq); setIntervalN(rec.interval || 1); }
         if (row.cease_at) setCeaseAt(toLocalInput(row.cease_at));
+        if (row.tweet_url) setTweetUrl(row.tweet_url);
         setLoading(false);
       })
       .catch((e) => { if (live) { setError((e as Error).message); setLoading(false); } });
@@ -389,6 +394,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
         });
       }
       setHint("Posted to X.");
+      setTweetUrl(tweetUrl);
       setPostedUrl(tweetUrl);
     } catch (e) {
       setError((e as Error).message);
@@ -490,6 +496,23 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
           </button>
         </div>
       </header>
+
+      {/* Posted-to-X banner: a Sent post always shows its actual X link. */}
+      {!isSnippet && tweetUrl && (
+        <div className="flex items-center gap-2 border-b border-zinc-800 bg-green-500/10 px-5 py-2 text-sm">
+          <Check className="h-4 w-4 shrink-0 text-green-400" />
+          <span className="text-green-400">Posted to X:</span>
+          <a
+            href={tweetUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 truncate font-mono text-xs text-sky-400 hover:text-sky-300 hover:underline"
+            title={tweetUrl}
+          >
+            {tweetUrl} <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+          </a>
+        </div>
+      )}
 
       <div className="flex flex-1 flex-col lg:flex-row">
         {/* stage */}
