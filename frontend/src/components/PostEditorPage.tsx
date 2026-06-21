@@ -23,6 +23,7 @@ import {
   createPost, deletePost, getPost, postTweet, refinePostRegion, updatePost,
   OAUTH_NEEDED_CODES, type PostRow, type Recurrence,
 } from "../lib/mcp";
+import { debugPush } from "../lib/debugLog";
 import {
   charOffset, composeText, DEFAULT_BANS, DEFAULT_VOICE, overlaps, paletteOf,
   parsePostDoc, segmentize, serializeBlocks, uid,
@@ -324,6 +325,7 @@ export default function PostEditorPage() {
 
   // Post to X now (paid), then save the post as sent so it lands in the list.
   async function handlePostNow() {
+    debugPush("info", `Post It clicked (${composed.trim().length} chars)`);
     if (!composed.trim()) { setError("Write something first."); return; }
     setSaving(true);
     setError(null);
@@ -332,6 +334,7 @@ export default function PostEditorPage() {
       const r = await postTweet(composed);
       if (r.error || r.success === false) {
         if (r.error_code && OAUTH_NEEDED_CODES.has(r.error_code)) {
+          debugPush("info", `post_tweet needs X connect (${r.error_code})`);
           setNeedsXConnect(true);
           setError("Connect your X account before posting.");
         } else {

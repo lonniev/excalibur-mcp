@@ -18,6 +18,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 import { clearSessionNsec, hasSessionNsec, sessionNsecNpub } from "./sessionNsec";
+import { debugPush } from "./debugLog";
 import { signInlineProof } from "./inlineProof";
 
 const SLUG = "excalibur";
@@ -217,10 +218,23 @@ const BOOTSTRAP_TOOLS = new Set([
   "publish_nostr_profile",
 ]);
 
+/// Tools too noisy/background to clutter the debug log (polled liveness +
+/// profile hydration). Everything else — posting, OAuth, posts, snippets,
+/// credits — is logged so the panel shows what the FE is actually doing.
+const QUIET_TOOLS = new Set([
+  "service_status",
+  "get_nostr_profile",
+]);
+
 async function callTool<T = unknown>(
   toolName: string,
   args: Record<string, unknown> = {},
 ): Promise<T> {
+  const quiet = QUIET_TOOLS.has(toolName);
+  // `args` holds only the wrapper's own params — never npub/proof (those are
+  // injected below), so it is safe to log verbatim.
+  if (!quiet) debugPush("call", `${SLUG}_${toolName}(${JSON.stringify(args).slice(0, 140)})`);
+
   const c = await getClient();
   const merged: Record<string, unknown> = BOOTSTRAP_TOOLS.has(toolName)
     ? { ...args }
@@ -234,6 +248,7 @@ async function callTool<T = unknown>(
       { timeout: 120_000 },
     )) as ToolResult;
   } catch (e) {
+    if (!quiet) debugPush("error", `${SLUG}_${toolName}: ${(e as Error).message}`);
     throw new Error(`${SLUG}_${toolName}: ${(e as Error).message}`);
   }
 
@@ -242,6 +257,7 @@ async function callTool<T = unknown>(
       .filter((b) => b.type === "text" && typeof b.text === "string")
       .map((b) => String(b.text))
       .join("\n") || "Tool call failed";
+    if (!quiet) debugPush("error", `${SLUG}_${toolName}: ${errText.slice(0, 200)}`);
     throw new Error(errText);
   }
 
@@ -260,6 +276,13 @@ async function callTool<T = unknown>(
     } else {
       payload = result;
     }
+  }
+
+  if (!quiet) {
+    const preview = typeof payload === "string" ? payload : JSON.stringify(payload);
+    const p = payload as Record<string, unknown> | null;
+    const failed = p && typeof p === "object" && (p.success === false || p.error);
+    debugPush(failed ? "error" : "result", `${SLUG}_${toolName} → ${String(preview).slice(0, 220)}`);
   }
 
   // Soft proof failures arrive as {success:false, error_code:...} with no
