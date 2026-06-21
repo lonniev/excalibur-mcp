@@ -11,6 +11,7 @@ import { hydrateAvatarFromNostr } from "./lib/avatar";
 import Nav from "./components/Nav";
 import Hero from "./components/Hero";
 import NpubGate from "./components/NpubGate";
+import DebugPanel from "./components/DebugPanel";
 import PostsPage from "./components/PostsPage";
 import PostEditorPage from "./components/PostEditorPage";
 import WalletPage from "./components/WalletPage";
@@ -83,6 +84,7 @@ export default function App() {
             <Footer status={status} />
           </>
         )}
+        <DebugPanel />
       </Ctx.Provider>
     </div>
   );
