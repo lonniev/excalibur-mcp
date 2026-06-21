@@ -39,8 +39,32 @@ async def test_create_rejects_bad_status():
     with pytest.raises(ValueError):
         await posts_tools.create(
             _runtime(), TOOL, doc={"blocks": []}, text_cache="", publish_at=None,
+            recurrence=None, cease_at=None, status="posted", client_req_id="", npub=NPUB,
+        )
+
+
+# -- "sent" is a valid terminal status on both create and patch (Post It) -----
+
+@pytest.mark.asyncio
+async def test_create_accepts_sent_status():
+    with patch.object(posts_tools.posts_db, "create_post",
+                      new=AsyncMock(return_value={"post_id": PID, "status": "sent"})):
+        out = await posts_tools.create(
+            _runtime(), TOOL, doc={"blocks": []}, text_cache="hi", publish_at=None,
             recurrence=None, cease_at=None, status="sent", client_req_id="", npub=NPUB,
         )
+    assert out.get("post_id") == PID
+
+
+@pytest.mark.asyncio
+async def test_update_accepts_sent_status():
+    with patch.object(posts_tools.posts_db, "update_post",
+                      new=AsyncMock(return_value={"post_id": PID, "status": "sent"})):
+        out = await posts_tools.update(
+            _runtime(), TOOL, post_id=PID, patch={"status": "sent"},
+            text_cache="hi", client_req_id="", npub=NPUB,
+        )
+    assert out.get("status") == "sent"
 
 
 @pytest.mark.asyncio

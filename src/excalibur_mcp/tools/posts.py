@@ -24,8 +24,11 @@ from excalibur_mcp.db import posts as posts_db
 
 logger = logging.getLogger(__name__)
 
-_CREATE_STATUS = {"draft", "scheduled"}
-_PATCH_STATUS = {"draft", "scheduled", "archived"}
+# "sent" is a terminal status the FE sets after a successful post_tweet (and the
+# scheduler after a fired post). It's valid on both create (compose → Post It on
+# a brand-new draft) and patch (Post It on an existing draft).
+_CREATE_STATUS = {"draft", "scheduled", "sent"}
+_PATCH_STATUS = {"draft", "scheduled", "archived", "sent"}
 _PATCHABLE = {"doc", "publish_at", "recurrence", "cease_at", "status"}
 _FREQ = {"daily", "weekly", "monthly"}
 
