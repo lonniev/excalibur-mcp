@@ -7,6 +7,7 @@ import {
 import TweetPreviewModal from "./TweetPreviewModal";
 import { PageControls, SortHeader, TableShell } from "./PagedTable";
 import TableFilter from "./TableFilter";
+import QuoteScroller from "./QuoteScroller";
 
 const STATUS_FILTERS = ["", "draft", "scheduled", "sent", "archived"] as const;
 const DATE_FIELDS = [
@@ -126,7 +127,7 @@ export default function PostsPage() {
   const action = "hover:text-amber-600 dark:hover:text-amber-400 cursor-pointer";
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-6">
+    <div className="mx-auto w-[90%] max-w-[1600px] px-4 py-6">
       {preview && (
         <TweetPreviewModal url={preview.url} text={preview.text} onClose={() => setPreview(null)} />
       )}
@@ -187,7 +188,7 @@ export default function PostsPage() {
       )}
 
       {loading && posts.length === 0 ? (
-        <p className="text-sm text-stone-400 dark:text-zinc-500 py-10 text-center">Loading…</p>
+        <QuoteScroller heading="Loading your posts…" className="py-16" />
       ) : posts.length === 0 ? (
         (search || dateFrom || dateTo) ? (
           <div className="text-center py-12">

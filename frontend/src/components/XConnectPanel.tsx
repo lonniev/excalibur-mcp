@@ -94,7 +94,7 @@ export default function XConnectPanel() {
       </div>
 
       {stage === "loading" && (
-        <p className="text-xs text-stone-400 dark:text-zinc-500">Checking connection…</p>
+        <p className="flex items-center gap-1.5 text-xs text-stone-400 dark:text-zinc-500"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Checking connection…</p>
       )}
 
       {stage === "disconnected" && (

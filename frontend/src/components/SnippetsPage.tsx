@@ -7,6 +7,7 @@ import {
 } from "../lib/mcp";
 import { PageControls, SortHeader, TableShell } from "./PagedTable";
 import TableFilter from "./TableFilter";
+import QuoteScroller from "./QuoteScroller";
 
 const DATE_FIELDS = [
   { value: "created", label: "Created" },
@@ -81,7 +82,7 @@ export default function SnippetsPage() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-6">
+    <div className="mx-auto w-[90%] max-w-[1600px] px-4 py-6">
       <div className="flex items-center mb-4">
         <h1 className="text-lg font-semibold">Snippets</h1>
         <Link
@@ -116,7 +117,7 @@ export default function SnippetsPage() {
       )}
 
       {loading && snippets.length === 0 ? (
-        <p className="text-sm text-stone-400 dark:text-zinc-500 py-10 text-center">Loading…</p>
+        <QuoteScroller heading="Loading your snippets…" className="py-16" />
       ) : snippets.length === 0 ? (
         (search || dateFrom || dateTo) ? (
           <div className="text-center py-12">

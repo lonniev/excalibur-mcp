@@ -4,6 +4,7 @@
 // also mirror to localStorage so the Nav/editor update instantly.
 
 import { useEffect, useState } from "react";
+import { Loader2 } from "lucide-react";
 import Avatar, { isAvatarUrl } from "./Avatar";
 import AvatarPicker from "./AvatarPicker";
 import { setStoredAvatar } from "../lib/avatar";
@@ -101,7 +102,7 @@ export default function NostrProfilePanel({ npub }: { npub: string }) {
       </div>
 
       {loading ? (
-        <div className="text-xs text-stone-400 dark:text-zinc-500 py-2">Reading from relays…</div>
+        <div className="flex items-center gap-1.5 text-xs text-stone-400 dark:text-zinc-500 py-2"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Reading from relays…</div>
       ) : (
         <>
           <AvatarPicker value={picture} onChange={pickAvatar} />

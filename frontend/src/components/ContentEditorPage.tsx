@@ -12,12 +12,21 @@ import Avatar from "./Avatar";
 import { avatarFor } from "../lib/avatar";
 import { styleText, type UnicodeStyle } from "../lib/unicodeFormat";
 import { addSnippet, loadSnippets, removeSnippet, toggleFavorite, type Snippet } from "../lib/snippets";
+import QuoteScroller from "./QuoteScroller";
 
-// Curated symbols + emoji for the picker — authors shouldn't memorize code points.
-const EMOJI_PALETTE = [
-  "⚡", "™", "©", "®", "→", "•", "★", "✓", "✗", "—", "…", "₿", "🔗", "✦",
-  "🔥", "💎", "🚀", "✅", "❌", "👇", "👀", "🧵", "📈", "📉", "🪙", "🟢", "🔴",
-  "⏳", "🎯", "💡", "🙌", "🤝", "⚔️", "🛡️", "🏛️", "📜", "🗝️",
+// Categorized symbols + emoji for the picker. X renders the full Unicode/Twemoji
+// set, so this is a broad curated palette (authors shouldn't memorize code
+// points). Insertion is plain text, so everything posts as-is.
+const EMOJI_GROUPS: { label: string; emojis: string[] }[] = [
+  { label: "Typographic", emojis: ["™", "©", "®", "→", "←", "↑", "↓", "•", "★", "☆", "✓", "✗", "—", "–", "…", "₿", "§", "¶", "°", "×", "÷", "±", "≈", "≠", "™", "✦", "✧", "✶", "❝", "❞"] },
+  { label: "Smileys", emojis: ["😀", "😁", "😂", "🤣", "😅", "😊", "😍", "😎", "🤩", "😏", "😉", "🙃", "😴", "🤔", "🧐", "🤨", "😬", "😅", "😭", "😤", "😡", "🥳", "🥺", "😱", "🤯", "🙄", "😇", "🤗", "🫡", "🫠"] },
+  { label: "Gestures & People", emojis: ["👍", "👎", "👏", "🙌", "🙏", "🤝", "👇", "👆", "👉", "👈", "✊", "✌️", "🤞", "🤙", "💪", "🫵", "👀", "🧠", "🗣️", "👤", "👥", "🧑‍💻", "🦸", "🫶", "👋"] },
+  { label: "Nature", emojis: ["🔥", "⚡", "🌟", "✨", "💥", "☀️", "🌈", "🌊", "🌍", "🌙", "⭐", "❄️", "🍀", "🌱", "🌹", "🌸", "🌳", "🐝", "🦋", "🐢"] },
+  { label: "Food & Drink", emojis: ["☕", "🍵", "🍺", "🍷", "🥂", "🍾", "🍕", "🍔", "🌮", "🍩", "🍪", "🎂", "🍎", "🍊", "🍓", "🥑", "🧂", "🍫", "🍿", "🧊"] },
+  { label: "Activity & Objects", emojis: ["🚀", "🎯", "💡", "🔑", "🗝️", "🔒", "🔓", "📌", "📎", "✂️", "🛠️", "⚙️", "🧰", "🔧", "🔨", "⚔️", "🛡️", "🏆", "🎖️", "🥇", "🎁", "🎉", "🎊", "🔔", "📣", "📢", "🔍", "🔎", "💼", "📚"] },
+  { label: "Travel & Places", emojis: ["✈️", "🚗", "🚢", "🚆", "🗺️", "🧭", "🏔️", "🏝️", "🏛️", "🏗️", "🏠", "🌆", "🗽", "⛩️", "🚦", "⚓", "🛰️", "🛸", "🧳", "🪧"] },
+  { label: "Symbols", emojis: ["✅", "❌", "⭕", "❗", "❓", "⚠️", "♻️", "✳️", "❇️", "🔆", "🆕", "🆗", "🔝", "🔚", "©️", "®️", "™️", "💯", "🚫", "⛔", "🔴", "🟢", "🟡", "🔵", "⚫", "⚪", "🟠", "🟣", "🔺", "🔻"] },
+  { label: "Money & Crypto", emojis: ["₿", "💰", "💸", "💵", "💴", "💶", "💷", "🪙", "💳", "📈", "📉", "📊", "💹", "🧾", "🏦", "⚖️", "🤑", "💲", "🏧", "💎"] },
 ];
 import {
   createPost, deletePost, getPost, getSnippet, postTweet, refinePostRegion,
@@ -406,7 +415,11 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   }
 
   if (loading) {
-    return <div className="min-h-screen bg-zinc-950 flex items-center justify-center text-zinc-400 text-sm">Loading…</div>;
+    return (
+      <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
+        <QuoteScroller heading={isSnippet ? "Opening the snippet…" : "Opening the editor…"} />
+      </div>
+    );
   }
 
   const openFlagCount = allFlags.length;
@@ -758,16 +771,25 @@ function BlockView({
           </button>
           <span className="ml-2 text-[10px] text-amber-700">select text to style; ☺ inserts a symbol</span>
           {showEmoji && (
-            <div className="absolute left-0 top-full z-30 mt-1 grid w-64 grid-cols-8 gap-0.5 rounded-md border border-zinc-300 bg-white p-2 shadow-xl">
-              {EMOJI_PALETTE.map((em) => (
-                <button
-                  key={em}
-                  onMouseDown={(ev) => ev.preventDefault()}
-                  onClick={() => { insertAtCursor(em); setShowEmoji(false); }}
-                  className="rounded p-1 text-lg hover:bg-amber-100"
-                >
-                  {em}
-                </button>
+            <div className="absolute left-0 top-full z-30 mt-1 max-h-72 w-80 overflow-y-auto rounded-md border border-zinc-300 bg-white p-2 shadow-xl">
+              {EMOJI_GROUPS.map((group) => (
+                <div key={group.label}>
+                  <div className="sticky top-0 bg-white px-1 py-0.5 text-[10px] font-mono uppercase tracking-widest text-zinc-400">
+                    {group.label}
+                  </div>
+                  <div className="grid grid-cols-10 gap-0.5">
+                    {group.emojis.map((em, i) => (
+                      <button
+                        key={`${group.label}-${i}`}
+                        onMouseDown={(ev) => ev.preventDefault()}
+                        onClick={() => { insertAtCursor(em); setShowEmoji(false); }}
+                        className="rounded p-1 text-lg hover:bg-amber-100"
+                      >
+                        {em}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               ))}
             </div>
           )}
