@@ -27,10 +27,10 @@ export default function Hero() {
           </span>
           <div>
             <div className="text-2xl font-semibold tracking-tight">
-              eXcalibur <span className="font-normal text-stone-400 dark:text-zinc-500">MCP</span>
+              eXcalibur <span className="font-normal text-stone-400 dark:text-zinc-500">Posts Manager</span>
             </div>
             <div className="text-xs uppercase tracking-widest text-amber-600 dark:text-amber-400">
-              AI-assisted CMS for X
+              A Content Management System for X
             </div>
           </div>
         </div>
@@ -40,9 +40,17 @@ export default function Hero() {
         </h1>
         <p className="mt-4 max-w-2xl text-base leading-relaxed text-stone-600 dark:text-zinc-400">
           Draft in a block editor, refine flagged passages with Claude, schedule and repost, and
-          keep a reusable snippet library — then publish to X. Sign in with a Nostr key and pay per
-          use in Bitcoin Lightning; your posts, schedule, and snippets live with your npub, not a
-          login.
+          keep a reusable snippet library — then publish to X. Built on{" "}
+          <a
+            href="https://github.com/lonniev/excalibur-mcp"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-stone-700 underline-offset-2 hover:underline dark:text-zinc-300"
+          >
+            eXcalibur MCP
+          </a>
+          , the monetized MCP for X posting: sign in with a Nostr key and pay per use in Bitcoin
+          Lightning; your posts, schedule, and snippets live with your npub, not a login.
         </p>
 
         <div className="mt-8 grid max-w-3xl gap-3 sm:grid-cols-3">
