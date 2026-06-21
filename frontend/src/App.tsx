@@ -9,6 +9,7 @@ import {
 } from "./lib/mcp";
 import { hydrateAvatarFromNostr } from "./lib/avatar";
 import Nav from "./components/Nav";
+import Hero from "./components/Hero";
 import NpubGate from "./components/NpubGate";
 import PostsPage from "./components/PostsPage";
 import PostEditorPage from "./components/PostEditorPage";
@@ -74,7 +75,10 @@ export default function App() {
           <>
             <TopBar />
             <main className="flex-1">
-              <NpubGate onLogin={onLogin} operatorHash={status?.operator_npub_hash} />
+              <Hero />
+              <div className="pb-16">
+                <NpubGate onLogin={onLogin} operatorHash={status?.operator_npub_hash} />
+              </div>
             </main>
             <Footer status={status} />
           </>
@@ -109,10 +113,24 @@ function TopBar() {
 
 function Footer({ status }: { status: ServiceStatus | null }) {
   return (
-    <footer className="px-4 py-2 text-center text-xs text-stone-400 dark:text-zinc-600 border-t border-stone-100 dark:border-zinc-900">
-      eXcalibur Editorial v{__APP_VERSION__} · {__BUILD_COMMIT__}
-      {status?.version && ` · MCP ${status.version}`}
-      {status?.tollbooth_dpyc_version && ` · SDK ${status.tollbooth_dpyc_version}`}
+    <footer className="border-t border-stone-100 px-4 py-3 text-center text-xs text-stone-400 dark:border-zinc-900 dark:text-zinc-600 space-y-0.5">
+      <div>
+        eXcalibur Editorial v{__APP_VERSION__} · {__BUILD_COMMIT__}
+        {status?.version && ` · MCP ${status.version}`}
+        {status?.tollbooth_dpyc_version && ` · SDK ${status.tollbooth_dpyc_version}`}
+      </div>
+      <div>
+        Monetized with{" "}
+        <a
+          href="https://tollbooth-dpyc.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-amber-600/80 hover:underline dark:text-amber-400/80"
+        >
+          Tollbooth DPYC™
+        </a>{" "}
+        · Apache-2.0 · Patent Pending (US Prov. 64/045,999)
+      </div>
     </footer>
   );
 }
