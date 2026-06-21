@@ -1,0 +1,77 @@
+# eXcalibur Editorial
+
+> A composer for X (Twitter) posts, monetized per call in Bitcoin Lightning.
+> Write block-structured drafts, refine flagged passages with Claude
+> server-side, schedule and repost, and keep a reusable snippet library —
+> then publish to X. Identity is a Nostr keypair (npub); usage is metered in
+> satoshis — no account, no email, no subscription, no KYC.
+
+eXcalibur is a single-page web app backed by an MCP (Model Context Protocol)
+server. Humans use the web UI; AI agents can call the same MCP tools directly.
+The operator holds the X API credentials in an encrypted vault; patrons pay
+per published post rather than supplying their own keys.
+
+## What is on this site
+
+- **Composer** — a block editor for X posts. Each block is a line/paragraph
+  you can reorder; X has no rich text, so "bold/italic/monospace" render as
+  Unicode Mathematical Alphanumeric Symbols, dividers as box-drawing rules,
+  and an emoji/symbol picker inserts glyphs at the cursor. What you see is
+  what posts.
+- **Refine with Claude** — flag a region of a draft and the server rewrites
+  it against your voice profile and banned constructions. The operator's
+  Anthropic key stays vaulted and never reaches the browser; the AI cost is
+  metered as a Lightning fare.
+- **Posts** — drafts, scheduled, sent, and archived. Repost a sent post in
+  one click.
+- **Snippet library** — save reusable openings, footers, and CTAs under your
+  npub (Neon-backed, follows you across devices); star favorites to get
+  one-click chiclets in the editor.
+- **Wallet** — pre-fund and check your satoshi balance; preview any tool's
+  price before committing.
+- **Profile** — display name, avatar, and Nostr relays stored in your Nostr
+  kind-0 metadata; theme selection (dark by default); build, license, patent,
+  and version transparency.
+
+## Payments and identity
+
+- Sign in with a Nostr npub and prove ownership via a Nostr DM challenge
+  (`request_npub_proof` / `receive_npub_proof`), or paste an nsec for an
+  instant in-browser session key that signs each call inline.
+- Pre-fund a satoshi balance with a Bitcoin Lightning invoice
+  (`purchase_credits`); tool calls debit it. `check_price` previews any
+  tool's cost before committing.
+- Monetization is the Tollbooth DPYC protocol (https://tollbooth-dpyc.com):
+  operator-controlled dynamic per-tool pricing at the MCP layer.
+
+## For AI agents
+
+- MCP endpoint: https://excalibur-mcp.fastmcp.app/mcp (streamable HTTP)
+- Start with `excalibur_service_status` (free, no arguments) to check
+  liveness, then `excalibur_check_price` to preview costs.
+- Posting tools: `excalibur_post_tweet`, `excalibur_post_tweet_image`.
+- Stored-post CRUD: `excalibur_create_post`, `excalibur_get_post`,
+  `excalibur_list_posts`, `excalibur_update_post`, `excalibur_delete_post`.
+- Snippet library (free, proof-gated, owner-scoped): `excalibur_list_snippets`,
+  `excalibur_save_snippet`, `excalibur_delete_snippet`.
+- Server-side AI refine (metered): `excalibur_refine_post_region`.
+- Balance and credits (free): `excalibur_check_balance`,
+  `excalibur_purchase_credits`, `excalibur_check_payment`.
+
+## License, patent, and trademarks
+
+- Source is open under the Apache License 2.0. The services on top are private
+  commerce: each operator sets their own tolls.
+- Patent Pending — US Provisional Application 64/045,999 (Tollbooth DPYC
+  Economic Architecture).
+- DPYC, Tollbooth DPYC, and Don't Pester Your Customer are trademarks of
+  Lonnie VanZandt.
+
+## Links
+
+- Web app: https://excalibur-app.pages.dev
+- MCP endpoint: https://excalibur-mcp.fastmcp.app/mcp
+- Source: https://github.com/lonniev/excalibur-mcp
+- Tollbooth DPYC (monetization SDK and network): https://tollbooth-dpyc.com
+- DPYC community & patent filings: https://github.com/lonniev/dpyc-community
+- DPYC Oracle (free community concierge): https://dpyc-oracle.fastmcp.app/mcp

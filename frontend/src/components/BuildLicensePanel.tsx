@@ -40,6 +40,11 @@ export default function BuildLicensePanel({ status }: { status: ServiceStatus | 
 
       <Section label="License" />
       <Row label="Apache 2.0" href="https://www.apache.org/licenses/LICENSE-2.0" value="apache.org/licenses/LICENSE-2.0" />
+
+      <Section label="Patent &amp; trademarks" />
+      <Row label="Patent" value="Patent Pending — US Provisional 64/045,999" />
+      <Row label="Filing" href="https://github.com/lonniev/dpyc-community/tree/main/docs/patent" value="dpyc-community/docs/patent" />
+      <Row label="Trademarks" value="DPYC · Tollbooth DPYC · Don't Pester Your Customer™" />
     </div>
   );
 }
