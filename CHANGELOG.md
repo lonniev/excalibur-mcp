@@ -5,6 +5,31 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-06-21
+
+### Fixed — scheduler audit ring wrote/read nothing (the "no new ticks" bug)
+
+`scheduler_runs` was missing from `_DOMAIN_TABLES`, so `db.neon._qualify` never
+schema-qualified it. Because Neon's HTTP SQL API ignores `search_path`, every
+`record_run`/`list_runs` hit the wrong schema and failed — silently for the
+best-effort write, and as an error dict for the read, so the FE always showed
+"scheduler: no new ticks". Added `scheduler_runs` to `_DOMAIN_TABLES`.
+
+### Added — visible "attempted" marker on held scheduled posts
+
+Sign-of-life for the cron Worker: when it tries a due post but holds it back for
+access (X token), finance (balance), network (X API), or content reasons, it now
+stamps the post instead of leaving it silently `scheduled`.
+
+- New `posts.last_attempt_at` + `last_attempt_reason` columns (idempotent ALTERs);
+  `scheduler.process_due_posts` stamps every held attempt via new
+  `posts.mark_attempt` (best-effort), and a successful fire clears the reason.
+- `list_posts` / `get_post` surface both fields.
+- FE PostsPage shows a ⚠ chip on a held scheduled post (e.g. "out of credits",
+  "X access expired") with the raw reason + time in the tooltip.
+- DebugPanel renders a `processed=0` tick as "scheduler … · alive · nothing due"
+  so the heartbeat reads as life, not failure.
+
 ## [0.15.0] — 2026-06-21
 
 ### Added — scheduler-tick visibility in the FE debug log

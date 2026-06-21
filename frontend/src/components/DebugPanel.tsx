@@ -49,10 +49,14 @@ function pushRun(run: SchedulerRun): void {
   } catch {
     /* keep raw */
   }
-  debugPush(
-    bad ? "error" : "result",
-    `scheduler ${when} · processed=${s.processed ?? 0} posted=${posted.length} skipped=${skipped.length} errors=${errors.length}`,
-  );
+  const processed = s.processed ?? 0;
+  // A processed=0 tick is the Worker's heartbeat — say so plainly, otherwise
+  // "posted=0 skipped=0" reads like a failure when it just means nothing was due.
+  const tally =
+    processed === 0
+      ? "alive · nothing due"
+      : `processed=${processed} posted=${posted.length} skipped=${skipped.length} errors=${errors.length}`;
+  debugPush(bad ? "error" : "result", `scheduler ${when} · ${tally}`);
 }
 
 export default function DebugPanel() {

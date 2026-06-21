@@ -460,6 +460,11 @@ export interface PostSummary {
   publish_at: string | null;
   updated_at: string | null;
   tweet_url?: string | null;
+  // Set when the scheduler TRIED to fire a scheduled post but held it back —
+  // the reason (insufficient_balance / oauth_token_expired / x_api_error / …)
+  // and when. The post stays scheduled and retries on the next due tick.
+  last_attempt_at?: string | null;
+  last_attempt_reason?: string | null;
 }
 
 export type SortDir = "asc" | "desc";
@@ -500,6 +505,8 @@ export interface PostRow {
   cease_at?: string | null;
   last_sent_at?: string | null;
   tweet_url?: string | null;
+  last_attempt_at?: string | null;
+  last_attempt_reason?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
   error?: string;
