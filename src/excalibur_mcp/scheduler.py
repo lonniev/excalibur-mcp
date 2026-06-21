@@ -161,7 +161,8 @@ async def process_due_posts(runtime: Any) -> dict[str, Any]:
             tweet_url,
         )
         posted.append({"post_id": pid, "next_status": next_status,
-                       "tweet_id": (result or {}).get("id") if isinstance(result, dict) else None})
+                       "tweet_id": (result or {}).get("tweet_id") if isinstance(result, dict) else None,
+                       "tweet_url": tweet_url})
 
     summary = {"processed": len(due), "posted": posted,
                "skipped": skipped, "errors": errors}

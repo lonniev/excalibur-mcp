@@ -120,6 +120,7 @@ async def get(runtime: Any, tool_id: str, *, post_id: str, npub: str) -> dict[st
         "recurrence": row.get("recurrence"),
         "cease_at": str(row["cease_at"]) if row.get("cease_at") else None,
         "last_sent_at": str(row["last_sent_at"]) if row.get("last_sent_at") else None,
+        "tweet_url": row.get("tweet_url"),
         "created_at": str(row.get("created_at") or ""),
         "updated_at": str(row.get("updated_at") or ""),
     }

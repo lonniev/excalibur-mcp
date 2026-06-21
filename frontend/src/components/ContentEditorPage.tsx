@@ -4,7 +4,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import {
   MessageCircle, Repeat2, Heart, BarChart2, Bookmark, Share, BadgeCheck,
   Sparkles, Flag, GripVertical, Pencil, Trash2, Plus, Calendar, Repeat,
-  Octagon, Copy, Check, ChevronUp, ChevronDown, Eye, EyeOff,
+  Octagon, Check, ChevronUp, ChevronDown, Eye, EyeOff,
   Wand2, Loader2, Swords, Save, Bold, Italic, Code, Smile, Star, Minus,
 } from "lucide-react";
 import { useSession } from "../App";
@@ -78,7 +78,6 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   const [freq, setFreq] = useState<Freq>("none");
   const [interval, setIntervalN] = useState(1);
   const [ceaseAt, setCeaseAt] = useState("");
-  const [copied, setCopied] = useState(false);
 
   const [loading, setLoading] = useState(!isNew);
   const [saving, setSaving] = useState(false);
@@ -286,25 +285,6 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     setBlocks((prev) => (prev.length > 1 ? prev.filter((b) => b.id !== blockId) : prev));
 
   // ── persistence ───────────────────────────────────────────────────────────
-  const intent = useMemo(() => ({
-    intent: "scheduled_post",
-    operator: "excalibur-mcp",
-    text: composed,
-    publish_at: publishAt ? new Date(publishAt).toISOString() : null,
-    recurrence: freq === "none" ? null : { freq, interval: Number(interval) || 1 },
-    cease_at: ceaseAt ? new Date(ceaseAt).toISOString() : null,
-    voice_profile_present: voice.trim().length > 0,
-    banned_constructions: bans.filter((b) => b.on).map((b) => b.text),
-  }), [composed, publishAt, freq, interval, ceaseAt, voice, bans]);
-
-  async function copyIntent() {
-    try {
-      await navigator.clipboard.writeText(JSON.stringify(intent, null, 2));
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
-    } catch { setHint("Copy failed — select the JSON manually."); }
-  }
-
   async function persist(scheduled: boolean) {
     if (!composed.trim()) { setError("Write something first."); return; }
     if (scheduled && !publishAt) { setError("Set a publish time to schedule."); setTab("schedule"); return; }
@@ -678,7 +658,6 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
                   freq={freq} setFreq={setFreq}
                   interval={interval} setInterval={setIntervalN}
                   ceaseAt={ceaseAt} setCeaseAt={setCeaseAt}
-                  intent={intent} copyIntent={copyIntent} copied={copied}
                   onSchedule={() => persist(true)} saving={saving}
                   onDiscard={handleDiscard} isNew={isNew}
                 />
@@ -996,13 +975,12 @@ function VoiceTab({ voice, setVoice, bans, setBans }: {
 // ── schedule tab ────────────────────────────────────────────────────────────
 function ScheduleTab({
   publishAt, setPublishAt, freq, setFreq, interval, setInterval, ceaseAt, setCeaseAt,
-  intent, copyIntent, copied, onSchedule, saving, onDiscard, isNew,
+  onSchedule, saving, onDiscard, isNew,
 }: {
   publishAt: string; setPublishAt: (v: string) => void;
   freq: Freq; setFreq: (v: Freq) => void;
   interval: number; setInterval: (v: number) => void;
   ceaseAt: string; setCeaseAt: (v: string) => void;
-  intent: unknown; copyIntent: () => void; copied: boolean;
   onSchedule: () => void; saving: boolean; onDiscard: () => void; isNew: boolean;
 }) {
   const field = "w-full rounded-md border border-zinc-700 bg-zinc-900 p-2 text-sm text-zinc-200 outline-none focus:border-amber-400";
@@ -1036,15 +1014,7 @@ function ScheduleTab({
         <input type="datetime-local" value={ceaseAt} onChange={(e) => setCeaseAt(e.target.value)} disabled={freq === "none"} className={`${field} disabled:opacity-40`} />
       </div>
 
-      <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-3">
-        <div className="mb-2 flex items-center justify-between">
-          <span className="font-mono text-[11px] uppercase tracking-widest text-zinc-500">publish intent</span>
-          <button onClick={copyIntent} className="flex items-center gap-1 text-xs text-amber-300 hover:text-amber-200">
-            {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}{copied ? "Copied" : "Copy"}
-          </button>
-        </div>
-        <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-zinc-400">{JSON.stringify(intent, null, 2)}</pre>
-      </div>
+      <CalendarPreview publishAt={publishAt} freq={freq} interval={interval} ceaseAt={ceaseAt} />
 
       <button onClick={onSchedule} disabled={!canSchedule || saving}
         className="flex w-full items-center justify-center gap-2 rounded-md bg-amber-400 px-4 py-2.5 text-sm font-semibold text-zinc-950 hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-40 transition-colors">
@@ -1056,6 +1026,118 @@ function ScheduleTab({
       <button onClick={onDiscard} className="w-full text-center text-xs text-zinc-600 hover:text-rose-400 transition-colors">
         {isNew ? "Discard draft" : "Archive post"}
       </button>
+    </div>
+  );
+}
+
+// Step a date forward one recurrence step (mirrors the BE scheduler's _advance:
+// daily/weekly add days; monthly adds months and clamps to the month's length).
+function advance(d: Date, freq: Freq, interval: number): Date {
+  const n = Math.max(1, Number(interval) || 1);
+  const r = new Date(d);
+  if (freq === "daily") r.setDate(r.getDate() + n);
+  else if (freq === "weekly") r.setDate(r.getDate() + 7 * n);
+  else if (freq === "monthly") {
+    const day = r.getDate();
+    r.setDate(1);
+    r.setMonth(r.getMonth() + n);
+    const dim = new Date(r.getFullYear(), r.getMonth() + 1, 0).getDate();
+    r.setDate(Math.min(day, dim));
+  }
+  return r;
+}
+
+// A compact month calendar that marks a scheduled post's start, its recurrence
+// occurrences, and the cease date — replaces the raw intent-JSON dump.
+function CalendarPreview({ publishAt, freq, interval, ceaseAt }: {
+  publishAt: string; freq: Freq; interval: number; ceaseAt: string;
+}) {
+  const start = publishAt ? new Date(publishAt) : null;
+  const valid = !!start && !isNaN(start.getTime());
+  const cease = ceaseAt ? new Date(ceaseAt) : null;
+  const ceaseValid = !!cease && !isNaN(cease.getTime());
+
+  // Month currently shown; defaults to the start month, re-centering if it moves.
+  const [view, setView] = useState(() => {
+    const base = valid ? start! : new Date();
+    return { y: base.getFullYear(), m: base.getMonth() };
+  });
+  useEffect(() => {
+    if (valid) setView({ y: start!.getFullYear(), m: start!.getMonth() });
+    // Only re-center when the start date itself changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [publishAt]);
+
+  const dayKey = (y: number, m: number, d: number) => `${y}-${m}-${d}`;
+
+  // Occurrence days, stepping from start until cease (or a horizon cap).
+  const occ = useMemo(() => {
+    const set = new Set<string>();
+    if (!valid) return set;
+    if (freq === "none") {
+      set.add(dayKey(start!.getFullYear(), start!.getMonth(), start!.getDate()));
+      return set;
+    }
+    let cur = new Date(start!);
+    for (let i = 0; i < 240; i++) {
+      if (ceaseValid && cur > cease!) break;
+      set.add(dayKey(cur.getFullYear(), cur.getMonth(), cur.getDate()));
+      cur = advance(cur, freq, interval);
+    }
+    return set;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [publishAt, freq, interval, ceaseAt]);
+
+  if (!valid) {
+    return <p className="text-xs text-zinc-500">Set a publish time to preview the schedule.</p>;
+  }
+
+  const startKey = dayKey(start!.getFullYear(), start!.getMonth(), start!.getDate());
+  const ceaseKey = ceaseValid ? dayKey(cease!.getFullYear(), cease!.getMonth(), cease!.getDate()) : null;
+  const first = new Date(view.y, view.m, 1);
+  const daysInMonth = new Date(view.y, view.m + 1, 0).getDate();
+  const lead = first.getDay();
+  const cells: (number | null)[] = [
+    ...Array(lead).fill(null),
+    ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
+  ];
+  const monthLabel = first.toLocaleString(undefined, { month: "long", year: "numeric" });
+  const prev = () => setView((v) => (v.m === 0 ? { y: v.y - 1, m: 11 } : { y: v.y, m: v.m - 1 }));
+  const next = () => setView((v) => (v.m === 11 ? { y: v.y + 1, m: 0 } : { y: v.y, m: v.m + 1 }));
+
+  return (
+    <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <button onClick={prev} title="Previous month" className="rounded px-2 text-zinc-500 hover:text-amber-300">‹</button>
+        <span className="font-mono text-[11px] uppercase tracking-widest text-zinc-400">{monthLabel}</span>
+        <button onClick={next} title="Next month" className="rounded px-2 text-zinc-500 hover:text-amber-300">›</button>
+      </div>
+      <div className="grid grid-cols-7 gap-0.5 text-center">
+        {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
+          <div key={i} className="pb-1 font-mono text-[9px] uppercase text-zinc-600">{d}</div>
+        ))}
+        {cells.map((day, i) => {
+          if (day === null) return <div key={i} />;
+          const k = dayKey(view.y, view.m, day);
+          const isStart = k === startKey;
+          const isOcc = occ.has(k);
+          const isCease = k === ceaseKey;
+          let cls = "text-zinc-500";
+          if (isOcc) cls = "bg-amber-400/20 text-amber-300";
+          if (isStart) cls = "bg-amber-400 font-semibold text-zinc-950";
+          if (isCease) cls = `ring-1 ring-rose-400 text-rose-300${isStart || isOcc ? " bg-amber-400/20" : ""}`;
+          return (
+            <div key={i} className={`flex aspect-square items-center justify-center rounded text-[11px] tabular-nums ${cls}`}>
+              {day}
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-zinc-500">
+        <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-amber-400" /> start</span>
+        {freq !== "none" && <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-amber-400/30" /> repeats</span>}
+        {ceaseKey && <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-sm ring-1 ring-rose-400" /> cease</span>}
+      </div>
     </div>
   );
 }

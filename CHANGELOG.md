@@ -5,6 +5,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.14.1] — 2026-06-21
+
+### Fixed — scheduled-post fire surfaces its tweet URL/id (found by a live test)
+
+- **`get_post` now returns `tweet_url`.** The column existed and `list_posts`
+  returned it, but the single-post read dropped it — so the editor opening a
+  `sent` post couldn't preview the posted tweet.
+- **The scheduler summary reports the real `tweet_id`** (it read `result["id"]`
+  → always null; `x_client.post_tweet` returns `tweet_id`/`tweet_url`) and now
+  also includes `tweet_url` per posted item. Storage was already correct — only
+  the summary was wrong.
+
+### Changed — Schedule tab shows a month calendar instead of intent JSON (FE)
+
+- The editor's Schedule tab dropped the raw publish-intent JSON dump for a
+  compact month calendar marking the post's **start**, each **recurrence
+  occurrence**, and the **cease** date (‹ › to scan months). Mirrors the BE
+  recurrence math (daily/weekly add days; monthly adds months, clamped to month
+  length).
+
 ## [0.14.0] — 2026-06-21
 
 ### Added — Snippets are a first-class peer of Posts
