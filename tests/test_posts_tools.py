@@ -93,6 +93,19 @@ async def test_get_rejects_non_uuid():
 
 
 @pytest.mark.asyncio
+async def test_get_surfaces_tweet_url():
+    row = {"post_id": PID, "npub": NPUB, "status": "sent", "doc": {"blocks": []},
+           "text_cache": "hi", "publish_at": None, "recurrence": None,
+           "cease_at": None, "last_sent_at": "2026-06-21T14:39:24+00:00",
+           "tweet_url": "https://x.com/i/status/123",
+           "created_at": "c", "updated_at": "u"}
+    with patch.object(posts_tools.posts_db, "get_post", AsyncMock(return_value=row)):
+        out = await posts_tools.get(_runtime(), TOOL, post_id=PID, npub=NPUB)
+    assert out["tweet_url"] == "https://x.com/i/status/123"
+    assert out["status"] == "sent"
+
+
+@pytest.mark.asyncio
 async def test_update_rejects_unknown_patch_key():
     with pytest.raises(ValueError):
         await posts_tools.update(

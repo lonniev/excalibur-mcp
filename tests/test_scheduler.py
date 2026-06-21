@@ -75,7 +75,10 @@ def _due_row(**over):
 @pytest.mark.asyncio
 async def test_fires_charges_posts_and_reschedules():
     rt = _runtime()
-    client = SimpleNamespace(post_tweet=AsyncMock(return_value={"id": "tw1"}))
+    # x_client.post_tweet returns {tweet_id, tweet_url} — the summary + mark_sent
+    # must read those exact keys (not a bare "id").
+    url = "https://x.com/i/status/tw1"
+    client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "tw1", "tweet_url": url}))
     with patch.object(scheduler.posts_db, "list_due", AsyncMock(return_value=[_due_row()])), \
          patch.object(scheduler.posts_db, "mark_sent", AsyncMock()) as mark, \
          patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
@@ -83,8 +86,12 @@ async def test_fires_charges_posts_and_reschedules():
     assert out["processed"] == 1 and len(out["posted"]) == 1
     rt._apply_billing.assert_awaited_once()
     client.post_tweet.assert_awaited_once()
-    # rescheduled (daily, within cease) → status scheduled, mark_sent called
+    # summary surfaces the real tweet id + url (regression: was reading "id" → null)
+    assert out["posted"][0]["tweet_id"] == "tw1"
+    assert out["posted"][0]["tweet_url"] == url
+    # rescheduled (daily, within cease) → status scheduled, mark_sent gets the url
     assert mark.await_args.args[2] == "scheduled"
+    assert mark.await_args.args[4] == url
     rt.rollback_debit.assert_not_awaited()
 
 
