@@ -5,6 +5,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-06-21
+
+### Added — scheduler-tick visibility in the FE debug log
+
+The Cloudflare cron Worker runs on the edge, so its `process_scheduled_posts`
+ticks were invisible in the browser — which hid *why* a due post wasn't reaching
+X (e.g. owner balance 0 → `insufficient_balance` skip, or an expired X token →
+`oauth_token_expired`). The MCP now records each tick and the FE pulls it into
+the existing DebugPanel.
+
+- **`scheduler_runs` audit ring** (`db/neon.py`, new `db/scheduler_runs.py`): a
+  single-operator JSONB table; `process_scheduled_posts` records its outcome
+  summary every tick (best-effort — an audit-write failure never undoes posting),
+  pruned to the newest 50 runs.
+- **New `get_scheduler_log` tool** (operator-only, free): returns recent ticks
+  with per-post skip/error reasons.
+- **FE DebugPanel** gains a "Scheduler ↻" button (+ optional 60s auto-poll) that
+  merges Worker ticks into the log, red-highlighting skips/errors. Non-operator
+  sessions see nothing (the tool is operator-gated).
+
 ## [0.14.1] — 2026-06-21
 
 ### Fixed — scheduled-post fire surfaces its tweet URL/id (found by a live test)

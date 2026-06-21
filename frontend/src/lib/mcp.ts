@@ -224,6 +224,9 @@ const BOOTSTRAP_TOOLS = new Set([
 const QUIET_TOOLS = new Set([
   "service_status",
   "get_nostr_profile",
+  // The scheduler-log poll feeds the debug panel its own synthesized entries;
+  // logging the poll call itself would just be noise.
+  "get_scheduler_log",
 ]);
 
 async function callTool<T = unknown>(
@@ -765,6 +768,39 @@ export async function saveSnippet(opts: {
 export async function deleteSnippet(id: string): Promise<boolean> {
   const r = await callTool<DeleteSnippetResult>("delete_snippet", { snippet_id: id });
   return r.deleted === true;
+}
+
+// ─── Scheduler-tick audit log (operator-only) ──────────────────────────────
+
+/// One outcome of a scheduled-post fire (per due post). Mirrors the BE summary.
+export interface SchedulerOutcome {
+  post_id?: string;
+  reason?: string; // skip/error reason, e.g. insufficient_balance / oauth_token_expired
+  next_status?: string;
+  tweet_url?: string | null;
+}
+export interface SchedulerRun {
+  run_at: string;
+  summary: {
+    processed?: number;
+    posted?: SchedulerOutcome[];
+    skipped?: SchedulerOutcome[];
+    errors?: SchedulerOutcome[];
+  };
+}
+interface SchedulerLogResult {
+  success?: boolean;
+  runs?: SchedulerRun[];
+  error?: string;
+  error_code?: string;
+}
+
+/// Recent scheduler ticks (newest first) — what the Cloudflare cron Worker has
+/// been doing. Operator-gated: only succeeds when the active npub is the
+/// operator's (with proof). Quiet so the poll itself doesn't clutter the log.
+export async function getSchedulerLog(limit = 25): Promise<SchedulerRun[]> {
+  const r = await callTool<SchedulerLogResult>("get_scheduler_log", { limit });
+  return r.runs ?? [];
 }
 
 // ─── Nostr kind-0 profile (served by the wheel; no relay I/O in the FE) ────

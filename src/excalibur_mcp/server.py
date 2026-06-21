@@ -107,6 +107,11 @@ _DOMAIN_TOOLS = [
     # the trigger itself; each fired post bills its own owner for post_tweet.
     ToolIdentity(tool_id=capability_uuid("process_scheduled_posts"), capability="process_scheduled_posts",
                  category="restricted", intent="Operator: publish all due scheduled posts"),
+    # Operator-only read of the scheduler-tick audit ring (powers the FE debug
+    # log's view of what the cron Worker is doing). `restricted` + free, same as
+    # the cron entrypoint — runs contain post ids and owner npubs.
+    ToolIdentity(tool_id=capability_uuid("get_scheduler_log"), capability="get_scheduler_log",
+                 category="restricted", intent="Operator: read recent scheduler-tick outcomes"),
 ]
 
 TOOL_REGISTRY: dict[str, ToolIdentity] = {ti.tool_id: ti for ti in _DOMAIN_TOOLS}
@@ -707,6 +712,26 @@ async def process_scheduled_posts(
     from excalibur_mcp.scheduler import process_due_posts
 
     return await process_due_posts(runtime)
+
+
+@tool
+@runtime.paid_tool(capability_uuid("get_scheduler_log"), catch_errors=True)
+async def get_scheduler_log(
+    npub: Annotated[str, Field(description="The OPERATOR's npub (npub1...); this tool is operator-only.")] = "",
+    proof: str = "",
+    limit: Annotated[int, Field(description="How many recent runs to return (1..100).")] = 25,
+) -> dict:
+    """Read recent scheduler-tick outcomes (operator-only).
+
+    Each ``process_scheduled_posts`` run — fired by the Cloudflare cron Worker or
+    a manual trigger — records its summary. This surfaces them so the FE debug
+    log can show what the Worker is doing, especially per-post skip/error reasons
+    (e.g. ``insufficient_balance`` vs ``oauth_token_expired``). Requires the
+    operator's npub proof; free. Returns ``{runs:[{run_at, summary}]}``.
+    """
+    from excalibur_mcp.db import scheduler_runs
+
+    return {"runs": await scheduler_runs.list_runs(limit)}
 
 
 # ---------------------------------------------------------------------------
