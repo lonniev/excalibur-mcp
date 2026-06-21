@@ -5,6 +5,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.12.1] — 2026-06-20
+
+### Fixed — posts can be marked "sent" (Post It now flips the row)
+
+- `create_post` / `update_post` rejected `status="sent"` (`tool_input_invalid`),
+  so a successful **Post It** posted to X but the draft never moved to **Sent**.
+  `sent` is a valid terminal status (it's in the table contract and the
+  scheduler sets it) — added it to the create and patch allow-lists.
+
 ## [0.12.0] — 2026-06-20
 
 ### Added — Neon-backed snippet library (server-side, npub-scoped)
