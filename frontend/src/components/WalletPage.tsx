@@ -68,7 +68,7 @@ export default function WalletPage() {
   const bolt = invoice?.lightning_invoice || invoice?.payment_request;
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-6 space-y-5">
+    <div className="max-w-3xl mx-auto px-4 py-6 space-y-5">
       <h1 className="text-lg font-semibold">Wallet</h1>
 
       <div className={`${card} p-5`}>

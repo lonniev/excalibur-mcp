@@ -3,6 +3,7 @@
 // wheel auto-applies the discount on subsequent paid tool calls.
 
 import { useEffect, useState } from "react";
+import { Loader2 } from "lucide-react";
 import { forgetCoupon, listMyCoupons, redeemCoupon, type PatronCoupon } from "../lib/mcp";
 
 const card = "rounded-xl border border-stone-200 dark:border-zinc-800 bg-white dark:bg-zinc-900";
@@ -107,7 +108,7 @@ export default function CouponsPanel() {
       )}
 
       {loading ? (
-        <div className="text-xs text-stone-400 dark:text-zinc-500 py-2">Loading…</div>
+        <div className="flex items-center gap-1.5 text-xs text-stone-400 dark:text-zinc-500 py-2"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading…</div>
       ) : loadError ? (
         <div className="rounded-lg p-2.5 text-xs bg-red-50 border border-red-200 text-red-700 dark:bg-red-500/10 dark:border-red-500/30 dark:text-red-400">{loadError}</div>
       ) : coupons.length === 0 ? (

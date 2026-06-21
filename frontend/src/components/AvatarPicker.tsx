@@ -4,6 +4,7 @@
 // lazy-loaded per tile, never bundled. Re-skinned to Tailwind/dark.
 
 import { useEffect, useState } from "react";
+import { Loader2 } from "lucide-react";
 import Avatar, { AVATAR_CHOICES } from "./Avatar";
 
 interface Collection {
@@ -105,7 +106,7 @@ export default function AvatarPicker({ value, onChange }: { value: string; onCha
             )}
           </div>
 
-          {loading && <p className="py-6 text-center text-xs text-stone-400 dark:text-zinc-500">Loading catalog…</p>}
+          {loading && <p className="flex items-center justify-center gap-1.5 py-6 text-center text-xs text-stone-400 dark:text-zinc-500"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading catalog…</p>}
           {error && (
             <div className="rounded-lg p-2.5 text-xs bg-red-50 border border-red-200 text-red-700 dark:bg-red-500/10 dark:border-red-500/30 dark:text-red-400">
               Couldn't reach Iconify: {error}

@@ -36,7 +36,7 @@ export default function ProfilePage() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-6 space-y-5">
+    <div className="max-w-3xl mx-auto px-4 py-6 space-y-5">
       <h1 className="text-lg font-semibold">Profile</h1>
 
       {/* Nostr profile (kind-0) — avatar + contact, self-sovereign */}
