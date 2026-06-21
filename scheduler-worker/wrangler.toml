@@ -1,9 +1,10 @@
 # Cloudflare Worker — eXcalibur scheduled-post cron trigger.
 #
-# Deploy is DEFERRED until the Cloudflare project is wired (alongside the
-# editorial FE). This Worker holds NO domain logic: on each cron tick it calls
-# the operator-only `excalibur_process_scheduled_posts` MCP tool, which does the
-# actual due-post selection, owner billing, and posting server-side.
+# Protocol-honoring: the Worker stores NO secrets. It obtains operator
+# authorization via the Secure Courier npub-proof dance (request_npub_proof →
+# operator key-holder replies → receive_npub_proof) and caches only the
+# short-lived token it gets back, in KV. The operator npub and MCP URL are
+# public. Deploy is DEFERRED until the operator opts in.
 
 name = "excalibur-scheduler"
 main = "src/index.ts"
@@ -14,10 +15,15 @@ compatibility_date = "2026-06-19"
 crons = ["*/10 * * * *"]
 
 [vars]
-# The deployed eXcalibur MCP streamable-HTTP endpoint. CONFIRM the exact path
-# and transport at deploy time.
+# Public, not secret.
 MCP_URL = "https://excalibur-mcp.fastmcp.app/mcp"
+# The operator's PUBLIC npub the worker proxies. Set to the real npub at deploy.
+OPERATOR_NPUB = "npub1..."
 
-# Secrets (NOT committed) — set with `wrangler secret put`:
-#   OPERATOR_NPUB   — the operator's npub1...
-#   OPERATOR_PROOF  — the operator's long-lived proof_token (≤30 days; see README)
+# KV caches the protocol-issued, short-lived proof token (+ in-flight poison) —
+# the same role localStorage plays for the FE. Create the namespace and paste
+# its id here:
+#   wrangler kv namespace create PROOF_KV
+[[kv_namespaces]]
+binding = "PROOF_KV"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"

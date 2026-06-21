@@ -1,53 +1,130 @@
 /**
- * eXcalibur scheduled-post cron Worker.
+ * eXcalibur scheduled-post cron Worker — protocol-honoring edition.
  *
- * On each cron tick this Worker impersonates the OPERATOR (it holds the
- * operator's long-lived npub proof_token) and invokes the operator-only
- * `excalibur_process_scheduled_posts` MCP tool. All domain logic — selecting
- * due posts, billing each owner for post_tweet, posting, rescheduling — lives
- * server-side in excalibur-mcp. The Worker is a dumb, secret-holding trigger.
+ * A worker that wants to act on an npub's behalf is just another actor: it does
+ * NOT store that npub's nsec or a baked proof token. It obtains authorization
+ * the same way the FE and the Claude.ai chat do — the Secure Courier npub-proof
+ * dance — and caches only the short-lived token it gets back (in KV, the way the
+ * FE caches its proof in localStorage). The only configuration is the operator's
+ * PUBLIC npub and the PUBLIC MCP URL. No secrets.
  *
- * No new credential type: this is the same npub-proof mechanism patrons use,
- * with the operator as the proven actor (enabled by the 30-day delegation cap).
+ * Per tick:
+ *   1. Valid cached token  → call process_scheduled_posts (steady state; no
+ *      courier traffic at all).
+ *   2. Pending proof       → receive_npub_proof (poison-scoped, so polling only
+ *      pops the matching reply — safe). On success, cache the token and fire.
+ *   3. No / expired token  → request_npub_proof, which DMs the operator npub.
+ *      A key-holder (the operator, via Studio or any nsec-holding agent) replies
+ *      once; the next tick completes the proof. Re-runs ~monthly at token expiry.
+ *
+ * All domain logic — selecting due posts, billing each owner for post_tweet,
+ * posting, rescheduling — stays server-side in excalibur-mcp.
  */
 
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+
 export interface Env {
-  MCP_URL: string; // streamable-HTTP MCP endpoint (confirm path at deploy)
-  OPERATOR_NPUB: string; // secret
-  OPERATOR_PROOF: string; // secret — operator proof_token, ≤30-day delegation
+  MCP_URL: string; // public streamable-HTTP endpoint
+  OPERATOR_NPUB: string; // PUBLIC npub the worker proxies — not a secret
+  PROOF_KV: KVNamespace; // caches the protocol-issued, short-lived proof token
 }
+
+const SLUG = "excalibur";
+const KEY = "proof_state";
+const RENEW_BEFORE_MS = 24 * 60 * 60 * 1000; // re-request a day before expiry
+const REREQUEST_AFTER_MS = 60 * 60 * 1000; // resend the DM if unanswered for 1h
+
+type ProofState =
+  | { phase: "pending"; poison: string; requestedAt: number }
+  | { phase: "active"; token: string; expiresAt: number };
+
+type Call = <R = any>(name: string, args?: Record<string, unknown>) => Promise<R>;
 
 export default {
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(fireDuePosts(env));
+    ctx.waitUntil(tick(env).then((m) => console.log(`excalibur scheduler: ${m}`)));
+  },
+  // Manual trigger for testing: GET the worker URL to run one tick.
+  async fetch(_req: Request, env: Env): Promise<Response> {
+    return new Response(await tick(env), { status: 200 });
   },
 };
 
-async function fireDuePosts(env: Env): Promise<void> {
-  // MCP JSON-RPC tools/call. CONFIRM the endpoint/transport at deploy — FastMCP
-  // streamable HTTP may require an initialize handshake / session header.
-  const payload = {
-    jsonrpc: "2.0",
-    id: 1,
-    method: "tools/call",
-    params: {
-      name: "excalibur_process_scheduled_posts",
-      arguments: { npub: env.OPERATOR_NPUB, proof: env.OPERATOR_PROOF },
-    },
-  };
+async function tick(env: Env): Promise<string> {
+  const raw = await env.PROOF_KV.get(KEY);
+  const state: ProofState | null = raw ? (JSON.parse(raw) as ProofState) : null;
+  const now = Date.now();
 
-  const res = await fetch(env.MCP_URL, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      accept: "application/json, text/event-stream",
-    },
-    body: JSON.stringify(payload),
+  return withClient(env.MCP_URL, async (call) => {
+    // 1) Fresh cached token → fire due posts. No courier traffic.
+    if (state?.phase === "active" && state.expiresAt - now > RENEW_BEFORE_MS) {
+      return fire(call, env, state.token);
+    }
+
+    // 2) Proof in flight → try to complete it (poison-scoped: safe to poll).
+    if (state?.phase === "pending") {
+      const r = await call("receive_npub_proof", {
+        patron_npub: env.OPERATOR_NPUB,
+        poison: state.poison,
+      });
+      if (r?.success && r?.proof_token) {
+        const expiresAt = now + (Number(r.expires_in_seconds) || 0) * 1000;
+        await env.PROOF_KV.put(KEY, JSON.stringify({ phase: "active", token: r.proof_token, expiresAt }));
+        return fire(call, env, r.proof_token);
+      }
+      if (now - state.requestedAt > REREQUEST_AFTER_MS) return request(call, env);
+      return "Awaiting operator reply to the proof DM.";
+    }
+
+    // 3) No / expiring token → request a fresh proof (DMs the operator npub).
+    return request(call, env);
   });
+}
 
-  if (!res.ok) {
-    console.error(`excalibur scheduler tick failed: ${res.status} ${await res.text()}`);
-    return;
+async function request(call: Call, env: Env): Promise<string> {
+  const r = await call("request_npub_proof", { patron_npub: env.OPERATOR_NPUB });
+  if (!r?.proof_token) return `request_npub_proof returned no session phrase: ${JSON.stringify(r)}`;
+  await env.PROOF_KV.put(
+    KEY,
+    JSON.stringify({ phase: "pending", poison: r.proof_token, requestedAt: Date.now() }),
+  );
+  return "Sent a proof-request DM to the operator npub — reply from a key-holder (Studio) to authorize the scheduler.";
+}
+
+async function fire(call: Call, env: Env, proof: string): Promise<string> {
+  const r = await call("process_scheduled_posts", { npub: env.OPERATOR_NPUB, proof });
+  // If the token was rejected (expired/revoked), drop it so the next tick
+  // re-runs the proof dance rather than wedging on a dead token.
+  const code = String(r?.error_code ?? "").toLowerCase();
+  if (r?.success === false && code.includes("proof")) {
+    await env.PROOF_KV.delete(KEY);
+    return `proof rejected (${code}); cleared — will re-request next tick.`;
   }
-  console.log(`excalibur scheduler tick ok: ${res.status}`);
+  return `process_scheduled_posts: ${JSON.stringify(r)}`;
+}
+
+async function withClient<T>(url: string, fn: (call: Call) => Promise<T>): Promise<T> {
+  const client = new Client({ name: "excalibur-scheduler", version: "1.0.0" }, { capabilities: {} });
+  const transport = new StreamableHTTPClientTransport(new URL(url));
+  await client.connect(transport);
+  const call: Call = async (name, args = {}) => {
+    const res: any = await client.callTool(
+      { name: `${SLUG}_${name}`, arguments: args },
+      undefined,
+      { timeout: 60_000 },
+    );
+    if (res?.structuredContent !== undefined) return res.structuredContent;
+    const text = (res?.content ?? []).find((b: any) => b.type === "text")?.text;
+    try {
+      return JSON.parse(String(text));
+    } catch {
+      return text;
+    }
+  };
+  try {
+    return await fn(call);
+  } finally {
+    await client.close().catch(() => {});
+  }
 }
