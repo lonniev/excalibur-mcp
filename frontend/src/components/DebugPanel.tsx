@@ -97,8 +97,10 @@ export default function DebugPanel() {
   }
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-50">
-      <div className="absolute bottom-0 right-3 flex gap-1">
+    <div className="fixed bottom-0 left-0 right-0 z-50 flex flex-col items-end">
+      {/* Control bar — always in flow ABOVE the panel, so the minimize (Hide)
+          tab is never overlapped by the expanded log. */}
+      <div className="flex gap-1 pr-3">
         {open && (
           <>
             <button
@@ -132,7 +134,7 @@ export default function DebugPanel() {
         </button>
       </div>
       {open && (
-        <div className="max-h-64 overflow-y-auto border-t border-zinc-700 bg-zinc-950/95 p-3 font-mono text-xs backdrop-blur">
+        <div className="max-h-64 w-full overflow-y-auto border-t border-zinc-700 bg-zinc-950/95 p-3 font-mono text-xs backdrop-blur">
           {log.length === 0 && <div className="text-zinc-500">No MCP activity yet.</div>}
           {log.map((entry, i) => {
             const failed = isFailure(entry);
