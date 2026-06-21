@@ -39,8 +39,8 @@ export default function Hero() {
           An AI-assisted Content Management System for your X posts.
         </h1>
         <p className="mt-4 max-w-2xl text-base leading-relaxed text-stone-600 dark:text-zinc-400">
-          Draft in a block editor, refine flagged passages with Claude, schedule and repost, and
-          keep a reusable snippet library — then publish to X. Built on{" "}
+          Stay in the zone. Let your agentic assistant post thoughts or marketing copy straight to X
+          through{" "}
           <a
             href="https://github.com/lonniev/excalibur-mcp"
             target="_blank"
@@ -48,9 +48,14 @@ export default function Hero() {
             className="text-stone-700 underline-offset-2 hover:underline dark:text-zinc-300"
           >
             eXcalibur MCP
-          </a>
-          , the monetized MCP for X posting: sign in with a Nostr key and pay per use in Bitcoin
-          Lightning; your posts, schedule, and snippets live with your npub, not a login.
+          </a>{" "}
+          — the monetized MCP for X posting — or route a draft into eXcalibur Posts Manager for
+          editorial fine-tuning first.
+        </p>
+        <p className="mt-3 max-w-2xl text-base leading-relaxed text-stone-600 dark:text-zinc-400">
+          Draft in a block editor, refine flagged passages with Claude, schedule and repost, and
+          keep a reusable snippet library. Sign in with a Nostr key and pay per use in Bitcoin
+          Lightning — your posts, schedule, and snippets live with your npub, not a login.
         </p>
 
         <div className="mt-8 grid max-w-3xl gap-3 sm:grid-cols-3">
