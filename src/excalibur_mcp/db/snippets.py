@@ -33,6 +33,12 @@ _SORT_MAP: dict[str, str] = {
     "favorite": "favorite",
 }
 
+# Whitelisted date-filter targets → column (caller selects a key only).
+_DATE_FIELDS: dict[str, str] = {
+    "created": "created_at",
+    "updated": "updated_at",
+}
+
 
 async def list_snippets(
     npub: str,
@@ -40,14 +46,21 @@ async def list_snippets(
     sort_dir: str = "desc",
     page: int = 0,
     page_size: int = 25,
+    search: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    date_field: str = "created",
 ) -> dict[str, Any]:
-    """Server-side sorted, offset-paginated snippet list for the owner.
+    """Server-side sorted, offset-paginated, optionally filtered snippet list.
 
     Returns FULL rows (incl. ``text`` and ``doc``) — snippets are small and the
-    editor's favorite chiclets need the full text to insert. Shape:
+    editor's favorite chiclets need the full text to insert. ``search`` is a
+    case-insensitive regex matched against the name OR body (``~*``);
+    ``date_from``/``date_to`` bound the ``date_field`` column (``_DATE_FIELDS``
+    whitelist, default ``created_at``), end-inclusive. All user input is
+    parameterized; the same WHERE drives the COUNT and the page. Shape:
     ``{snippets, total, page, page_size}``. ORDER BY comes from the fixed
-    ``_SORT_MAP`` whitelist; ``favorite`` always carries ``created_at DESC`` as
-    a stable tiebreak so favorites stay newest-first within the group.
+    ``_SORT_MAP`` whitelist; ``created_at DESC`` is a stable tiebreak.
     """
     psize = max(1, min(200, page_size))
     pg = max(0, page)
@@ -55,19 +68,35 @@ async def list_snippets(
 
     sort_expr = _SORT_MAP.get(sort_col, "favorite")
     row_dir = "DESC" if str(sort_dir).lower() == "desc" else "ASC"
+    date_col = _DATE_FIELDS.get(date_field, "created_at")
+
+    params: list[Any] = [npub]
+    where = "npub = $1"
+    if search:
+        params.append(search)
+        where += f" AND (name ~* ${len(params)} OR body ~* ${len(params)})"
+    if date_from:
+        params.append(date_from)
+        where += f" AND {date_col} >= ${len(params)}::date"
+    if date_to:
+        params.append(date_to)
+        where += f" AND {date_col} < (${len(params)}::date + interval '1 day')"
 
     total_row = await fetchrow(
-        "SELECT COUNT(*) AS n FROM snippets WHERE npub = $1", npub
+        f"SELECT COUNT(*) AS n FROM snippets WHERE {where}", *params
     )
     total = int(total_row["n"]) if total_row and total_row.get("n") is not None else 0
 
+    params.append(psize)
+    limit_idx = len(params)
+    params.append(offset)
+    offset_idx = len(params)
+
     snippets = await fetch(
-        f"SELECT {_COLS} FROM snippets WHERE npub = $1 "
+        f"SELECT {_COLS} FROM snippets WHERE {where} "
         f"ORDER BY {sort_expr} {row_dir}, created_at DESC "
-        "LIMIT $2 OFFSET $3",
-        npub,
-        psize,
-        offset,
+        f"LIMIT ${limit_idx} OFFSET ${offset_idx}",
+        *params,
     )
     return {"snippets": snippets, "total": total, "page": pg, "page_size": psize}
 

@@ -483,8 +483,15 @@ export interface ListPostsResult {
 /// Server-side sorted + offset-paginated post list (the Journal-tab model).
 /// `sortCol` ∈ created|updated|status|scheduled. Returns `{posts, total, page,
 /// page_size}`.
+export interface ListFilterOpts {
+  search?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  dateField?: string;
+}
+
 export async function listPosts(
-  opts: { status?: string; sortCol?: string; sortDir?: SortDir; page?: number; pageSize?: number } = {},
+  opts: { status?: string; sortCol?: string; sortDir?: SortDir; page?: number; pageSize?: number } & ListFilterOpts = {},
 ): Promise<ListPostsResult> {
   const args: Record<string, unknown> = {
     sort_col: opts.sortCol ?? "created",
@@ -493,6 +500,10 @@ export async function listPosts(
     page_size: opts.pageSize ?? 25,
   };
   if (opts.status) args.status = opts.status;
+  if (opts.search) args.search = opts.search;
+  if (opts.dateFrom) args.date_from = opts.dateFrom;
+  if (opts.dateTo) args.date_to = opts.dateTo;
+  if (opts.dateField) args.date_field = opts.dateField;
   return callTool<ListPostsResult>("list_posts", args);
 }
 
@@ -740,14 +751,19 @@ interface DeleteSnippetResult {
 /// `sortCol` ∈ favorite|created|updated|name. Returns full rows (incl. `doc`)
 /// so editor chiclets can insert the text directly.
 export async function listSnippets(
-  opts: { sortCol?: string; sortDir?: SortDir; page?: number; pageSize?: number } = {},
+  opts: { sortCol?: string; sortDir?: SortDir; page?: number; pageSize?: number } & ListFilterOpts = {},
 ): Promise<ListSnippetsResult> {
-  return callTool<ListSnippetsResult>("list_snippets", {
+  const args: Record<string, unknown> = {
     sort_col: opts.sortCol ?? "favorite",
     sort_dir: opts.sortDir ?? "desc",
     page: opts.page ?? 0,
     page_size: opts.pageSize ?? 25,
-  });
+  };
+  if (opts.search) args.search = opts.search;
+  if (opts.dateFrom) args.date_from = opts.dateFrom;
+  if (opts.dateTo) args.date_to = opts.dateTo;
+  if (opts.dateField) args.date_field = opts.dateField;
+  return callTool<ListSnippetsResult>("list_snippets", args);
 }
 
 /// Read one snippet by id (full row incl. `doc`) — used when the editor opens

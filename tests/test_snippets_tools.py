@@ -98,8 +98,27 @@ async def test_list_passes_paged_shape_through():
     with patch.object(snippets_tools.snippets_db, "list_snippets",
                       new=AsyncMock(return_value=paged)) as lst:
         out = await snippets_tools.list_(NPUB, sort_col="name", sort_dir="asc", page=2)
-    lst.assert_awaited_once_with(NPUB, sort_col="name", sort_dir="asc", page=2, page_size=25)
+    lst.assert_awaited_once_with(
+        NPUB, sort_col="name", sort_dir="asc", page=2, page_size=25,
+        search=None, date_from=None, date_to=None, date_field="created",
+    )
     assert out == {"success": True, **paged}
+
+
+@pytest.mark.asyncio
+async def test_list_rejects_invalid_regex_search():
+    with pytest.raises(ValueError):
+        await snippets_tools.list_(NPUB, search="[unterminated")
+
+
+@pytest.mark.asyncio
+async def test_list_threads_valid_search_and_dates():
+    with patch.object(snippets_tools.snippets_db, "list_snippets",
+                      new=AsyncMock(return_value={"snippets": [], "total": 0, "page": 0, "page_size": 25})) as lst:
+        await snippets_tools.list_(NPUB, search="foo|bar", date_from="2026-01-01", date_field="updated")
+    kw = lst.await_args.kwargs
+    assert kw["search"] == "foo|bar" and kw["date_from"] == "2026-01-01"
+    assert kw["date_field"] == "updated"
 
 
 # -- doc handling -----------------------------------------------------------

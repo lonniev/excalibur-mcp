@@ -466,18 +466,28 @@ async def list_posts(
     sort_dir: str = "desc",
     page: int = 0,
     page_size: int = 25,
+    search: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    date_field: str = "created",
     npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "", proof: str = "",
 ) -> dict:
-    """List your stored posts, server-side sorted and offset-paginated. Optional
-    ``status`` filter. ``sort_col`` is one of ``created|updated|status|scheduled``
-    (default ``created``); ``sort_dir`` is ``asc|desc``. ``page`` is 0-indexed;
-    ``page_size`` is 1..100. Returns ``{posts:[…], total, page, page_size}``."""
+    """List your stored posts, server-side sorted, filtered, and offset-paginated.
+
+    Optional ``status`` filter. ``sort_col`` is one of
+    ``created|updated|status|scheduled`` (default ``created``); ``sort_dir`` is
+    ``asc|desc``. ``search`` is a case-insensitive regular expression matched
+    against the post text. ``date_from``/``date_to`` (``YYYY-MM-DD``, end-inclusive)
+    bound the ``date_field`` column, one of ``created|updated|scheduled|sent``
+    (default ``created``). ``page`` is 0-indexed; ``page_size`` is 1..100. Returns
+    ``{posts:[…], total, page, page_size}`` reflecting the filtered set."""
     from excalibur_mcp.tools import posts as posts_tools
 
     return await posts_tools.list_(
         runtime, capability_uuid("list_posts"),
         status=status, sort_col=sort_col, sort_dir=sort_dir,
         page=page, page_size=page_size, npub=npub,
+        search=search, date_from=date_from, date_to=date_to, date_field=date_field,
     )
 
 
@@ -532,18 +542,26 @@ async def list_snippets(
     sort_dir: str = "desc",
     page: int = 0,
     page_size: int = 25,
+    search: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    date_field: str = "created",
     npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
     proof: str = "",
 ) -> dict:
-    """List your saved post snippets, server-side sorted and offset-paginated.
-    ``sort_col`` is one of ``favorite|created|updated|name`` (default
-    ``favorite``); ``sort_dir`` is ``asc|desc``. ``page`` is 0-indexed;
-    ``page_size`` is 1..200. Free, owner-scoped. Returns ``{snippets:[…], total,
-    page, page_size}``."""
+    """List your saved post snippets, server-side sorted, filtered, and
+    offset-paginated. ``sort_col`` is one of ``favorite|created|updated|name``
+    (default ``favorite``); ``sort_dir`` is ``asc|desc``. ``search`` is a
+    case-insensitive regular expression matched against the snippet name or body.
+    ``date_from``/``date_to`` (``YYYY-MM-DD``, end-inclusive) bound the
+    ``date_field`` column, one of ``created|updated`` (default ``created``).
+    ``page`` is 0-indexed; ``page_size`` is 1..200. Free, owner-scoped. Returns
+    ``{snippets:[…], total, page, page_size}`` reflecting the filtered set."""
     from excalibur_mcp.tools import snippets as snippets_tools
 
     return await snippets_tools.list_(
         npub, sort_col=sort_col, sort_dir=sort_dir, page=page, page_size=page_size,
+        search=search, date_from=date_from, date_to=date_to, date_field=date_field,
     )
 
 

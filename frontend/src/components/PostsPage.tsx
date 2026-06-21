@@ -6,8 +6,15 @@ import {
 } from "../lib/mcp";
 import TweetPreviewModal from "./TweetPreviewModal";
 import { PageControls, SortHeader, TableShell } from "./PagedTable";
+import TableFilter from "./TableFilter";
 
 const STATUS_FILTERS = ["", "draft", "scheduled", "sent", "archived"] as const;
+const DATE_FIELDS = [
+  { value: "created", label: "Created" },
+  { value: "updated", label: "Updated" },
+  { value: "scheduled", label: "Scheduled" },
+  { value: "sent", label: "Posted" },
+];
 const PAGE_SIZE = 25;
 
 const statusStyle: Record<string, string> = {
@@ -40,6 +47,10 @@ export default function PostsPage() {
   const [filter, setFilter] = useState("");
   const [sortCol, setSortCol] = useState("created");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [search, setSearch] = useState("");
+  const [dateField, setDateField] = useState("created");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -52,6 +63,7 @@ export default function PostsPage() {
     try {
       const r = await listPosts({
         status: filter || undefined, sortCol, sortDir, page, pageSize: PAGE_SIZE,
+        search, dateFrom, dateTo, dateField,
       });
       if (r.error) setError(r.error);
       setPosts(r.posts ?? []);
@@ -61,7 +73,7 @@ export default function PostsPage() {
     } finally {
       setLoading(false);
     }
-  }, [filter, sortCol, sortDir, page]);
+  }, [filter, sortCol, sortDir, page, search, dateFrom, dateTo, dateField]);
 
   useEffect(() => {
     refresh();
@@ -150,6 +162,19 @@ export default function PostsPage() {
         </button>
       </div>
 
+      <TableFilter
+        search={search}
+        onSearch={(t) => { setSearch(t); setPage(0); }}
+        dateField={dateField}
+        dateFieldOptions={DATE_FIELDS}
+        onDateField={(v) => { setDateField(v); setPage(0); }}
+        dateFrom={dateFrom}
+        dateTo={dateTo}
+        onDateFrom={(v) => { setDateFrom(v); setPage(0); }}
+        onDateTo={(v) => { setDateTo(v); setPage(0); }}
+        onClear={() => { setSearch(""); setDateFrom(""); setDateTo(""); setDateField("created"); setPage(0); }}
+      />
+
       {error && (
         <div className="rounded-lg p-3 mb-3 text-xs bg-red-50 border border-red-200 text-red-700 dark:bg-red-500/10 dark:border-red-500/30 dark:text-red-400">
           {error}
@@ -164,12 +189,18 @@ export default function PostsPage() {
       {loading && posts.length === 0 ? (
         <p className="text-sm text-stone-400 dark:text-zinc-500 py-10 text-center">Loading…</p>
       ) : posts.length === 0 ? (
-        <div className="text-center py-12">
-          <p className="text-sm text-stone-400 dark:text-zinc-500 mb-3">No posts yet.</p>
-          <Link to="/new" className="text-sm text-amber-600 dark:text-amber-400 hover:underline">
-            Compose your first post →
-          </Link>
-        </div>
+        (search || dateFrom || dateTo) ? (
+          <div className="text-center py-12">
+            <p className="text-sm text-stone-400 dark:text-zinc-500">No posts match this filter.</p>
+          </div>
+        ) : (
+          <div className="text-center py-12">
+            <p className="text-sm text-stone-400 dark:text-zinc-500 mb-3">No posts yet.</p>
+            <Link to="/new" className="text-sm text-amber-600 dark:text-amber-400 hover:underline">
+              Compose your first post →
+            </Link>
+          </div>
+        )
       ) : (
         <>
           <TableShell>

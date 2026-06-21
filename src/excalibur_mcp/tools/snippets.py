@@ -14,6 +14,7 @@ import uuid
 from typing import Any
 
 from excalibur_mcp.db import snippets as snippets_db
+from excalibur_mcp.tools._filters import validate_search
 
 logger = logging.getLogger(__name__)
 
@@ -62,9 +63,15 @@ async def list_(
     sort_dir: str = "desc",
     page: int = 0,
     page_size: int = 25,
+    search: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    date_field: str = "created",
 ) -> dict[str, Any]:
     out = await snippets_db.list_snippets(
         npub, sort_col=sort_col, sort_dir=sort_dir, page=page, page_size=page_size,
+        search=validate_search(search), date_from=date_from or None,
+        date_to=date_to or None, date_field=date_field or "created",
     )
     return {"success": True, **out}
 

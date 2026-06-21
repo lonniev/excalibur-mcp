@@ -21,6 +21,7 @@ import uuid
 from typing import Any
 
 from excalibur_mcp.db import posts as posts_db
+from excalibur_mcp.tools._filters import validate_search
 
 logger = logging.getLogger(__name__)
 
@@ -131,10 +132,13 @@ async def get(runtime: Any, tool_id: str, *, post_id: str, npub: str) -> dict[st
 async def list_(
     runtime: Any, tool_id: str, *, status: str, sort_col: str, sort_dir: str,
     page: int, page_size: int, npub: str,
+    search: str = "", date_from: str = "", date_to: str = "", date_field: str = "created",
 ) -> dict[str, Any]:
     return await posts_db.list_posts(
         npub, status=status or None, sort_col=sort_col, sort_dir=sort_dir,
         page=page, page_size=page_size,
+        search=validate_search(search), date_from=date_from or None,
+        date_to=date_to or None, date_field=date_field or "created",
     )
 
 

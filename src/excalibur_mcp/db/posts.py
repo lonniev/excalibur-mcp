@@ -39,6 +39,15 @@ _SORT_MAP: dict[str, str] = {
     "scheduled": "publish_at",
 }
 
+# Whitelisted date-filter targets → column. Like _SORT_MAP, the caller only
+# selects a key; the column expression never comes from input.
+_DATE_FIELDS: dict[str, str] = {
+    "created": "created_at",
+    "updated": "updated_at",
+    "scheduled": "publish_at",
+    "sent": "last_sent_at",
+}
+
 # Patch keys a caller may set on update, mapped to their column cast. Caller
 # input only selects a key; the column expression never comes from the caller,
 # so an unknown patch key can't reach the query as raw SQL.
@@ -136,13 +145,20 @@ async def list_posts(
     sort_dir: str = "desc",
     page: int = 0,
     page_size: int = 25,
+    search: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    date_field: str = "created",
 ) -> dict[str, Any]:
-    """Server-side sorted, offset-paginated list for the owner.
+    """Server-side sorted, offset-paginated, optionally filtered list for the owner.
 
     Sorting runs in SQL so each page is a slice of the fully-ordered dataset.
     ORDER BY comes from the fixed ``_SORT_MAP`` whitelist; ``created_at DESC``
-    is a stable tiebreak. Returns ``{posts:[{post_id,status,excerpt,publish_at,
-    updated_at,tweet_url}], total, page, page_size}``.
+    is a stable tiebreak. ``search`` is a case-insensitive regex matched against
+    ``text_cache`` (``~*``); ``date_from``/``date_to`` bound the ``date_field``
+    column (``_DATE_FIELDS`` whitelist, default ``created_at``), end-inclusive.
+    All user input is parameterized. The same WHERE drives the COUNT and the
+    page. Returns ``{posts, total, page, page_size}``.
     """
     psize = max(1, min(100, page_size))
     pg = max(0, page)
@@ -150,12 +166,22 @@ async def list_posts(
 
     sort_expr = _SORT_MAP.get(sort_col, "created_at")
     row_dir = "DESC" if str(sort_dir).lower() == "desc" else "ASC"
+    date_col = _DATE_FIELDS.get(date_field, "created_at")
 
     params: list[Any] = [npub]
     where = "npub = $1"
     if status:
         params.append(status)
         where += f" AND status = ${len(params)}"
+    if search:
+        params.append(search)
+        where += f" AND text_cache ~* ${len(params)}"
+    if date_from:
+        params.append(date_from)
+        where += f" AND {date_col} >= ${len(params)}::date"
+    if date_to:
+        params.append(date_to)
+        where += f" AND {date_col} < (${len(params)}::date + interval '1 day')"
 
     total_row = await fetchrow(
         f"SELECT COUNT(*) AS n FROM posts WHERE {where}", *params

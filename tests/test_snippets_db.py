@@ -43,6 +43,33 @@ async def test_list_snippets_offset_sort_and_total():
 
 
 @pytest.mark.asyncio
+async def test_list_snippets_search_matches_name_or_body_and_filters_count():
+    captured = {}
+
+    async def fake_fetchrow(query, *args):  # COUNT(*)
+        captured["count_query"] = query
+        captured["count_args"] = args
+        return {"n": 2}
+
+    async def fake_fetch(query, *args):
+        captured["query"] = query
+        captured["args"] = args
+        return []
+
+    with patch.object(snippets_db, "fetchrow", fake_fetchrow), \
+         patch.object(snippets_db, "fetch", fake_fetch):
+        await snippets_db.list_snippets(
+            NPUB, search="cta", date_from="2026-01-01", page_size=10,
+        )
+    q = captured["query"]
+    assert "(name ~* $2 OR body ~* $2)" in q  # one param, name OR body
+    assert "created_at >= $3::date" in q
+    # COUNT is filtered (same params), not a bare count-all
+    assert captured["count_args"] == (NPUB, "cta", "2026-01-01")
+    assert "WHERE npub = $1 AND (name ~* $2" in captured["count_query"]
+
+
+@pytest.mark.asyncio
 async def test_list_snippets_unknown_sort_falls_back_to_favorite():
     captured = {}
 
