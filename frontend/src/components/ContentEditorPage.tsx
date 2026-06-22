@@ -109,6 +109,11 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   // adjacent post. Fetched once per session (best-effort; post kind only).
   const [neighbors, setNeighbors] = useState<PostSummary[]>([]);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
+  // First load shows the full-screen QuoteScroller gate; stepping to a sibling
+  // keeps the editor mounted and shows only a thin progress hint (soft swap),
+  // so prev/next reads as in-place content change, not a page reload.
+  const firstLoad = useRef(true);
+  const [stepping, setStepping] = useState(false);
   // Baseline signature of the loaded document; `dirty` compares the live state to
   // it so a swipe away from unsaved edits can prompt first. Voice/bans are global
   // prefs, not post content, so they're excluded from the signature.
@@ -129,7 +134,9 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
       return;
     }
     let live = true;
-    setLoading(true);
+    // First mount → full-screen gate; a sibling step → soft in-place swap.
+    if (firstLoad.current) setLoading(true); else setStepping(true);
+    const finishLoad = () => { setLoading(false); setStepping(false); firstLoad.current = false; };
     // Stepping to a sibling reuses this component, so clear per-post transients.
     setError(null);
     setNeedsXConnect(false);
@@ -139,18 +146,18 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
       getSnippet(id!)
         .then((row) => {
           if (!live) return;
-          if (!row) { setError("Snippet not found."); setLoading(false); return; }
+          if (!row) { setError("Snippet not found."); finishLoad(); return; }
           setBlocks(parsePostDoc(row.doc, row.text));
           setName(row.name ?? "");
-          setLoading(false);
+          finishLoad();
         })
-        .catch((e) => { if (live) { setError((e as Error).message); setLoading(false); } });
+        .catch((e) => { if (live) { setError((e as Error).message); finishLoad(); } });
       return () => { live = false; };
     }
     getPost(id!)
       .then((row: PostRow) => {
         if (!live) return;
-        if (row.error) { setError(row.error); setLoading(false); return; }
+        if (row.error) { setError(row.error); finishLoad(); return; }
         // Set every field explicitly (not just when present) so stepping to a
         // post without a schedule clears the prior post's schedule state.
         const loaded = parsePostDoc(row.doc, row.text_cache);
@@ -166,9 +173,9 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
         setCeaseAt(cz);
         setTweetUrl(row.tweet_url ?? null);
         baseline.current = sigOf(loaded, pub, fq, iv, cz);
-        setLoading(false);
+        finishLoad();
       })
-      .catch((e) => { if (live) { setError((e as Error).message); setLoading(false); } });
+      .catch((e) => { if (live) { setError((e as Error).message); finishLoad(); } });
     return () => { live = false; };
   }, [id, isNew, isSnippet]);
 
@@ -231,13 +238,27 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   );
 
   // Step to a sibling post (dir −1 prev / +1 next), guarding unsaved edits.
-  function goToNeighbor(dir: number) {
+  const goToNeighbor = useCallback((dir: number) => {
     if (isSnippet || curIndex < 0) return;
     const target = curIndex + dir;
     if (target < 0 || target >= neighbors.length) return;
     if (dirty && !window.confirm("Discard unsaved changes and move to the adjacent post?")) return;
     nav(`/post/${neighbors[target].post_id}`);
-  }
+  }, [isSnippet, curIndex, neighbors, dirty, nav]);
+
+  // ←/→ step between sibling posts, but never while typing in a field.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.altKey || e.ctrlKey || e.metaKey) return;
+      const el = document.activeElement as HTMLElement | null;
+      const tag = el?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el?.isContentEditable) return;
+      if (e.key === "ArrowLeft") { e.preventDefault(); goToNeighbor(-1); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); goToNeighbor(1); }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [goToNeighbor]);
   function onStageTouchStart(e: React.TouchEvent) {
     const t = e.touches[0];
     touchStart.current = { x: t.clientX, y: t.clientY };
@@ -529,6 +550,13 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
 
   return (
     <div className="min-h-screen w-full bg-zinc-950 text-zinc-200 flex flex-col">
+      {/* Soft-swap progress strip — shown while stepping to a sibling post so the
+          in-place content change reads as motion, not a frozen pause. */}
+      {stepping && (
+        <div className="fixed inset-x-0 top-0 z-[60] h-0.5 overflow-hidden bg-amber-400/15">
+          <div className="h-full w-2/5 animate-pulse bg-amber-400" />
+        </div>
+      )}
       {postedUrl !== null && (
         <TweetPreviewModal
           url={postedUrl}
@@ -577,16 +605,19 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
               <button
                 onClick={() => goToNeighbor(-1)}
                 disabled={curIndex <= 0}
-                title="Previous post (or swipe right)"
+                title="Previous post (← arrow or swipe right)"
                 className="rounded px-1.5 py-0.5 text-base leading-none hover:text-amber-300 disabled:opacity-30"
               >
                 ‹
               </button>
-              <span className="tabular-nums">{curIndex + 1} / {neighbors.length}</span>
+              <span className="flex items-center gap-1 tabular-nums">
+                {stepping && <Loader2 className="h-3 w-3 animate-spin text-amber-400" />}
+                {curIndex + 1} / {neighbors.length}
+              </span>
               <button
                 onClick={() => goToNeighbor(1)}
                 disabled={curIndex >= neighbors.length - 1}
-                title="Next post (or swipe left)"
+                title="Next post (→ arrow or swipe left)"
                 className="rounded px-1.5 py-0.5 text-base leading-none hover:text-amber-300 disabled:opacity-30"
               >
                 ›
