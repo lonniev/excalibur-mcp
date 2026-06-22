@@ -695,16 +695,33 @@ interface SessionStatusResult {
   upstream_oauth?: UpstreamOauth;
 }
 
-/// Whether the logged-in npub has a usable X OAuth token (with expiry), or
-/// null if not connected. Used to render the X-account panel's current state.
-export async function getXConnection(): Promise<UpstreamOauth | null> {
+/// The X-connection reading, as a discriminated state so the UI can tell
+/// "definitely not connected" from "couldn't read it right now". The wheel
+/// OMITS `upstream_oauth` when there's no token, so the absence of the block is
+/// NOT proof of disconnection — only `lifecycle === "ready"` makes a no-token
+/// reading authoritative. A cold/warming MCP (or a transient error) is
+/// `indeterminate`, never `disconnected`.
+export type XConnectionState =
+  | { kind: "connected"; oauth: UpstreamOauth }
+  | { kind: "disconnected" }
+  | { kind: "indeterminate"; reason: string };
+
+export async function getXConnection(): Promise<XConnectionState> {
   try {
     const r = await callTool<SessionStatusResult>("session_status", {
       patron_npub: getStoredNpub(),
     });
-    return r.upstream_oauth ?? null;
-  } catch {
-    return null;
+    if (r.upstream_oauth?.has_access_token) {
+      return { kind: "connected", oauth: r.upstream_oauth };
+    }
+    // session_status answered. Only when the operator is "ready" is the
+    // absence of a token authoritative; anything else is still warming up.
+    if (r.lifecycle === "ready") {
+      return { kind: "disconnected" };
+    }
+    return { kind: "indeterminate", reason: r.lifecycle ?? "warming_up" };
+  } catch (e) {
+    return { kind: "indeterminate", reason: (e as Error).message };
   }
 }
 
