@@ -8,7 +8,8 @@
 
 import { useEffect, useState } from "react";
 import { Twitter, ExternalLink, CheckCircle2, Loader2, RefreshCw } from "lucide-react";
-import { beginOauth, checkOauthStatus, getXConnection, getXProfile } from "../lib/mcp";
+import { beginOauth, checkOauthStatus, getXConnection, getStoredNpub } from "../lib/mcp";
+import { ensureXProfile } from "../lib/xProfile";
 
 const card = "rounded-xl border border-stone-200 dark:border-zinc-800 bg-white dark:bg-zinc-900";
 
@@ -29,8 +30,8 @@ export default function XConnectPanel() {
       setExpiresInSec(u.access_token_expires_in_seconds ?? null);
       setStage("connected");
       try {
-        const p = await getXProfile();
-        if (p.username) setHandle(`@${p.username}`);
+        const p = await ensureXProfile(getStoredNpub());
+        if (p?.username) setHandle(`@${p.username}`);
       } catch {
         /* handle is a nicety — ignore */
       }

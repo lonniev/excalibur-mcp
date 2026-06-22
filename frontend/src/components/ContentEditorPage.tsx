@@ -10,7 +10,7 @@ import {
 import { useSession } from "../App";
 import Avatar from "./Avatar";
 import { avatarFor } from "../lib/avatar";
-import { cachedXProfile, refreshXProfile } from "../lib/xProfile";
+import { cachedXProfile, ensureXProfile } from "../lib/xProfile";
 import type { XProfile } from "../lib/mcp";
 import { styleText, type UnicodeStyle } from "../lib/unicodeFormat";
 import { addSnippet, loadSnippets, removeSnippet, toggleFavorite, type Snippet } from "../lib/snippets";
@@ -145,7 +145,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   useEffect(() => {
     if (isSnippet || !npub) return;
     let live = true;
-    refreshXProfile(npub).then((p) => { if (live && p) setXProfile(p); });
+    ensureXProfile(npub).then((p) => { if (live && p) setXProfile(p); });
     return () => { live = false; };
   }, [npub, isSnippet]);
 

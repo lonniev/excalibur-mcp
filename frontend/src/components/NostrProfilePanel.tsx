@@ -28,6 +28,7 @@ export default function NostrProfilePanel({ npub }: { npub: string }) {
   const [website, setWebsite] = useState("");
 
   const [loading, setLoading] = useState(true);
+  const [showPicker, setShowPicker] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [msg, setMsg] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
 
@@ -105,7 +106,20 @@ export default function NostrProfilePanel({ npub }: { npub: string }) {
         <div className="flex items-center gap-1.5 text-xs text-stone-400 dark:text-zinc-500 py-2"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Reading from relays…</div>
       ) : (
         <>
-          <AvatarPicker value={picture} onChange={pickAvatar} />
+          <div className="flex items-center gap-3">
+            <Avatar value={picture} size={48} className="flex-none" />
+            <button
+              onClick={() => setShowPicker((v) => !v)}
+              className="rounded-lg border border-stone-300 px-3 py-1.5 text-xs text-stone-600 transition-colors hover:bg-stone-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            >
+              {showPicker ? "Done" : "Change avatar"}
+            </button>
+          </div>
+          {showPicker && (
+            <div className="mt-3">
+              <AvatarPicker value={picture} onChange={pickAvatar} />
+            </div>
+          )}
 
           <div className="mt-4 space-y-3">
             <label className="block text-xs text-stone-500 dark:text-zinc-400">
