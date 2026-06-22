@@ -6,14 +6,22 @@
 // The callback lands at the Tollbooth OAuth2 collector; the wheel exchanges the
 // code for a token server-side. This panel just sequences the clicks.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Twitter, ExternalLink, CheckCircle2, Loader2, RefreshCw } from "lucide-react";
 import { beginOauth, checkOauthStatus, getXConnection, getStoredNpub } from "../lib/mcp";
 import { ensureXProfile } from "../lib/xProfile";
 
 const card = "rounded-xl border border-stone-200 dark:border-zinc-800 bg-white dark:bg-zinc-900";
 
-type Stage = "loading" | "disconnected" | "authorizing" | "connected";
+// "indeterminate" = we couldn't read the connection (cold/warming MCP or a
+// transient error). It is NOT "disconnected" — we never show the misleading
+// "Connect X" CTA in that case, only an honest "couldn't verify" + retry.
+type Stage = "loading" | "disconnected" | "authorizing" | "connected" | "indeterminate";
+
+// Cold-start retry budget: ~4s × 3 ≈ 12s, matching the MCP's "warming up,
+// retry in 10–15s" guidance before we settle on an honest indeterminate state.
+const RETRY_DELAY_MS = 4000;
+const MAX_RETRIES = 3;
 
 export default function XConnectPanel() {
   const [stage, setStage] = useState<Stage>("loading");
@@ -23,25 +31,43 @@ export default function XConnectPanel() {
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
   const [handle, setHandle] = useState("");
+  const mounted = useRef(true);
 
-  async function refreshConnection() {
-    const u = await getXConnection();
-    if (u?.has_access_token) {
-      setExpiresInSec(u.access_token_expires_in_seconds ?? null);
+  async function refreshConnection(retriesLeft = MAX_RETRIES): Promise<void> {
+    const r = await getXConnection();
+    if (!mounted.current) return;
+
+    if (r.kind === "connected") {
+      setExpiresInSec(r.oauth.access_token_expires_in_seconds ?? null);
       setStage("connected");
       try {
         const p = await ensureXProfile(getStoredNpub());
-        if (p?.username) setHandle(`@${p.username}`);
+        if (mounted.current && p?.username) setHandle(`@${p.username}`);
       } catch {
         /* handle is a nicety — ignore */
       }
-    } else {
-      setStage((s) => (s === "authorizing" ? "authorizing" : "disconnected"));
+      return;
     }
+
+    if (r.kind === "disconnected") {
+      setStage((s) => (s === "authorizing" ? "authorizing" : "disconnected"));
+      return;
+    }
+
+    // indeterminate — retry quietly while the MCP warms, then be honest.
+    if (retriesLeft > 0) {
+      setStage((s) => (s === "authorizing" || s === "connected" ? s : "loading"));
+      await new Promise((res) => setTimeout(res, RETRY_DELAY_MS));
+      if (!mounted.current) return;
+      return refreshConnection(retriesLeft - 1);
+    }
+    setStage((s) => (s === "authorizing" || s === "connected" ? s : "indeterminate"));
   }
 
   useEffect(() => {
+    mounted.current = true;
     void refreshConnection();
+    return () => { mounted.current = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -115,6 +141,32 @@ export default function XConnectPanel() {
 
       {stage === "loading" && (
         <p className="flex items-center gap-1.5 text-xs text-stone-400 dark:text-zinc-500"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Checking connection…</p>
+      )}
+
+      {stage === "indeterminate" && (
+        <>
+          <p className="mb-3 text-xs leading-relaxed text-stone-500 dark:text-zinc-400">
+            Couldn't read your X connection status — the service may be waking up.
+            This doesn't mean you're disconnected; if you connected before, you still are.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => { setStage("loading"); void refreshConnection(); }}
+              disabled={busy}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 px-4 py-2 text-sm text-stone-600 transition-colors hover:bg-stone-100 disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            >
+              <RefreshCw className="h-4 w-4" /> Check again
+            </button>
+            <button
+              onClick={connect}
+              disabled={busy}
+              className="inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm text-stone-500 transition-colors hover:bg-stone-100 disabled:opacity-40 dark:text-zinc-400 dark:hover:bg-zinc-800"
+              title="Only if you've never linked an X account"
+            >
+              <ExternalLink className="h-4 w-4" /> Set up X
+            </button>
+          </div>
+        </>
       )}
 
       {stage === "disconnected" && (
