@@ -308,7 +308,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     const dy = t.clientY - start.y;
     // Require decisive, mostly-horizontal travel so vertical scrolls pass through.
     if (Math.abs(dx) < 80 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
-    goToNeighbor(dx < 0 ? 1 : -1); // swipe left → next, right → prev
+    goToNeighbor(dx > 0 ? 1 : -1); // swipe right → next, left → prev (matches →/← arrows)
   }
 
   // ── selection → flag ──────────────────────────────────────────────────────
@@ -641,7 +641,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
               <button
                 onClick={() => goToNeighbor(-1)}
                 disabled={curIndex <= 0}
-                title="Previous post (← arrow or swipe right)"
+                title="Previous post (← arrow or swipe left)"
                 className="rounded px-1.5 py-0.5 text-base leading-none hover:text-amber-300 disabled:opacity-30"
               >
                 ‹
@@ -653,7 +653,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
               <button
                 onClick={() => goToNeighbor(1)}
                 disabled={curIndex >= neighbors.length - 1}
-                title="Next post (→ arrow or swipe left)"
+                title="Next post (→ arrow or swipe right)"
                 className="rounded px-1.5 py-0.5 text-base leading-none hover:text-amber-300 disabled:opacity-30"
               >
                 ›
