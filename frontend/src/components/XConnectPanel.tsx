@@ -49,17 +49,29 @@ export default function XConnectPanel() {
     setBusy(true);
     setError("");
     setNote("");
+    // Open the popup SYNCHRONOUSLY within the click gesture — a window.open after
+    // the `await` below is treated as non-user-initiated and gets popup-blocked
+    // (that's why the tab "didn't appear"). We keep the handle (no noopener) so
+    // we can point it at the authorize URL once begin_oauth returns. X can't be
+    // framed in an iframe, so a popup window is the right vehicle.
+    const popup = window.open("about:blank", "x-oauth", "width=600,height=760");
     try {
       const r = await beginOauth();
       if (r.error || r.success === false || !r.authorize_url) {
+        popup?.close();
         setError(r.error || r.message || "Couldn't start the X authorization.");
         return;
       }
       setAuthorizeUrl(r.authorize_url);
       setStage("authorizing");
-      // Pop the authorize page so the user can log in to X immediately.
-      window.open(r.authorize_url, "_blank", "noopener,noreferrer");
+      if (popup && !popup.closed) {
+        popup.location.href = r.authorize_url; // drive the already-open popup
+      } else {
+        // Popup was blocked anyway — the authorizing stage shows a click-through link.
+        setNote("Popup blocked — use the “Open X authorization” button below.");
+      }
     } catch (e) {
+      popup?.close();
       setError((e as Error).message);
     } finally {
       setBusy(false);
@@ -126,23 +138,22 @@ export default function XConnectPanel() {
       {stage === "authorizing" && (
         <>
           <p className="mb-3 text-xs leading-relaxed text-stone-500 dark:text-zinc-400">
-            Authorize eXcalibur in the X tab that opened, then come back and verify. If the tab
-            didn't open,{" "}
+            Authorize eXcalibur on X, then come back and verify. If the popup didn't open,
+            use the button below — it opens X in a new tab.
+          </p>
+          <div className="flex flex-wrap gap-2">
             <a
               href={authorizeUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-amber-600 hover:underline dark:text-amber-400"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-sm text-white transition-colors hover:bg-amber-500"
             >
-              open the authorization page
+              <ExternalLink className="h-4 w-4" /> Open X authorization
             </a>
-            .
-          </p>
-          <div className="flex gap-2">
             <button
               onClick={verify}
               disabled={busy}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-sm text-white transition-colors hover:bg-amber-500 disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 px-4 py-2 text-sm text-stone-600 transition-colors hover:bg-stone-100 disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
             >
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
               I've authorized — verify
