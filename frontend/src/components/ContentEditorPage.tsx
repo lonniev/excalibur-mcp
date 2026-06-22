@@ -123,6 +123,27 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
       JSON.stringify([serializeBlocks(blks), pub, fq, iv, cz]),
     [],
   );
+  // Full PostRow cache keyed by post_id. The adjacent posts are prefetched so a
+  // step lands instantly with no fetch wait; an entry is dropped on save so a
+  // revisit never serves stale content. (Posts are tiny; caching ±1 is plenty.)
+  const postCache = useRef<Map<string, PostRow>>(new Map());
+  const applyPostRow = useCallback((row: PostRow) => {
+    // Set every field explicitly (not just when present) so a post without a
+    // schedule clears the prior post's schedule state.
+    const loaded = parsePostDoc(row.doc, row.text_cache);
+    const rec = row.recurrence as Recurrence | undefined;
+    const pub = row.publish_at ? toLocalInput(row.publish_at) : "";
+    const fq: Freq = rec?.freq ?? "none";
+    const iv = rec?.interval || 1;
+    const cz = row.cease_at ? toLocalInput(row.cease_at) : "";
+    setBlocks(loaded);
+    setPublishAt(pub);
+    setFreq(fq);
+    setIntervalN(iv);
+    setCeaseAt(cz);
+    setTweetUrl(row.tweet_url ?? null);
+    baseline.current = sigOf(loaded, pub, fq, iv, cz);
+  }, [sigOf]);
 
   // ── load ────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -134,8 +155,6 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
       return;
     }
     let live = true;
-    // First mount → full-screen gate; a sibling step → soft in-place swap.
-    if (firstLoad.current) setLoading(true); else setStepping(true);
     const finishLoad = () => { setLoading(false); setStepping(false); firstLoad.current = false; };
     // Stepping to a sibling reuses this component, so clear per-post transients.
     setError(null);
@@ -143,6 +162,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     setActiveFlag(null);
     setEditingBlock(null);
     if (isSnippet) {
+      if (firstLoad.current) setLoading(true); else setStepping(true);
       getSnippet(id!)
         .then((row) => {
           if (!live) return;
@@ -154,30 +174,26 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
         .catch((e) => { if (live) { setError((e as Error).message); finishLoad(); } });
       return () => { live = false; };
     }
+    // A prefetched neighbor lands instantly — no gate, no spinner, no fetch.
+    const hit = postCache.current.get(id!);
+    if (hit) {
+      applyPostRow(hit);
+      finishLoad();
+      return () => { live = false; };
+    }
+    // First mount → full-screen gate; an uncached sibling step → soft swap.
+    if (firstLoad.current) setLoading(true); else setStepping(true);
     getPost(id!)
       .then((row: PostRow) => {
         if (!live) return;
         if (row.error) { setError(row.error); finishLoad(); return; }
-        // Set every field explicitly (not just when present) so stepping to a
-        // post without a schedule clears the prior post's schedule state.
-        const loaded = parsePostDoc(row.doc, row.text_cache);
-        const rec = row.recurrence as Recurrence | undefined;
-        const pub = row.publish_at ? toLocalInput(row.publish_at) : "";
-        const fq: Freq = rec?.freq ?? "none";
-        const iv = rec?.interval || 1;
-        const cz = row.cease_at ? toLocalInput(row.cease_at) : "";
-        setBlocks(loaded);
-        setPublishAt(pub);
-        setFreq(fq);
-        setIntervalN(iv);
-        setCeaseAt(cz);
-        setTweetUrl(row.tweet_url ?? null);
-        baseline.current = sigOf(loaded, pub, fq, iv, cz);
+        postCache.current.set(id!, row);
+        applyPostRow(row);
         finishLoad();
       })
       .catch((e) => { if (live) { setError((e as Error).message); finishLoad(); } });
     return () => { live = false; };
-  }, [id, isNew, isSnippet]);
+  }, [id, isNew, isSnippet, applyPostRow]);
 
   // Revalidate the connected X identity for the preview card (best-effort).
   useEffect(() => {
@@ -259,6 +275,24 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [goToNeighbor]);
+
+  // Prefetch the immediately adjacent posts so a step lands instantly. Re-runs as
+  // the current index moves, warming the new neighbors. Best-effort and cheap.
+  useEffect(() => {
+    if (isSnippet || curIndex < 0) return;
+    let live = true;
+    [curIndex - 1, curIndex + 1]
+      .filter((i) => i >= 0 && i < neighbors.length)
+      .map((i) => neighbors[i].post_id)
+      .filter((pid) => !postCache.current.has(pid))
+      .forEach((pid) => {
+        getPost(pid)
+          .then((row) => { if (live && !row.error) postCache.current.set(pid, row); })
+          .catch(() => { /* prefetch is best-effort */ });
+      });
+    return () => { live = false; };
+  }, [curIndex, neighbors, isSnippet]);
+
   function onStageTouchStart(e: React.TouchEvent) {
     const t = e.touches[0];
     touchStart.current = { x: t.clientX, y: t.clientY };
@@ -442,6 +476,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
         else {
           setHint(scheduled ? "Scheduled." : "Saved.");
           baseline.current = sigOf(blocks, publishAt, freq, interval, ceaseAt);
+          postCache.current.delete(id!); // saved content differs from any cached row
         }
       }
     } catch (e) {
@@ -523,6 +558,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
       setTweetUrl(tweetUrl);
       setPostedUrl(tweetUrl);
       baseline.current = sigOf(blocks, publishAt, freq, interval, ceaseAt);
+      if (id) postCache.current.delete(id); // sent status differs from any cached row
     } catch (e) {
       setError((e as Error).message);
     } finally {
