@@ -18,14 +18,14 @@ const COLLECTIONS: ReadonlyArray<Collection> = [
   { prefix: "openmoji", label: "OpenMoji — CC-BY-SA" },
   { prefix: "emojione-v1", label: "EmojiOne — classic" },
 ];
-const PAGE_SIZE = 24;
+const PAGE_SIZE = 30;
 
 function iconUrl(prefix: string, name: string): string {
   return `https://api.iconify.design/${prefix}/${name}.svg`;
 }
 
 const tile = (selected: boolean) =>
-  `flex items-center justify-center aspect-square rounded-lg p-1.5 border transition-colors ${
+  `flex items-center justify-center aspect-square rounded-md p-1 border transition-colors ${
     selected
       ? "border-amber-400 bg-amber-50 dark:border-amber-500 dark:bg-amber-500/15"
       : "border-stone-200 dark:border-zinc-800 hover:border-amber-300 dark:hover:border-amber-500/40"
@@ -115,7 +115,7 @@ export default function AvatarPicker({ value, onChange }: { value: string; onCha
 
           {!loading && !error && (
             <>
-              <div className="grid grid-cols-6 gap-2">
+              <div className="grid grid-cols-10 gap-1.5">
                 {visible.map((name) => {
                   const url = iconUrl(collection, name);
                   return (
@@ -136,9 +136,9 @@ export default function AvatarPicker({ value, onChange }: { value: string; onCha
       )}
 
       {tab === "glyphs" && (
-        <div className="grid grid-cols-6 gap-2">
+        <div className="grid grid-cols-10 gap-1.5">
           {AVATAR_CHOICES.map((emoji) => (
-            <button key={emoji} onClick={() => onChange(emoji)} className={`${tile(value === emoji)} text-2xl`}>
+            <button key={emoji} onClick={() => onChange(emoji)} className={`${tile(value === emoji)} text-lg`}>
               {emoji}
             </button>
           ))}

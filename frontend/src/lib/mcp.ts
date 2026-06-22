@@ -234,6 +234,7 @@ const QUIET_TOOLS = new Set([
 async function callTool<T = unknown>(
   toolName: string,
   args: Record<string, unknown> = {},
+  opts: { bestEffort?: boolean } = {},
 ): Promise<T> {
   const quiet = QUIET_TOOLS.has(toolName);
   // `args` holds only the wrapper's own params — never npub/proof (those are
@@ -291,9 +292,10 @@ async function callTool<T = unknown>(
   }
 
   // Soft proof failures arrive as {success:false, error_code:...} with no
-  // isError flag. Treat them as auth bounces: clear the stale token and
-  // let the gate re-arm sign-in.
-  if (payload && typeof payload === "object") {
+  // isError flag. Treat them as auth bounces: clear the stale token and let the
+  // gate re-arm sign-in. NOT for best-effort calls (personalization/diagnostics)
+  // — a non-essential tool must never be able to log the user out of everything.
+  if (!opts.bestEffort && payload && typeof payload === "object") {
     const p = payload as Record<string, unknown>;
     const errCode = String(p.error_code ?? "");
     if (p.success === false && (errCode === "PROOF_REQUIRED" || errCode === "PROOF_REFRESH_NEEDED")) {
@@ -827,7 +829,7 @@ interface SchedulerLogResult {
 /// been doing. Operator-gated: only succeeds when the active npub is the
 /// operator's (with proof). Quiet so the poll itself doesn't clutter the log.
 export async function getSchedulerLog(limit = 25): Promise<SchedulerRun[]> {
-  const r = await callTool<SchedulerLogResult>("get_scheduler_log", { limit });
+  const r = await callTool<SchedulerLogResult>("get_scheduler_log", { limit }, { bestEffort: true });
   return r.runs ?? [];
 }
 
@@ -845,7 +847,7 @@ export interface XProfile {
 /// The connected X account's handle/name for the active npub (free, proof-gated).
 /// Returns `{connected:false,...}` / an oauth situation when X isn't linked.
 export async function getXProfile(): Promise<XProfile> {
-  return callTool<XProfile>("get_x_profile", {});
+  return callTool<XProfile>("get_x_profile", {}, { bestEffort: true });
 }
 
 // ─── Nostr kind-0 profile (served by the wheel; no relay I/O in the FE) ────
