@@ -31,9 +31,9 @@ const EMOJI_GROUPS: { label: string; emojis: string[] }[] = [
   { label: "Money & Crypto", emojis: ["₿", "💰", "💸", "💵", "💴", "💶", "💷", "🪙", "💳", "📈", "📉", "📊", "💹", "🧾", "🏦", "⚖️", "🤑", "💲", "🏧", "💎"] },
 ];
 import {
-  createPost, deletePost, getPost, getSnippet, postTweet, refinePostRegion,
+  createPost, deletePost, getPost, getSnippet, listPosts, postTweet, refinePostRegion,
   saveSnippet, updatePost,
-  OAUTH_NEEDED_CODES, type PostRow, type Recurrence,
+  OAUTH_NEEDED_CODES, type PostRow, type PostSummary, type Recurrence,
 } from "../lib/mcp";
 import { debugPush } from "../lib/debugLog";
 import TweetPreviewModal from "./TweetPreviewModal";
@@ -104,15 +104,37 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   // Connected X identity for the tweet-card preview (cached, revalidated on open).
   const [xProfile, setXProfile] = useState<XProfile | null>(() => (npub ? cachedXProfile(npub) : null));
 
+  // ── prev/next navigation (swipe + chevrons) ───────────────────────────────
+  // Sibling posts in the Posts-table ordering let the editor swipe/step to the
+  // adjacent post. Fetched once per session (best-effort; post kind only).
+  const [neighbors, setNeighbors] = useState<PostSummary[]>([]);
+  const touchStart = useRef<{ x: number; y: number } | null>(null);
+  // Baseline signature of the loaded document; `dirty` compares the live state to
+  // it so a swipe away from unsaved edits can prompt first. Voice/bans are global
+  // prefs, not post content, so they're excluded from the signature.
+  const baseline = useRef<string | null>(null);
+  const sigOf = useCallback(
+    (blks: Block[], pub: string, fq: Freq, iv: number, cz: string) =>
+      JSON.stringify([serializeBlocks(blks), pub, fq, iv, cz]),
+    [],
+  );
+
   // ── load ────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (isNew) {
-      setBlocks([{ id: uid(), text: "", flags: [] }]);
+      const init: Block[] = [{ id: uid(), text: "", flags: [] }];
+      setBlocks(init);
+      baseline.current = sigOf(init, "", "none", 1, "");
       setLoading(false);
       return;
     }
     let live = true;
     setLoading(true);
+    // Stepping to a sibling reuses this component, so clear per-post transients.
+    setError(null);
+    setNeedsXConnect(false);
+    setActiveFlag(null);
+    setEditingBlock(null);
     if (isSnippet) {
       getSnippet(id!)
         .then((row) => {
@@ -129,12 +151,21 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
       .then((row: PostRow) => {
         if (!live) return;
         if (row.error) { setError(row.error); setLoading(false); return; }
-        setBlocks(parsePostDoc(row.doc, row.text_cache));
-        if (row.publish_at) setPublishAt(toLocalInput(row.publish_at));
+        // Set every field explicitly (not just when present) so stepping to a
+        // post without a schedule clears the prior post's schedule state.
+        const loaded = parsePostDoc(row.doc, row.text_cache);
         const rec = row.recurrence as Recurrence | undefined;
-        if (rec?.freq) { setFreq(rec.freq); setIntervalN(rec.interval || 1); }
-        if (row.cease_at) setCeaseAt(toLocalInput(row.cease_at));
-        if (row.tweet_url) setTweetUrl(row.tweet_url);
+        const pub = row.publish_at ? toLocalInput(row.publish_at) : "";
+        const fq: Freq = rec?.freq ?? "none";
+        const iv = rec?.interval || 1;
+        const cz = row.cease_at ? toLocalInput(row.cease_at) : "";
+        setBlocks(loaded);
+        setPublishAt(pub);
+        setFreq(fq);
+        setIntervalN(iv);
+        setCeaseAt(cz);
+        setTweetUrl(row.tweet_url ?? null);
+        baseline.current = sigOf(loaded, pub, fq, iv, cz);
         setLoading(false);
       })
       .catch((e) => { if (live) { setError((e as Error).message); setLoading(false); } });
@@ -148,6 +179,17 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     ensureXProfile(npub).then((p) => { if (live && p) setXProfile(p); });
     return () => { live = false; };
   }, [npub, isSnippet]);
+
+  // Sibling posts for swipe/step navigation — same default ordering as the Posts
+  // table. Fetched once per session; failures simply leave swipe disabled.
+  useEffect(() => {
+    if (isSnippet || isNew) return;
+    let live = true;
+    listPosts({ sortCol: "created", sortDir: "desc", page: 0, pageSize: 500 })
+      .then((r) => { if (live) setNeighbors(r.posts ?? []); })
+      .catch(() => { /* swipe stays disabled */ });
+    return () => { live = false; };
+  }, [isSnippet, isNew]);
 
   useEffect(() => { localStorage.setItem("excalibur:voice", voice); }, [voice]);
   useEffect(() => { localStorage.setItem("excalibur:bans", JSON.stringify(bans)); }, [bans]);
@@ -176,6 +218,43 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     () => blocks.flatMap((b) => b.flags.map((f) => ({ ...f, blockId: b.id, blockText: b.text }))),
     [blocks],
   );
+
+  // Has the live document diverged from what we loaded? (Drives the swipe guard.)
+  const dirty = useMemo(
+    () => baseline.current !== null
+      && sigOf(blocks, publishAt, freq, interval, ceaseAt) !== baseline.current,
+    [blocks, publishAt, freq, interval, ceaseAt, sigOf],
+  );
+  const curIndex = useMemo(
+    () => (isNew ? -1 : neighbors.findIndex((p) => p.post_id === id)),
+    [neighbors, id, isNew],
+  );
+
+  // Step to a sibling post (dir −1 prev / +1 next), guarding unsaved edits.
+  function goToNeighbor(dir: number) {
+    if (isSnippet || curIndex < 0) return;
+    const target = curIndex + dir;
+    if (target < 0 || target >= neighbors.length) return;
+    if (dirty && !window.confirm("Discard unsaved changes and move to the adjacent post?")) return;
+    nav(`/post/${neighbors[target].post_id}`);
+  }
+  function onStageTouchStart(e: React.TouchEvent) {
+    const t = e.touches[0];
+    touchStart.current = { x: t.clientX, y: t.clientY };
+  }
+  function onStageTouchEnd(e: React.TouchEvent) {
+    const start = touchStart.current;
+    touchStart.current = null;
+    if (!start || curIndex < 0) return;
+    // A drag that selected block text isn't a swipe.
+    if (!window.getSelection()?.isCollapsed) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    // Require decisive, mostly-horizontal travel so vertical scrolls pass through.
+    if (Math.abs(dx) < 80 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    goToNeighbor(dx < 0 ? 1 : -1); // swipe left → next, right → prev
+  }
 
   // ── selection → flag ──────────────────────────────────────────────────────
   const onBlockMouseUp = useCallback((blockId: string, el: HTMLElement | null) => {
@@ -339,7 +418,10 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
         if (ceaseIso) patch.cease_at = ceaseIso;
         const r = await updatePost({ postId: id!, patch, textCache: composed, clientReqId: uid() });
         if (r.error) setError(r.error);
-        else setHint(scheduled ? "Scheduled." : "Saved.");
+        else {
+          setHint(scheduled ? "Scheduled." : "Saved.");
+          baseline.current = sigOf(blocks, publishAt, freq, interval, ceaseAt);
+        }
       }
     } catch (e) {
       setError((e as Error).message);
@@ -419,6 +501,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
       setHint("Posted to X.");
       setTweetUrl(tweetUrl);
       setPostedUrl(tweetUrl);
+      baseline.current = sigOf(blocks, publishAt, freq, interval, ceaseAt);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -489,6 +572,27 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
               {isSnippet ? "reusable content" : "draft → refine → schedule"}
             </div>
           </div>
+          {!isSnippet && curIndex >= 0 && neighbors.length > 1 && (
+            <div className="ml-1 flex items-center gap-1 font-mono text-[11px] text-zinc-500">
+              <button
+                onClick={() => goToNeighbor(-1)}
+                disabled={curIndex <= 0}
+                title="Previous post (or swipe right)"
+                className="rounded px-1.5 py-0.5 text-base leading-none hover:text-amber-300 disabled:opacity-30"
+              >
+                ‹
+              </button>
+              <span className="tabular-nums">{curIndex + 1} / {neighbors.length}</span>
+              <button
+                onClick={() => goToNeighbor(1)}
+                disabled={curIndex >= neighbors.length - 1}
+                title="Next post (or swipe left)"
+                className="rounded px-1.5 py-0.5 text-base leading-none hover:text-amber-300 disabled:opacity-30"
+              >
+                ›
+              </button>
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-3">
           <div className="font-mono text-sm tabular-nums text-zinc-400">
@@ -549,7 +653,11 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
 
       <div className="flex flex-1 flex-col lg:flex-row">
         {/* stage */}
-        <main className="relative flex flex-1 items-start justify-center overflow-y-auto px-4 py-10">
+        <main
+          onTouchStart={onStageTouchStart}
+          onTouchEnd={onStageTouchEnd}
+          className="relative flex flex-1 items-start justify-center overflow-y-auto px-4 py-10"
+        >
           <div className="pointer-events-none absolute inset-x-0 top-0 h-64 bg-gradient-to-b from-amber-400 to-transparent opacity-5" />
           <div className="relative w-full max-w-xl">
             {isSnippet && !preview && (
