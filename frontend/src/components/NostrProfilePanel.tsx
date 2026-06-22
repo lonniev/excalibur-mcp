@@ -94,11 +94,11 @@ export default function NostrProfilePanel({ npub }: { npub: string }) {
     <div className={`${card} p-5`}>
       <div className="flex items-center gap-3 mb-3">
         <Avatar value={picture} size={56} />
-        <div>
-          <div className="text-sm font-medium">Nostr profile</div>
-          <p className="text-xs text-stone-500 dark:text-zinc-400">
-            Your kind-0 metadata — self-sovereign, shown in every Nostr client.
-          </p>
+        <div
+          className="text-sm font-medium"
+          title="Your kind-0 metadata — self-sovereign, shown in every Nostr client."
+        >
+          Nostr profile
         </div>
       </div>
 
@@ -164,8 +164,11 @@ export default function NostrProfilePanel({ npub }: { npub: string }) {
               {publishing ? "Publishing…" : "Publish to Nostr"}
             </button>
             {!signer && (
-              <span className="text-xs text-stone-400 dark:text-zinc-500">
-                Read-only — sign in with a session key or a NIP-07 extension to publish. Avatar picks still apply locally.
+              <span
+                className="text-xs text-stone-400 dark:text-zinc-500"
+                title="Sign in with a session key or a NIP-07 extension to publish. Avatar picks still apply locally."
+              >
+                Read-only
               </span>
             )}
           </div>
