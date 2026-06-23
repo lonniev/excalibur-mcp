@@ -5,6 +5,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.20.0] — 2026-06-22
+
+### Added — server-persisted writing Voice (editable bans)
+
+- New proof-gated, npub-scoped tools `get_voice` (read) and `save_voice` (write)
+  persist the patron's writing **Voice** — a profile blurb plus a list of
+  "banned construction" chips (`{text, on}`) — in a per-npub singleton `voice`
+  table (Neon), mirroring the snippet pattern. They are **priceable**: they
+  carry no pricing hint, so they begin unpriced (TBD) and the operator sets a
+  price (or keeps them free at 0) in Pricing Studio like any new tool.
+  `get_voice` returns an empty Voice (not an error) when none is saved yet, so
+  the editor can seed its defaults.
+- Bans are normalized server-side: blank entries dropped, de-duped by text
+  (case-insensitive), `on` defaults to true.
+- FE: the editor's **Voice** tab now loads/saves from the server instead of
+  `localStorage`. Ban chips are fully editable — add (input + Add), edit
+  (pencil, inline), remove (minus), and toggle (tap) — with an explicit **Save
+  Voice** button, dirty/saving/saved status, and error surfacing.
+
 ## [0.19.0] — 2026-06-21
 
 ### Added — show the connected X @handle (personalization)

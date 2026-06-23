@@ -30,7 +30,7 @@ _schema_done: bool = False
 
 # Bare domain table names. The wheel's vault._t() schema-prefixes each into the
 # operator's own role/schema, so the logical name stays the contract's ``posts``.
-_DOMAIN_TABLES: tuple[str, ...] = ("posts", "snippets", "scheduler_runs")
+_DOMAIN_TABLES: tuple[str, ...] = ("posts", "snippets", "scheduler_runs", "voice")
 
 
 async def _get_vault() -> Any:
@@ -129,6 +129,15 @@ async def _ensure_domain_schema(vault: Any) -> None:
 
         f"CREATE INDEX IF NOT EXISTS scheduler_runs_recent_idx "
         f"ON {t('scheduler_runs')} (run_at DESC)",
+
+        # The patron's writing Voice — a per-npub singleton (one profile blurb +
+        # a list of {text, on} "banned construction" chips the editor feeds to
+        # refine_post_region). npub is the primary key, so save is an upsert.
+        f"CREATE TABLE IF NOT EXISTS {t('voice')} ("
+        "npub TEXT PRIMARY KEY, "
+        "profile TEXT NOT NULL DEFAULT '', "
+        "bans JSONB NOT NULL DEFAULT '[]', "
+        "updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
     ]
     for stmt in stmts:
         try:

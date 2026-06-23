@@ -817,6 +817,45 @@ export async function deleteSnippet(id: string): Promise<boolean> {
   return r.deleted === true;
 }
 
+// ─── Writing Voice (Neon-backed, npub-scoped singleton, free + proof-gated) ──
+
+/// A ban chip: a construction to avoid, and whether it's an active constraint.
+export interface VoiceBan {
+  text: string;
+  on: boolean;
+}
+
+/// The patron's writing Voice — one profile blurb + a list of ban chips. Mirrors
+/// the BE `voice` singleton; an unsaved Voice comes back empty (not an error).
+export interface VoiceData {
+  profile: string;
+  bans: VoiceBan[];
+}
+
+interface VoiceResult {
+  success?: boolean;
+  voice?: VoiceData & { updated_at?: string };
+  error?: string;
+  error_code?: string;
+}
+
+/// Read the patron's saved Voice. Returns `{profile:"", bans:[]}` when none has
+/// been saved yet, so the caller can seed its own defaults.
+export async function getVoice(): Promise<VoiceData> {
+  const r = await callTool<VoiceResult>("get_voice", {});
+  return { profile: r.voice?.profile ?? "", bans: r.voice?.bans ?? [] };
+}
+
+/// Save (replace) the patron's Voice — it is a per-npub singleton. Blank and
+/// duplicate ban chips are dropped server-side; returns the stored Voice.
+export async function saveVoice(opts: { profile: string; bans: VoiceBan[] }): Promise<VoiceData> {
+  const r = await callTool<VoiceResult>("save_voice", {
+    profile: opts.profile,
+    bans: opts.bans,
+  });
+  return { profile: r.voice?.profile ?? "", bans: r.voice?.bans ?? [] };
+}
+
 // ─── Scheduler-tick audit log (operator-only) ──────────────────────────────
 
 /// One outcome of a scheduled-post fire (per due post). Mirrors the BE summary.

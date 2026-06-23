@@ -106,6 +106,15 @@ _DOMAIN_TOOLS = [
                  category="free", intent="Create or update a saved post snippet"),
     ToolIdentity(tool_id=capability_uuid("delete_snippet"), capability="delete_snippet",
                  category="free", intent="Delete a saved post snippet"),
+    # Writing Voice — the patron's per-npub voice profile + "banned construction"
+    # chips the editor feeds to refine_post_region. A singleton per npub (one
+    # Voice, upserted). Priceable (read/write), proof-gated, owner-scoped — they
+    # carry no pricing hint, so they begin unpriced (TBD) and the operator sets a
+    # price (or 0/free) in Pricing Studio like any new tool.
+    ToolIdentity(tool_id=capability_uuid("get_voice"), capability="get_voice",
+                 category="read", intent="Read this patron's saved writing Voice"),
+    ToolIdentity(tool_id=capability_uuid("save_voice"), capability="save_voice",
+                 category="write", intent="Save this patron's writing Voice (profile + banned constructions)"),
     # Operator-only cron entrypoint — fires due scheduled posts. `restricted`
     # gates it to the operator npub (verified by proof) and bills nothing for
     # the trigger itself; each fired post bills its own owner for post_tweet.
@@ -643,6 +652,47 @@ async def delete_snippet(
     from excalibur_mcp.tools import snippets as snippets_tools
 
     return await snippets_tools.delete(npub, snippet_id=snippet_id)
+
+
+# ---------------------------------------------------------------------------
+# Writing Voice — npub-scoped singleton, priceable, proof-gated
+# ---------------------------------------------------------------------------
+
+
+@tool
+@runtime.paid_tool(capability_uuid("get_voice"), catch_errors=True)
+async def get_voice(
+    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
+    proof: str = "",
+) -> dict:
+    """Read your saved writing Voice — a profile blurb plus a list of "banned
+    construction" chips (``{text, on}``) the editor passes to
+    ``refine_post_region``. Owner-scoped; priced by the operator's pricing model
+    (use ``check_price``). When you have not saved a Voice yet this returns an
+    empty one (``{"voice": {"profile": "", "bans": []}}``) so the editor can seed
+    its own defaults, not an error."""
+    from excalibur_mcp.tools import voices as voices_tools
+
+    return await voices_tools.get(npub)
+
+
+@tool
+@runtime.paid_tool(capability_uuid("save_voice"), catch_errors=True)
+async def save_voice(
+    profile: str = "",
+    bans: list | None = None,
+    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
+    proof: str = "",
+) -> dict:
+    """Save your writing Voice (replaces the previous one — it is a per-npub
+    singleton). ``profile`` is free text. ``bans`` is a list of ``{text, on}``
+    objects: ``text`` is the construction to avoid, ``on`` whether it is an active
+    constraint. Blank/duplicate entries are dropped server-side. Owner-scoped;
+    priced by the operator's pricing model (use ``check_price``). Returns
+    ``{"success": true, "voice": {...}}``."""
+    from excalibur_mcp.tools import voices as voices_tools
+
+    return await voices_tools.save(npub, profile=profile, bans=bans)
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 [project]
 name = "excalibur-mcp"
-version = "0.19.0"
+version = "0.20.0"
 description = "FastMCP server for posting formatted content to X (Twitter) — Tollbooth-monetized, DPYC-native"
 authors = [{name = "eXcalibur MCP Contributors"}]
 readme = "README.md"
