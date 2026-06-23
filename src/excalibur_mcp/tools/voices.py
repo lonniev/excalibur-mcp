@@ -2,9 +2,9 @@
 
 Thin orchestration over ``db.voices``: validate adversarial tool input and keep
 handlers npub-scoped (a patron only ever reaches their own Voice). These tools
-are *free* (proof-gated, no fare), so there is no debit to roll back — invalid
-input simply ``raise ValueError`` and the standard error wrapper returns
-``tool_input_invalid``.
+are priceable (read/write, proof-gated) — they begin unpriced and the operator
+sets a price in Pricing Studio. Invalid input ``raise ValueError`` and the
+``catch_errors`` wrapper refunds any debit and returns ``tool_input_invalid``.
 
 The Voice is a per-npub singleton: one profile blurb plus a list of "banned
 construction" chips (``{text, on}``) the editor passes to ``refine_post_region``.
