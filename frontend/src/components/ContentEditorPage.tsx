@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Dispatch, HTMLAttributes, ReactNode, SetStateAction } from "react";
+import type { HTMLAttributes, ReactNode, SetStateAction } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   MessageCircle, Repeat2, Heart, BarChart2, Bookmark, Share, BadgeCheck,
@@ -31,8 +31,8 @@ const EMOJI_GROUPS: { label: string; emojis: string[] }[] = [
   { label: "Money & Crypto", emojis: ["₿", "💰", "💸", "💵", "💴", "💶", "💷", "🪙", "💳", "📈", "📉", "📊", "💹", "🧾", "🏦", "⚖️", "🤑", "💲", "🏧", "💎"] },
 ];
 import {
-  createPost, deletePost, getPost, getSnippet, listPosts, postTweet, refinePostRegion,
-  saveSnippet, updatePost,
+  createPost, deletePost, getPost, getSnippet, getVoice, listPosts, postTweet, refinePostRegion,
+  saveSnippet, saveVoice, updatePost,
   OAUTH_NEEDED_CODES, type PostRow, type PostSummary, type Recurrence,
 } from "../lib/mcp";
 import { debugPush } from "../lib/debugLog";
@@ -76,14 +76,17 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   const [clearPill, setClearPill] = useState<PillPos | null>(null);
   const [hint, setHint] = useState("");
 
-  const [voice, setVoice] = useState(() => localStorage.getItem("excalibur:voice") ?? DEFAULT_VOICE);
-  const [bans, setBans] = useState<Ban[]>(() => {
-    try {
-      const r = localStorage.getItem("excalibur:bans");
-      if (r) return JSON.parse(r) as Ban[];
-    } catch { /* ignore */ }
-    return DEFAULT_BANS.map((b) => ({ text: b, on: true }));
-  });
+  // Voice is server-persisted (per-npub, free + proof-gated). It loads async on
+  // mount; until then we show the defaults as a non-dirty placeholder so the
+  // editor still has a voice to send to refine. `voiceDirty` gates the Save
+  // button; `voiceSaving`/`voiceSaved` drive its status.
+  const [voice, setVoice] = useState(DEFAULT_VOICE);
+  const [bans, setBans] = useState<Ban[]>(() => DEFAULT_BANS.map((b) => ({ text: b, on: true })));
+  const [voiceLoaded, setVoiceLoaded] = useState(false);
+  const [voiceDirty, setVoiceDirty] = useState(false);
+  const [voiceSaving, setVoiceSaving] = useState(false);
+  const [voiceSaved, setVoiceSaved] = useState(false);
+  const [voiceError, setVoiceError] = useState("");
 
   const [publishAt, setPublishAt] = useState("");
   const [freq, setFreq] = useState<Freq>("none");
@@ -214,8 +217,56 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     return () => { live = false; };
   }, [isSnippet, isNew]);
 
-  useEffect(() => { localStorage.setItem("excalibur:voice", voice); }, [voice]);
-  useEffect(() => { localStorage.setItem("excalibur:bans", JSON.stringify(bans)); }, [bans]);
+  // Load the persisted Voice once. An empty server Voice (first-run) keeps the
+  // local defaults but leaves them dirty so the first Save seeds the server.
+  useEffect(() => {
+    let live = true;
+    getVoice()
+      .then((v) => {
+        if (!live) return;
+        if (v.profile || v.bans.length) {
+          setVoice(v.profile);
+          setBans(v.bans);
+          setVoiceDirty(false);
+        } else {
+          setVoiceDirty(true); // nothing saved yet → offer to persist the seed
+        }
+      })
+      .catch(() => { if (live) setVoiceDirty(true); })
+      .finally(() => { if (live) setVoiceLoaded(true); });
+    return () => { live = false; };
+  }, []);
+
+  // Any voice/bans change after load marks the Voice dirty and clears the
+  // transient "Saved" badge.
+  const markVoiceDirty = useCallback(() => {
+    if (!voiceLoaded) return;
+    setVoiceDirty(true);
+    setVoiceSaved(false);
+    setVoiceError("");
+  }, [voiceLoaded]);
+
+  const editVoice = useCallback((v: string) => { setVoice(v); markVoiceDirty(); }, [markVoiceDirty]);
+  const editBans = useCallback((updater: SetStateAction<Ban[]>) => {
+    setBans(updater);
+    markVoiceDirty();
+  }, [markVoiceDirty]);
+
+  const saveVoiceNow = useCallback(async () => {
+    setVoiceSaving(true);
+    setVoiceError("");
+    try {
+      const stored = await saveVoice({ profile: voice, bans });
+      setVoice(stored.profile);
+      setBans(stored.bans);
+      setVoiceDirty(false);
+      setVoiceSaved(true);
+    } catch (e) {
+      setVoiceError((e as Error).message || "Could not save Voice");
+    } finally {
+      setVoiceSaving(false);
+    }
+  }, [voice, bans]);
 
   useEffect(() => {
     if (!hint) return;
@@ -874,7 +925,13 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
                   onRemove={removeFlag}
                 />
               )}
-              {tab === "voice" && <VoiceTab voice={voice} setVoice={setVoice} bans={bans} setBans={setBans} />}
+              {tab === "voice" && (
+                <VoiceTab
+                  voice={voice} setVoice={editVoice} bans={bans} setBans={editBans}
+                  loaded={voiceLoaded} dirty={voiceDirty} saving={voiceSaving}
+                  saved={voiceSaved} error={voiceError} onSave={saveVoiceNow}
+                />
+              )}
               {tab === "snippets" && (
                 <SnippetsTab
                   currentText={focusedBlockText}
@@ -1183,16 +1240,43 @@ function SnippetsTab({
   );
 }
 
-function VoiceTab({ voice, setVoice, bans, setBans }: {
-  voice: string; setVoice: (v: string) => void; bans: Ban[]; setBans: Dispatch<SetStateAction<Ban[]>>;
+function VoiceTab({
+  voice, setVoice, bans, setBans, loaded, dirty, saving, saved, error, onSave,
+}: {
+  voice: string; setVoice: (v: string) => void;
+  bans: Ban[]; setBans: (updater: SetStateAction<Ban[]>) => void;
+  loaded: boolean; dirty: boolean; saving: boolean; saved: boolean;
+  error: string; onSave: () => void;
 }) {
+  const [editing, setEditing] = useState<number | null>(null);
+  const [draft, setDraft] = useState("");
+  const [adding, setAdding] = useState("");
+
   const toggle = (i: number) => setBans((prev) => prev.map((b, j) => (j === i ? { ...b, on: !b.on } : b)));
+  const remove = (i: number) => setBans((prev) => prev.filter((_, j) => j !== i));
+  const startEdit = (i: number) => { setEditing(i); setDraft(bans[i].text); };
+  const commitEdit = () => {
+    if (editing === null) return;
+    const text = draft.trim();
+    const i = editing;
+    setBans((prev) => (text ? prev.map((b, j) => (j === i ? { ...b, text } : b)) : prev.filter((_, j) => j !== i)));
+    setEditing(null); setDraft("");
+  };
+  const addBan = () => {
+    const text = adding.trim();
+    if (!text) return;
+    setBans((prev) => (prev.some((b) => b.text.toLowerCase() === text.toLowerCase())
+      ? prev
+      : [...prev, { text, on: true }]));
+    setAdding("");
+  };
+
   return (
     <div className="space-y-5">
       <div>
         <label className="mb-1.5 block font-mono text-[11px] uppercase tracking-widest text-zinc-500">Voice profile</label>
-        <textarea value={voice} onChange={(e) => setVoice(e.target.value)} rows={5}
-          className="w-full resize-none rounded-md border border-zinc-700 bg-zinc-900 p-2 text-sm text-zinc-200 outline-none focus:border-amber-400"
+        <textarea value={voice} onChange={(e) => setVoice(e.target.value)} rows={5} disabled={!loaded}
+          className="w-full resize-none rounded-md border border-zinc-700 bg-zinc-900 p-2 text-sm text-zinc-200 outline-none focus:border-amber-400 disabled:opacity-50"
           placeholder="Paste a few sentences in your own voice…" />
         <p className="mt-1.5 text-xs text-zinc-500">Fed to Claude on every refinement so rewrites sound like you, not like a model.</p>
       </div>
@@ -1200,13 +1284,54 @@ function VoiceTab({ voice, setVoice, bans, setBans }: {
         <label className="mb-2 block font-mono text-[11px] uppercase tracking-widest text-zinc-500">Banned constructions</label>
         <div className="flex flex-wrap gap-2">
           {bans.map((b, i) => (
-            <button key={i} onClick={() => toggle(i)}
-              className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${b.on ? "border-amber-400 bg-amber-400 text-zinc-950" : "border-zinc-700 text-zinc-500 line-through"}`}>
-              {b.text}
-            </button>
+            editing === i ? (
+              <span key={i} className="flex items-center gap-1 rounded-full border border-amber-400 bg-zinc-900 pl-2.5 pr-1 py-0.5">
+                <input autoFocus value={draft} onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") { setEditing(null); setDraft(""); } }}
+                  className="w-32 bg-transparent text-xs text-zinc-100 outline-none" />
+                <button onClick={commitEdit} title="Save chip" className="rounded-full p-0.5 text-amber-300 hover:text-amber-200">
+                  <Check className="h-3 w-3" />
+                </button>
+              </span>
+            ) : (
+              <span key={i}
+                className={`flex items-center gap-1 rounded-full border pl-2.5 pr-1 py-1 text-xs transition-colors ${b.on ? "border-amber-400 bg-amber-400 text-zinc-950" : "border-zinc-700 text-zinc-500 line-through"}`}>
+                <button onClick={() => toggle(i)} title="Toggle constraint" className="max-w-[12rem] truncate">{b.text}</button>
+                <button onClick={() => startEdit(i)} title="Edit" className={`rounded-full p-0.5 ${b.on ? "hover:bg-amber-500/40" : "hover:bg-zinc-700"}`}>
+                  <Pencil className="h-2.5 w-2.5" />
+                </button>
+                <button onClick={() => remove(i)} title="Remove" className={`rounded-full p-0.5 ${b.on ? "hover:bg-amber-500/40" : "hover:bg-zinc-700"}`}>
+                  <Minus className="h-2.5 w-2.5" />
+                </button>
+              </span>
+            )
           ))}
         </div>
-        <p className="mt-2 text-xs text-zinc-500">Active chips are passed as hard constraints. Tap to disable any you don't mind.</p>
+        <div className="mt-2 flex items-center gap-1.5">
+          <input value={adding} onChange={(e) => setAdding(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") addBan(); }}
+            placeholder="Add a construction to avoid…"
+            className="flex-1 rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-amber-400" />
+          <button onClick={addBan} disabled={!adding.trim()} title="Add"
+            className="flex items-center gap-1 rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:border-amber-400 hover:text-amber-300 disabled:opacity-40">
+            <Plus className="h-3 w-3" /> Add
+          </button>
+        </div>
+        <p className="mt-2 text-xs text-zinc-500">Active chips are passed as hard constraints. Tap a chip to disable it, the pencil to edit, the minus to remove.</p>
+      </div>
+      <div className="flex items-center gap-3 border-t border-zinc-800 pt-3">
+        <button onClick={onSave} disabled={!loaded || saving || !dirty}
+          className="flex items-center gap-1.5 rounded-md bg-amber-400 px-3 py-1.5 text-sm font-medium text-zinc-950 hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-40">
+          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+          {saving ? "Saving…" : "Save Voice"}
+        </button>
+        {error
+          ? <span className="text-xs text-red-400">{error}</span>
+          : saved && !dirty
+            ? <span className="flex items-center gap-1 text-xs text-emerald-400"><Check className="h-3.5 w-3.5" /> Saved</span>
+            : dirty
+              ? <span className="text-xs text-zinc-500">Unsaved changes</span>
+              : null}
       </div>
     </div>
   );
