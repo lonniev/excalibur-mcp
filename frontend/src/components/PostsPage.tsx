@@ -53,6 +53,10 @@ export default function PostsPage() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [loading, setLoading] = useState(false);
+  // True once the first fetch has completed — the search/date filter controls
+  // only appear with the table after loading, not before it (they aren't needed
+  // to load the first table).
+  const [hasLoaded, setHasLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [reposting, setReposting] = useState<string | null>(null);
@@ -72,6 +76,7 @@ export default function PostsPage() {
     } catch (e) {
       setError((e as Error).message);
     } finally {
+      setHasLoaded(true);
       setLoading(false);
     }
   }, [filter, sortCol, sortDir, page, search, dateFrom, dateTo, dateField]);
@@ -163,18 +168,20 @@ export default function PostsPage() {
         </button>
       </div>
 
-      <TableFilter
-        search={search}
-        onSearch={(t) => { setSearch(t); setPage(0); }}
-        dateField={dateField}
-        dateFieldOptions={DATE_FIELDS}
-        onDateField={(v) => { setDateField(v); setPage(0); }}
-        dateFrom={dateFrom}
-        dateTo={dateTo}
-        onDateFrom={(v) => { setDateFrom(v); setPage(0); }}
-        onDateTo={(v) => { setDateTo(v); setPage(0); }}
-        onClear={() => { setSearch(""); setDateFrom(""); setDateTo(""); setDateField("created"); setPage(0); }}
-      />
+      {hasLoaded && (
+        <TableFilter
+          search={search}
+          onSearch={(t) => { setSearch(t); setPage(0); }}
+          dateField={dateField}
+          dateFieldOptions={DATE_FIELDS}
+          onDateField={(v) => { setDateField(v); setPage(0); }}
+          dateFrom={dateFrom}
+          dateTo={dateTo}
+          onDateFrom={(v) => { setDateFrom(v); setPage(0); }}
+          onDateTo={(v) => { setDateTo(v); setPage(0); }}
+          onClear={() => { setSearch(""); setDateFrom(""); setDateTo(""); setDateField("created"); setPage(0); }}
+        />
+      )}
 
       {error && (
         <div className="rounded-lg p-3 mb-3 text-xs bg-red-50 border border-red-200 text-red-700 dark:bg-red-500/10 dark:border-red-500/30 dark:text-red-400">
