@@ -121,6 +121,17 @@ async def process_due_posts(runtime: Any) -> dict[str, Any]:
         except Exception:  # noqa: BLE001 — stamping is non-critical
             logger.exception("scheduler: failed to stamp attempt on %s", pid)
 
+    async def _pause(bucket: list[dict[str, Any]], pid: str, owner: str, reason: str, **extra: Any) -> None:
+        """Like ``_hold``, but for a NON-transient situation the next tick can't
+        resolve (e.g. the owner's upstream subscription lapsed). Pauses the post
+        so it stops being re-fired every tick; the owner resumes it after fixing
+        the upstream cause. Best-effort stamping, same as ``_hold``."""
+        bucket.append({"post_id": pid, "owner": owner, "reason": reason, "paused": True, **extra})
+        try:
+            await posts_db.mark_paused(pid, datetime.now(timezone.utc).isoformat(), reason)
+        except Exception:  # noqa: BLE001 — stamping is non-critical
+            logger.exception("scheduler: failed to stamp attempt on %s", pid)
+
     for row in due:
         pid = row["post_id"]
         owner = row["npub"]
@@ -153,7 +164,15 @@ async def process_due_posts(runtime: Any) -> dict[str, Any]:
             result = await client.post_tweet(markdown_to_unicode(text))
         except XAPIError as exc:
             await runtime.rollback_debit(post_tweet_id, owner)
-            await _hold(errors, pid, owner, f"x_api_error: {exc}")
+            reason = f"x_api_error: {exc}"
+            if getattr(exc, "status_code", None) == 402:
+                # Non-transient: the owner's X subscription/tier lapsed. Pause so
+                # we stop re-firing (and re-billing+refunding) every tick; the FE
+                # surfaces the situation and the owner resumes after renewing. —
+                # subscription reason
+                await _pause(errors, pid, owner, reason)
+            else:
+                await _hold(errors, pid, owner, reason)
             continue
         except Exception as exc:  # noqa: BLE001 — money path, refund then report
             await runtime.rollback_debit(post_tweet_id, owner)

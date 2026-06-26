@@ -34,6 +34,14 @@ def _stub_mark_attempt():
         yield m
 
 
+@pytest.fixture(autouse=True)
+def _stub_mark_paused():
+    """A non-transient situation (e.g. X 402) pauses the post; keep that off Neon
+    and expose the mock so a test can assert the pause contract."""
+    with patch.object(scheduler.posts_db, "mark_paused", AsyncMock()) as m:
+        yield m
+
+
 # -- recurrence math ---------------------------------------------------------
 
 def test_add_months_clamps_end_of_month():
@@ -187,6 +195,29 @@ async def test_post_failure_refunds_owner():
         out = await scheduler.process_due_posts(rt)
     assert out["errors"] and "x_api_error" in out["errors"][0]["reason"]
     rt.rollback_debit.assert_awaited_once()
+    mark.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_402_pauses_post_and_refunds(_stub_mark_attempt, _stub_mark_paused):
+    """A 402 (owner's X subscription lapsed) is non-transient: refund, PAUSE the
+    post so list_due stops returning it, and report it — never leave it scheduled
+    to re-fire (and re-bill/refund) every tick."""
+    rt = _runtime()
+    client = SimpleNamespace(
+        post_tweet=AsyncMock(side_effect=XAPIError(402, "subscription lapsed")),
+    )
+    with patch.object(scheduler.posts_db, "list_due", AsyncMock(return_value=[_due_row()])), \
+         patch.object(scheduler.posts_db, "mark_sent", AsyncMock()) as mark, \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        out = await scheduler.process_due_posts(rt)
+    assert out["errors"] and out["errors"][0]["paused"] is True
+    assert "x_api_error" in out["errors"][0]["reason"]
+    rt.rollback_debit.assert_awaited_once()
+    # paused (not merely attempt-stamped), and never marked sent
+    _stub_mark_paused.assert_awaited_once()
+    assert _stub_mark_paused.await_args.args[0] == "p1"
+    _stub_mark_attempt.assert_not_awaited()
     mark.assert_not_called()
 
 

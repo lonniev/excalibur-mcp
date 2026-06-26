@@ -393,3 +393,26 @@ async def mark_attempt(post_id: str, at_iso: str, reason: str) -> None:
         at_iso,
         reason,
     )
+
+
+async def mark_paused(post_id: str, at_iso: str, reason: str) -> None:
+    """Pause a scheduled post the scheduler can't fire without human action.
+
+    For non-transient situations the next tick can't resolve — e.g. the owner's
+    upstream X subscription lapsed (HTTP 402). Sets ``status='paused'`` so
+    ``list_due`` stops returning it (ending the every-tick refire loop) and
+    stamps the attempt so the FE can surface why. The owner resumes by patching
+    ``status`` back to ``scheduled`` after renewing upstream."""
+    await execute(
+        """
+        UPDATE posts
+        SET status              = 'paused',
+            last_attempt_at     = $2::timestamptz,
+            last_attempt_reason = $3,
+            updated_at          = NOW()
+        WHERE id = $1::uuid
+        """,
+        post_id,
+        at_iso,
+        reason,
+    )

@@ -265,6 +265,26 @@ class TestPostTweet:
             assert exc_info.value.status_code == 403
 
     @pytest.mark.asyncio
+    async def test_payment_required_402(self, client):
+        # A bare 402 (lapsed X subscription/tier) gets a clear detail, not the
+        # generic "Unexpected response: 402" — the server maps it to the SDK's
+        # upstream-subscription situation.
+        mock_resp = _mock_response(402, {"title": "Payment Required"})
+
+        with patch("excalibur_mcp.x_client.httpx.AsyncClient") as MockClient:
+            mock_instance = AsyncMock()
+            mock_instance.post.return_value = mock_resp
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = mock_instance
+
+            with pytest.raises(XAPIError) as exc_info:
+                await client.post_tweet("test")
+            assert exc_info.value.status_code == 402
+            assert "subscription" in exc_info.value.detail
+            assert "Unexpected response" not in exc_info.value.detail
+
+    @pytest.mark.asyncio
     async def test_unexpected_status(self, client):
         mock_resp = _mock_response(500, {"error": "Internal Server Error"})
 

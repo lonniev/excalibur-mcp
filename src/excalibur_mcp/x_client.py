@@ -192,6 +192,22 @@ class XClient:
             detail = body.get("detail", body.get("title", "Authentication failed"))
             raise XAPIError(response.status_code, detail, body)
 
+        if response.status_code == 402:
+            # X answers a bare 402 when the developer subscription / access tier
+            # behind this account's credentials has lapsed or doesn't cover the
+            # write. Not the x402 micropayment protocol, not a balance problem —
+            # a human must renew the plan at developer.x.com. The server maps
+            # this to the SDK's upstream-subscription situation.
+            try:
+                body = response.json()
+            except Exception:
+                body = {"raw": response.text}
+            raise XAPIError(
+                402,
+                "X API subscription or access tier does not cover this request",
+                body,
+            )
+
         if response.status_code != 201:
             try:
                 body = response.json()
