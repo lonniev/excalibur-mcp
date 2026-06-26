@@ -79,7 +79,27 @@ export default function DebugPanel() {
         pushRun(r);
       }
       if (!silent && fresh.length === 0) {
-        debugPush("info", "scheduler: no ticks recorded yet (the Worker runs every 10 min)");
+        if (runs.length === 0) {
+          // Genuinely empty: the scheduler has never logged a run.
+          debugPush(
+            "info",
+            "The scheduler hasn't run yet. It checks for due posts on its own about every 10 minutes — nothing will show here until its first run.",
+          );
+        } else {
+          // Ticks exist; this refresh just found nothing newer. Tell the human
+          // it's current and when the scheduler last ran, so the empty result
+          // reads as "up to date", not "broken".
+          let lastWhen = runs[0].run_at;
+          try {
+            lastWhen = new Date(runs[0].run_at).toLocaleTimeString();
+          } catch {
+            /* keep raw */
+          }
+          debugPush(
+            "info",
+            `Up to date — no new scheduler runs since you last checked. It last ran at ${lastWhen} and checks again on its own about every 10 minutes.`,
+          );
+        }
       }
     } catch {
       // Free + proof-gated; a failure here means the npub proof is missing/expired.
