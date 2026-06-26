@@ -5,6 +5,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.21.0] — 2026-06-25
+
+### Fixed — X API 402 now reads as "renew your subscription," and the scheduler stops looping on it
+
+- **Symptom:** a scheduled post whose owner's X developer subscription had lapsed failed every tick with the opaque `x_api_error: X API 402: Unexpected response: 402`, re-firing every ~10 minutes forever (bill → X 402 → refund → leave `scheduled` → repeat). The human was never told what to do.
+- **Cause:** `x_client` mapped any non-201/429/401/403 to a generic "Unexpected response," and the scheduler treated a 402 as a transient hold that the next tick would retry. A 402 from X is non-transient — it means the developer plan/tier behind the account's credentials no longer covers the write, and only a human renewing at developer.x.com can clear it.
+- **Fix:**
+  - `x_client.post_tweet` special-cases 402 with a clear detail instead of "Unexpected response: 402."
+  - `_x_api_error_to_response` routes a 402 to the SDK's generic upstream-subscription situation (`tollbooth.upstream_payment.upstream_payment_situation`, `error_code` `upstream_subscription_required`) with renewal advice pointing at the X developer portal — `audience="patron"`, since each patron links their own X account.
+  - The scheduler **pauses** a 402'd post (`posts.mark_paused` → `status='paused'`) so `list_due` stops returning it. The owner resumes by patching `status` back to `scheduled` after renewing. This ends the every-tick refire/refund loop.
+- Requires `tollbooth-dpyc==0.53.0` (adds the generic upstream-402 handler). 401/403 behavior (re-authorize) is unchanged.
+
 ## [0.20.0] — 2026-06-22
 
 ### Added — server-persisted writing Voice (editable bans)

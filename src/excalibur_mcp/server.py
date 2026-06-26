@@ -19,6 +19,7 @@ from tollbooth.credential_validators import validate_btcpay_creds, validate_requ
 from tollbooth.oauth_config import OAuthProviderConfig
 from tollbooth.runtime import OperatorRuntime, register_standard_tools
 from tollbooth.tool_identity import STANDARD_IDENTITIES, ToolIdentity, capability_uuid
+from tollbooth.upstream_payment import upstream_payment_situation
 
 from excalibur_mcp import __version__
 
@@ -299,6 +300,11 @@ def _x_api_error_to_response(exc: Any) -> dict[str, Any]:
     even though our records considered it fresh — the patron must
     re-authorize.  Routes to ``oauth_refresh_needed`` for symmetry
     with the SDK helper's standard situations.
+
+    A 402 means the patron's own X developer subscription / access tier
+    has lapsed or doesn't cover the request — a billing matter at X, not a
+    re-authorization. Routes to the SDK's generic upstream-subscription
+    situation (``upstream_subscription_required``) with renewal advice.
     """
     base: dict[str, Any] = {
         "success": False,
@@ -306,11 +312,21 @@ def _x_api_error_to_response(exc: Any) -> dict[str, Any]:
         "status_code": getattr(exc, "status_code", None),
         "detail": getattr(exc, "detail", None),
     }
-    if getattr(exc, "status_code", 0) in (401, 403):
+    status = getattr(exc, "status_code", 0)
+    if status in (401, 403):
         base.update(runtime.oauth_situation_response("token_expired"))
         # Preserve the upstream detail alongside the structured guidance
         base["status_code"] = exc.status_code
         base["detail"] = getattr(exc, "detail", None)
+    elif status == 402:
+        base.update(
+            upstream_payment_situation(
+                service="X (Twitter) API",
+                renew_url="https://developer.x.com/en/portal/dashboard",
+                audience="patron",
+                detail=getattr(exc, "detail", None),
+            )
+        )
     return base
 
 
