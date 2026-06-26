@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
-  deletePost, getPost, listPosts, postTweet,
+  deletePost, getPost, listPosts, postTweet, updatePost,
   type PostSummary, type SortDir,
 } from "../lib/mcp";
+import { uid } from "../lib/editorDoc";
 import TweetPreviewModal from "./TweetPreviewModal";
 import { PageControls, SortHeader, TableShell } from "./PagedTable";
 import TableFilter from "./TableFilter";
 import QuoteScroller from "./QuoteScroller";
 
-const STATUS_FILTERS = ["", "draft", "scheduled", "sent", "archived"] as const;
+const STATUS_FILTERS = ["", "draft", "scheduled", "paused", "sent", "archived"] as const;
 const DATE_FIELDS = [
   { value: "created", label: "Created" },
   { value: "updated", label: "Updated" },
@@ -21,6 +22,10 @@ const PAGE_SIZE = 25;
 const statusStyle: Record<string, string> = {
   draft: "bg-stone-100 text-stone-600 dark:bg-zinc-800 dark:text-zinc-300",
   scheduled: "bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-400",
+  // A "needs attention" stop-state: the scheduler paused this post after a
+  // non-transient failure (e.g. a lapsed X subscription). Distinct from the
+  // grey draft fallback so it reads as actionable, not idle.
+  paused: "bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-400",
   sent: "bg-green-100 text-green-700 dark:bg-green-500/15 dark:text-green-400",
   archived: "bg-stone-100 text-stone-400 dark:bg-zinc-800 dark:text-zinc-500",
 };
@@ -28,7 +33,15 @@ const statusStyle: Record<string, string> = {
 // Friendly labels for a held-attempt reason recorded by the scheduler Worker.
 // Anything unmapped (e.g. a raw x_api_error string) shows verbatim.
 function attemptLabel(reason: string): string {
-  if (reason.startsWith("x_api_error")) return "X network error";
+  if (reason.startsWith("x_api_error")) {
+    // An X 402 is a lapsed developer subscription / access tier — a billing fix
+    // at X, not a transient network blip. Call it out distinctly so the human
+    // knows where to act.
+    if (reason.includes("402") || /subscription|access tier/i.test(reason)) {
+      return "X subscription/tier";
+    }
+    return "X network error";
+  }
   return (
     {
       insufficient_balance: "out of credits",
@@ -60,6 +73,7 @@ export default function PostsPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [reposting, setReposting] = useState<string | null>(null);
+  const [resuming, setResuming] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ url: string; text: string } | null>(null);
 
   const refresh = useCallback(async () => {
@@ -126,6 +140,30 @@ export default function PostsPage() {
       setError((err as Error).message);
     } finally {
       setReposting(null);
+    }
+  }
+
+  // Resume a paused post: flip it back to `scheduled` so the next scheduler
+  // tick picks it up. Its publish_at is in the past, so it fires on the very
+  // next tick (and recurrence resumes from there). Use once the cause of the
+  // pause (e.g. a lapsed X subscription) is fixed at the provider.
+  async function handleResume(e: React.MouseEvent, id: string) {
+    e.stopPropagation();
+    e.preventDefault();
+    setError(null);
+    setNotice(null);
+    setResuming(id);
+    try {
+      const r = await updatePost({ postId: id, patch: { status: "scheduled" }, clientReqId: uid() });
+      if (r.error) setError(r.error);
+      else {
+        setNotice("Resumed — rescheduled. The next scheduler tick will post it.");
+        await refresh();
+      }
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setResuming(null);
     }
   }
 
@@ -240,6 +278,14 @@ export default function PostsPage() {
                         ⚠ {attemptLabel(p.last_attempt_reason)}
                       </span>
                     )}
+                    {p.status === "paused" && p.last_attempt_reason && (
+                      <span
+                        className="mt-1 flex items-center gap-1 text-[11px] text-rose-600 dark:text-rose-400"
+                        title={`Scheduler paused this post${p.last_attempt_at ? ` at ${fmt(p.last_attempt_at)}` : ""}: ${p.last_attempt_reason}. Fix the cause at the provider, then Resume to reschedule it.`}
+                      >
+                        ⏸ {attemptLabel(p.last_attempt_reason)}
+                      </span>
+                    )}
                   </td>
                   <td className="px-3 py-2.5 align-top max-w-md">
                     <p className="truncate text-stone-800 dark:text-zinc-200">{p.excerpt || "(empty draft)"}</p>
@@ -268,6 +314,11 @@ export default function PostsPage() {
                   </td>
                   <td className="px-3 py-2.5 align-top text-right whitespace-nowrap">
                     <span className="inline-flex gap-2 text-xs text-stone-400 dark:text-zinc-500">
+                      {p.status === "paused" && (
+                        <span role="button" onClick={(e) => handleResume(e, p.post_id)} className="hover:text-amber-600 dark:hover:text-amber-400 cursor-pointer" title="Resume: reschedule this post so the next scheduler tick posts it">
+                          {resuming === p.post_id ? "…" : "resume"}
+                        </span>
+                      )}
                       {p.status === "sent" && (
                         <span role="button" onClick={(e) => handleRepost(e, p.post_id)} className="hover:text-green-600 dark:hover:text-green-400 cursor-pointer" title="Repost to X now">
                           {reposting === p.post_id ? "…" : "repost"}
