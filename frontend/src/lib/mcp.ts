@@ -661,11 +661,32 @@ export interface ResolveDynamicResult {
   message?: string;
 }
 
-/// Run a dynamic block's prompt server-side: the wheel calls Claude (with web
-/// search) using the operator's vaulted key, weaves the answer into `context` in
-/// the author's `voice`, and returns the finished fragment. Paid tool (the AI
-/// cost is metered; refunded on failure) — npub/proof envelope injected by
-/// callTool. Powers the editor's Preview dry-run.
+// Claim-check shapes (mirrors optionality-mcp's async-job pattern). The start
+// tool returns a claim check immediately; the free fetch companion is polled.
+interface ClaimCheckStart {
+  success?: boolean;
+  claim_check?: string;
+  poll_after_seconds?: number;
+  error?: string;
+  error_code?: string;
+  message?: string;
+}
+interface ClaimFetch {
+  status?: "pending" | "running" | "done" | "error" | "expired" | string;
+  result?: { text?: string };
+  poll_after_seconds?: number;
+  error?: string;
+  message?: string;
+  next_steps?: string;
+}
+
+const RESOLVE_MAX_WAIT_MS = 300_000; // give a heavy paginate+fetch+search resolve room
+
+/// Resolve a dynamic block's prompt server-side via the **claim-check** pattern:
+/// `resolve_dynamic_block` starts a background job and returns a claim check
+/// instantly (so no single request idles past the ~100s edge cap); we then poll
+/// the free `fetch_dynamic_block` until it's done. The operator's vaulted key
+/// never leaves the server. Paid on the start call (refunded if the job fails).
 export async function resolveDynamicBlock(args: {
   prompt: string;
   context?: string;
@@ -674,17 +695,30 @@ export async function resolveDynamicBlock(args: {
   allowedDomains?: string[];
   maxFetches?: number;
 }): Promise<ResolveDynamicResult> {
-  // Web search + fetch + generation can run a while. Allow more than the default
-  // 120s, and keep it ABOVE the server's own resolve timeout so a too-slow run
-  // comes back as a clean "failed/refunded" rather than an MCP -32001.
-  return callTool<ResolveDynamicResult>("resolve_dynamic_block", {
+  const start = await callTool<ClaimCheckStart>("resolve_dynamic_block", {
     prompt: args.prompt,
     context: args.context ?? "",
     voice: args.voice ?? "",
     bans: JSON.stringify(args.bans ?? []),
     allowed_domains: JSON.stringify(args.allowedDomains ?? []),
     max_fetches: args.maxFetches ?? 5,
-  }, { timeoutMs: 240_000 });
+  });
+  if (start.success === false || !start.claim_check) {
+    return { success: false, error_code: start.error_code, error: start.error, message: start.message };
+  }
+
+  const claim = start.claim_check;
+  const deadline = Date.now() + RESOLVE_MAX_WAIT_MS;
+  let waitSeconds = start.poll_after_seconds ?? 3;
+  for (;;) {
+    await new Promise((r) => setTimeout(r, waitSeconds * 1000));
+    const f = await callTool<ClaimFetch>("fetch_dynamic_block", { claim_check: claim });
+    if (f.status === "done") return { success: true, text: f.result?.text ?? "" };
+    if (f.status === "error") return { success: false, message: f.message || f.error || "The resolve failed — your fare was refunded." };
+    if (f.status === "expired") return { success: false, message: f.next_steps || f.message || "The resolve claim expired — try again." };
+    if (Date.now() > deadline) return { success: false, message: "Timed out waiting for the dynamic block to resolve." };
+    waitSeconds = f.poll_after_seconds ?? 3;
+  }
 }
 
 // ─── X account OAuth2 (per-patron connect dance) ───────────────────────────
