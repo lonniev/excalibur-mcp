@@ -297,10 +297,6 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     (editingBlock ? blocks.find((b) => b.id === editingBlock)?.text : undefined) ??
     (sel ? blocks.find((b) => b.id === sel.blockId)?.text : undefined) ??
     composed;
-  // The block the "save as snippet / make dynamic" gesture targets: the one being
-  // edited, else the selected one, else the sole block when there's only one.
-  const focusedBlockId =
-    editingBlock ?? sel?.blockId ?? (blocks.length === 1 ? blocks[0].id : null);
   const allFlags = useMemo(
     () => blocks.flatMap((b) => b.flags.map((f) => ({ ...f, blockId: b.id, blockText: b.text }))),
     [blocks],
@@ -510,13 +506,27 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
       : "Snippet added as a block — drag it where you want.");
   };
 
-  // Mark the focused block dynamic (its text becomes a runnable prompt). Wired to
-  // the "dynamic prompt" toggle on the snippet-save gesture; clears any flags.
-  const markBlockDynamic = useCallback((blockId: string | null, fallback: string) => {
-    if (!blockId) { setHint("Click into the block you want to make dynamic first."); return; }
+  // Flip a block between static text and a dynamic prompt, in place. Turning it
+  // dynamic clears any flags (a prompt isn't flaggable copy); turning it static
+  // drops the dynamic/fallback fields. Either way, clear its cached resolution.
+  const toggleBlockDynamic = useCallback((blockId: string) => {
+    let nowDynamic = false;
+    setBlocks((prev) => prev.map((b) => {
+      if (b.id !== blockId) return b;
+      if (b.dynamic) return { id: b.id, text: b.text, flags: [] };
+      nowDynamic = true;
+      return { ...b, dynamic: true, flags: [] };
+    }));
+    setResolved((r) => { const { [blockId]: _drop, ...rest } = r; return rest; });
+    setHint(nowDynamic
+      ? "Now a dynamic prompt — it runs at post time. Edit the prompt and fallback below, then Run to preview."
+      : "Back to a static text block.");
+  }, []);
+
+  // Edit a dynamic block's fallback (posted if resolution fails) inline.
+  const setBlockFallback = useCallback((blockId: string, fallback: string) => {
     setBlocks((prev) => prev.map((b) =>
-      b.id === blockId ? { ...b, dynamic: true, fallback: fallback.trim() || undefined, flags: [] } : b));
-    setHint("This block is now dynamic — its prompt runs at post time.");
+      b.id === blockId ? { ...b, fallback: fallback || undefined } : b));
   }, []);
 
   // Resolve one dynamic block via the (paid) server-side dry-run. Context is the
@@ -938,6 +948,8 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
                         overIndex={overIndex}
                         resolved={resolved[b.id]}
                         onResolve={() => resolveDynamic(b)}
+                        onToggleDynamic={() => toggleBlockDynamic(b.id)}
+                        onChangeFallback={(t) => setBlockFallback(b.id, t)}
                         onMouseUp={onBlockMouseUp}
                         onFlagClick={(flagId, rect) => {
                           setActiveFlag({ blockId: b.id, flagId });
@@ -1057,8 +1069,6 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
                   onInsert={insertSnippetRow}
                   snippets={snippets}
                   setSnippets={setSnippets}
-                  canMarkDynamic={focusedBlockId !== null}
-                  onMarkDynamic={(fallback) => markBlockDynamic(focusedBlockId, fallback)}
                 />
               )}
               {tab === "schedule" && !isSnippet && (
@@ -1082,10 +1092,12 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
 // ── block view ──────────────────────────────────────────────────────────────
 function BlockView({
   block, idx, preview, editing, activeFlagId, overIndex, resolved, onResolve,
+  onToggleDynamic, onChangeFallback,
   onMouseUp, onFlagClick, onEdit, onDoneEdit, onChange, onDelete, onMoveUp, onMoveDown, canDelete, dragHandlers,
 }: {
   block: Block; idx: number; preview: boolean; editing: boolean; activeFlagId: string | null; overIndex: number | null;
   resolved?: ResolvedState; onResolve: () => void;
+  onToggleDynamic: () => void; onChangeFallback: (t: string) => void;
   onMouseUp: (blockId: string, el: HTMLElement | null) => void;
   onFlagClick: (flagId: string, rect: DOMRect) => void;
   onEdit: () => void; onDoneEdit: () => void; onChange: (t: string) => void; onDelete: () => void;
@@ -1117,9 +1129,12 @@ function BlockView({
     }
     return <p className="whitespace-pre-wrap break-words text-[15px] leading-normal text-zinc-900">{block.text}</p>;
   }
-  // A dynamic block's text is a prompt, not flaggable copy — show it as a distinct
-  // card (no text-selection / Flag affordance) so its nature is unmistakable.
-  if (block.dynamic && !editing) {
+  // A dynamic block is a self-contained card: its prompt and fallback are edited
+  // inline, and Run resolves it in place — no separate edit mode, no global
+  // Preview needed to see the result. (A prompt isn't flaggable copy, so there's
+  // no text-selection / Flag affordance here.)
+  if (block.dynamic) {
+    const result = resolved && !resolved.loading && resolved.text && !resolved.error ? resolved.text : "";
     return (
       <div className={`group relative -ml-7 rounded-md pl-7 ${overIndex === idx ? "ring-1 ring-amber-300" : ""}`} draggable {...dragHandlers}>
         <div className="absolute left-0 top-0 flex flex-col items-center opacity-0 transition-opacity group-hover:opacity-100">
@@ -1128,26 +1143,50 @@ function BlockView({
           <button onClick={onMoveDown} className="text-zinc-300 hover:text-amber-500"><ChevronDown className="h-3.5 w-3.5" /></button>
         </div>
         <div className="rounded-md border border-dashed border-violet-400 bg-violet-50 p-2">
-          <div className="mb-1 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-violet-600">
-            <Wand2 className="h-3 w-3" /> dynamic prompt · resolves at post time
-          </div>
-          <p className="whitespace-pre-wrap break-words text-[13px] leading-snug text-violet-900">{block.text}</p>
-          {block.fallback && (
-            <p className="mt-1 text-[11px] text-violet-500">Fallback: {block.fallback}</p>
-          )}
-          <div className="mt-1.5 flex items-center gap-3">
-            <button onClick={onResolve} className="flex items-center gap-1 text-[11px] text-violet-600 hover:text-violet-800">
-              <Sparkles className="h-3 w-3" /> Test run
+          <div className="mb-1.5 flex items-center justify-between gap-2">
+            <span className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-violet-600">
+              <Wand2 className="h-3 w-3" /> dynamic prompt · runs at post time
+            </span>
+            <button
+              onClick={onToggleDynamic}
+              title="Turn this back into a normal text block"
+              className="font-mono text-[10px] uppercase tracking-widest text-violet-400 hover:text-violet-700"
+            >
+              make static
             </button>
-            {resolved?.loading && <Loader2 className="h-3 w-3 animate-spin text-violet-500" />}
-            {resolved && !resolved.loading && resolved.text && !resolved.error && (
-              <span className="truncate text-[11px] text-emerald-600">→ {resolved.text}</span>
-            )}
-            {resolved?.error && <span className="truncate text-[11px] text-rose-500">{resolved.error}</span>}
           </div>
+          <textarea
+            value={block.text}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder="Write the prompt to run, e.g. 'the current BTC price in USD, one short sentence'"
+            rows={Math.max(2, Math.ceil(block.text.length / 42))}
+            className="w-full resize-none rounded border border-violet-300 bg-white p-2 text-[13px] leading-snug text-violet-900 placeholder:text-violet-300 outline-none focus:border-violet-500"
+          />
+          <input
+            value={block.fallback ?? ""}
+            onChange={(e) => onChangeFallback(e.target.value)}
+            placeholder="Fallback text if it can't resolve (optional)"
+            className="mt-1.5 w-full rounded border border-violet-200 bg-white px-2 py-1 text-[12px] text-violet-800 placeholder:text-violet-300 outline-none focus:border-violet-400"
+          />
+          <div className="mt-1.5 flex items-center gap-2">
+            <button
+              onClick={onResolve}
+              disabled={resolved?.loading || !block.text.trim()}
+              className="flex items-center gap-1 rounded bg-violet-500 px-2 py-1 text-[11px] font-medium text-white hover:bg-violet-400 disabled:opacity-40"
+            >
+              {resolved?.loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+              {resolved?.loading ? "Running…" : "Run"}
+            </button>
+            <span className="font-mono text-[10px] text-violet-400">preview the result here</span>
+          </div>
+          {result && (
+            <p className="mt-1.5 rounded bg-white p-1.5 text-[13px] leading-snug text-zinc-900 ring-1 ring-emerald-200">
+              {result}
+            </p>
+          )}
+          {resolved?.error && <p className="mt-1.5 text-[11px] text-rose-500">{resolved.error}</p>}
         </div>
         <div className="absolute right-1 top-1 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-          <button onClick={onEdit} title="Edit prompt" className="rounded bg-white p-1 text-zinc-400 shadow hover:text-amber-500"><Pencil className="h-3.5 w-3.5" /></button>
           {canDelete && <button onClick={onDelete} title="Delete block" className="rounded bg-white p-1 text-zinc-400 shadow hover:text-rose-500"><Trash2 className="h-3.5 w-3.5" /></button>}
         </div>
       </div>
@@ -1258,6 +1297,7 @@ function BlockView({
         })}
       </p>
       <div className="absolute right-1 top-1 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+        <button onClick={onToggleDynamic} title="Make dynamic — turn this block's text into a prompt that runs at post time" className="rounded bg-white p-1 text-zinc-400 shadow hover:text-violet-500"><Wand2 className="h-3.5 w-3.5" /></button>
         <button onClick={onEdit} title="Edit text" className="rounded bg-white p-1 text-zinc-400 shadow hover:text-amber-500"><Pencil className="h-3.5 w-3.5" /></button>
         {canDelete && <button onClick={onDelete} title="Delete block" className="rounded bg-white p-1 text-zinc-400 shadow hover:text-rose-500"><Trash2 className="h-3.5 w-3.5" /></button>}
       </div>
@@ -1332,33 +1372,27 @@ function FlagsTab({
 
 // ── snippets tab ────────────────────────────────────────────────────────────
 function SnippetsTab({
-  currentText, onInsert, snippets, setSnippets, canMarkDynamic, onMarkDynamic,
+  currentText, onInsert, snippets, setSnippets,
 }: {
   currentText: string;
   onInsert: (s: Snippet) => void;
   snippets: Snippet[];
   setSnippets: (s: Snippet[]) => void;
-  canMarkDynamic: boolean;
-  onMarkDynamic: (fallback: string) => void;
 }) {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
-  // "Dynamic prompt" turns the focused block's text into a runnable prompt and
-  // saves it as a reusable dynamic snippet; `fallback` posts if resolution fails.
-  const [dynamic, setDynamic] = useState(false);
-  const [fallback, setFallback] = useState("");
 
+  // Save the focused block as a reusable snippet. A dynamic block (set via the
+  // block's own wand toggle) carries its dynamic/fallback in the doc, so saving
+  // a dynamic block keeps it dynamic with no extra step here.
   async function save() {
     const n = name.trim();
     const t = currentText.trim();
     if (!n || !t) return;
     setBusy(true);
     try {
-      setSnippets(await addSnippet(n, t, dynamic ? { dynamic: true, fallback } : {}));
-      if (dynamic) onMarkDynamic(fallback);
+      setSnippets(await addSnippet(n, t));
       setName("");
-      setDynamic(false);
-      setFallback("");
     } finally {
       setBusy(false);
     }
@@ -1388,29 +1422,6 @@ function SnippetsTab({
             ? `Saves: "${currentText.trim().slice(0, 80)}${currentText.trim().length > 80 ? "…" : ""}"`
             : "Click into a block first, then save its text as a reusable snippet."}
         </p>
-        {/* Dynamic-prompt toggle: marks the focused block dynamic and stores a
-            reusable dynamic snippet. The block's text becomes the prompt. */}
-        <label
-          className={`mt-2 flex items-center gap-2 text-[12px] ${canMarkDynamic ? "text-zinc-300" : "text-zinc-600"}`}
-          title={canMarkDynamic ? "Treat this block's text as a prompt run at post time" : "Click into a single block first"}
-        >
-          <input
-            type="checkbox"
-            checked={dynamic}
-            disabled={!canMarkDynamic}
-            onChange={(e) => setDynamic(e.target.checked)}
-            className="accent-violet-500"
-          />
-          <Wand2 className="h-3.5 w-3.5 text-violet-400" /> Dynamic prompt (runs at post time)
-        </label>
-        {dynamic && (
-          <input
-            value={fallback}
-            onChange={(e) => setFallback(e.target.value)}
-            placeholder="Fallback text if it can't resolve (optional)"
-            className="mt-2 w-full rounded-md border border-violet-500/50 bg-zinc-950 px-2 py-1.5 text-[12px] text-zinc-200 placeholder:text-zinc-600 outline-none focus:border-violet-400"
-          />
-        )}
       </div>
 
       <div>

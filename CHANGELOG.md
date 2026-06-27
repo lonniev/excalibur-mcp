@@ -5,6 +5,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — dynamic blocks are now block-level and inline (intuitive)
+
+- Making a block dynamic is one click **on the block**: a wand toggle in the
+  block's hover toolbar flips it between static text and a dynamic prompt — no
+  trip through the Snippets tab.
+- A dynamic block is a self-contained card: its **prompt** and **fallback** are
+  edited inline, and a **Run** button resolves it in place to preview the result
+  (or shows the fallback / error) — no need to toggle the global Preview.
+- The Snippets tab's save form drops the "dynamic prompt" checkbox/fallback: a
+  dynamic block already carries its dynamic-ness in its `doc`, so saving it as a
+  snippet keeps it dynamic for free. The library per-row wand toggle and
+  insert-as-dynamic remain.
+
+### Fixed — dynamic flag now persists across reload
+
+- `doc` (JSONB) can come back from the data layer as a parsed object **or a JSON
+  string**; the editor only handled the object form, so the `dynamic`/`fallback`
+  fields were silently dropped on reload (the "I can't set the toggle" symptom).
+  Added `editorDoc.asDoc()` (mirrors the backend's `_as_dict`) and route
+  `parsePostDoc` + `snippetIsDynamic`/`snippetFallback` through it.
+
 ### Added — toggle an existing snippet dynamic from the library
 
 - The Snippets tab's library list gains a per-row **wand toggle** (next to the
