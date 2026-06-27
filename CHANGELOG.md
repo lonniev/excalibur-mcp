@@ -5,6 +5,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — dynamic-block resolution is async (claim check), surviving the edge cap
+
+- Heavy dynamic prompts (paginate a collection, fetch product pages, web-search,
+  generate) ran past the ~100s browser↔edge connection cap and failed with
+  `Load failed` in Preview / Post-now. Reworked the interactive path to the
+  DPYC **claim-check** pattern (wheel `start_async_job`/`fetch_async_job`):
+  - `resolve_dynamic_block` now **starts a background job** and returns a claim
+    check instantly (`{claim_check, status: "pending", poll_after_seconds}`).
+  - New free companion `fetch_dynamic_block(claim_check)` is polled until the job
+    is `done` (`result.text`); polling is short, so no single request idles past
+    the edge cap. The fare is charged on the start call and refunded by the wheel
+    if the job ultimately fails. Owner-scoped; the poll doubles as the watchdog
+    (a stalled job re-kicks).
+  - A `register_job_runner` runner loads the operator's vaulted key and calls the
+    shared `resolve_block` core — the same code the scheduler calls directly, so
+    scheduled fires are unchanged (already server-side).
+  - FE `resolveDynamicBlock` now starts + polls under the hood (same
+    `{success, text}` result), so Preview/Post-now callers are unchanged.
+- Operator: price `fetch_dynamic_block` is free; `resolve_dynamic_block` keeps
+  its existing price (charged on start).
+
 ## [0.22.0] — 2026-06-27
 
 ### Changed — dynamic blocks resolve in parallel, with sane timeouts

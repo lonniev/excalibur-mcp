@@ -99,6 +99,10 @@ _DOMAIN_TOOLS = [
     ToolIdentity(tool_id=capability_uuid("resolve_dynamic_block"), capability="resolve_dynamic_block",
                  category="heavy", intent="Resolve a dynamic post block's prompt with Claude (server-side, metered)",
                  pricing_hint_type="flat", pricing_hint_value=25),
+    # Free companion that redeems a resolve_dynamic_block claim check — polling is
+    # free (the fare was charged on the start call).
+    ToolIdentity(tool_id=capability_uuid("fetch_dynamic_block"), capability="fetch_dynamic_block",
+                 category="free", intent="Redeem a resolve_dynamic_block claim check for the resolved fragment"),
     # Snippet library — reusable openings/footers/CTAs the patron saves once and
     # drops into the editor (favorites become one-click chiclets). Free: managing
     # your own snippets carries no fare, but every call is proof-gated and
@@ -838,19 +842,24 @@ async def resolve_dynamic_block(
     npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "",
     proof: str = "",
 ) -> dict:
-    """Resolve a dynamic post block with Claude — server-side.
+    """Start resolving a dynamic post block with Claude — returns a CLAIM CHECK.
 
     A dynamic block's ``prompt`` is run by Claude (with web search + web fetch for
     live data) and woven into the surrounding post ``context`` in the author's
     ``voice``. The author's instruction governs length — there is no character cap
     (X supports long-form posts). The operator's Anthropic key stays in the vault
-    and never leaves the server. This powers the editor's Preview dry-run; the
-    scheduler resolves dynamic blocks the same way at fire time.
+    and never leaves the server.
 
-    Returns ``{"success": true, "text": "..."}``.
+    Because that work (paginated fetches + generation) can outlast a client
+    timeout, this returns immediately with a **claim check** instead of the text:
+    ``{"success": true, "claim_check": "...", "status": "pending",
+    "poll_after_seconds": N}``. Redeem it with the free companion
+    ``fetch_dynamic_block(claim_check)`` until ``status == "done"`` (then read
+    ``result.text``). (The scheduler resolves blocks directly server-side at fire
+    time and does not use this tool.)
 
-    Paid: the AI cost is metered as a tollbooth fare, refunded if no Anthropic
-    key is configured or the upstream call returns nothing.
+    Paid: the AI cost is metered as a tollbooth fare on THIS start call, refunded
+    if no Anthropic key is configured or the job ultimately fails.
 
     Args:
         prompt: The dynamic block's prompt to run.
@@ -867,6 +876,7 @@ async def resolve_dynamic_block(
         await runtime.rollback_debit(tool_id, npub)
         return {"success": False, "error_code": "tool_input_invalid", "error": "prompt is required."}
 
+    # Fast-fail before spinning a job: no operator key → refund, don't start.
     try:
         creds = await runtime.load_credentials(["anthropic_api_key"])
         key = creds.get("anthropic_api_key")
@@ -883,34 +893,79 @@ async def resolve_dynamic_block(
             ),
         }
 
-    ban_list = _parse_str_list(bans)
-    domain_list = _parse_str_list(allowed_domains)
+    # Kick the slow resolve into a background job and hand back a claim check.
+    # Params are persisted in Neon — never the API key (the runner loads it).
+    return await runtime.start_async_job(
+        "resolve_dynamic_block",
+        npub,
+        {
+            "npub": npub,
+            "prompt": prompt,
+            "context": context,
+            "voice": voice,
+            "bans": _parse_str_list(bans),
+            "allowed_domains": _parse_str_list(allowed_domains),
+            "max_fetches": max_fetches,
+        },
+        tool_id=tool_id,
+        max_runtime_seconds=210,
+        result_ttl_seconds=900,
+    )
+
+
+@tool
+@runtime.paid_tool(capability_uuid("fetch_dynamic_block"), catch_errors=True)
+async def fetch_dynamic_block(
+    claim_check: str,
+    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
+    proof: str = "",
+) -> dict:
+    """Redeem a ``resolve_dynamic_block`` claim check (free, proof-gated).
+
+    Poll this with the ``claim_check`` from ``resolve_dynamic_block`` until
+    ``status == "done"`` (the resolved fragment is ``result.text``). While the
+    job runs it returns ``{"status": "running", "poll_after_seconds": N}``; on
+    failure ``{"status": "error", ...}`` (the start fare is refunded); an unknown
+    or aged-out claim returns ``{"status": "expired", ...}``. Owner-scoped — only
+    the npub that started the job can redeem it. Also acts as the watchdog: a
+    stalled job is re-kicked when polled."""
+    return await runtime.fetch_async_job(claim_check, npub)
+
+
+async def _resolve_dynamic_runner(
+    npub: str = "",
+    prompt: str = "",
+    context: str = "",
+    voice: str = "",
+    bans: list | None = None,
+    allowed_domains: list | None = None,
+    max_fetches: int = 5,
+    **_,
+) -> dict:
+    """Background job runner for ``resolve_dynamic_block``.
+
+    Loads the operator's vaulted Anthropic key (never stored in the job params)
+    and resolves the fragment via the shared ``resolve_block`` core — the same
+    code the scheduler calls directly. Raises on failure so the wheel marks the
+    job errored and refunds the start fare. Registered at import so any fresh
+    container can resume an orphaned job when it's next polled.
+    """
+    creds = await runtime.load_credentials(["anthropic_api_key"])
+    key = creds.get("anthropic_api_key")
+    if not key:
+        raise RuntimeError("operator anthropic_api_key not configured")
 
     from excalibur_mcp.resolve import clamp_fetches, resolve_block
-    try:
-        text = await resolve_block(
-            api_key=key, prompt=prompt, context=context,
-            voice=voice, bans=ban_list,
-            allowed_domains=domain_list, max_fetches=clamp_fetches(max_fetches),
-        )
-    except Exception as exc:
-        await runtime.rollback_debit(tool_id, npub)
-        logger.warning("resolve_dynamic_block upstream failed: %s: %s", type(exc).__name__, exc)
-        return {
-            "success": False,
-            "error_code": "llm_upstream_error",
-            "message": "Resolving the dynamic block failed upstream — your fare was refunded. Try again shortly.",
-        }
 
-    if not text:
-        await runtime.rollback_debit(tool_id, npub)
-        return {
-            "success": False,
-            "error_code": "llm_no_output",
-            "message": "No text came back — your fare was refunded.",
-        }
+    text = await resolve_block(
+        api_key=key, prompt=prompt, context=context, voice=voice,
+        bans=bans or [], allowed_domains=allowed_domains or [],
+        max_fetches=clamp_fetches(max_fetches),
+    )
+    return {"text": text}
 
-    return {"success": True, "text": text}
+
+runtime.register_job_runner("resolve_dynamic_block", _resolve_dynamic_runner)
 
 
 # ---------------------------------------------------------------------------
