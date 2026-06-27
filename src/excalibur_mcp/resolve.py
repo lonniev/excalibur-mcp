@@ -23,8 +23,11 @@ logger = logging.getLogger(__name__)
 
 _MODEL = "claude-sonnet-4-6"
 _ENDPOINT = "https://api.anthropic.com/v1/messages"
-_TIMEOUT = 90.0
-_MAX_TOKENS = 1500
+_TIMEOUT = 110.0
+# Generation ceiling, not a content limit — X supports long-form posts, so the
+# author's instruction governs length. Generous enough for long prose while
+# bounding latency/cost (and staying under the FE's per-call timeout).
+_MAX_TOKENS = 4000
 
 # Claude's server-side web tools (dynamic-filtering variants — supported on
 # claude-sonnet-4-6). web_search queries the indexed web (no URL needed);
@@ -68,24 +71,8 @@ def _build_tools(allowed_domains: list[str] | None, max_fetches: int) -> list[di
 # absent it, the model just composes a fragment that reads after the context.
 INSERT_MARKER = "⟨HERE⟩"
 
-# Bounds for the character budget so an adversarial value can't ask for a
-# 2-char fragment or an unbounded essay.
-_BUDGET_MIN = 8
-_BUDGET_MAX = 10_000
-
-
-def clamp_budget(value: int) -> int:
-    """Clamp a requested character budget into a sane range."""
-    try:
-        v = int(value)
-    except (TypeError, ValueError):
-        return 280
-    return max(_BUDGET_MIN, min(_BUDGET_MAX, v))
-
-
 def _build_prompt(
-    prompt: str, context: str, voice: str, bans: list[str], char_budget: int,
-    *, shorten_from: str | None = None,
+    prompt: str, context: str, voice: str, bans: list[str],
 ) -> tuple[str, str]:
     constraints: list[str] = []
     if voice.strip():
@@ -95,27 +82,21 @@ def _build_prompt(
             f"Hard constraints — never produce any of these constructions: {'; '.join(bans)}."
         )
     system = (
-        "You compose ONE fragment of a single tweet being posted to X. Run the "
-        "author's instruction — use web search whenever it needs current facts — "
-        "then return ONLY the finished fragment text: no preamble, no surrounding "
+        "You compose a fragment of a post being published to X. Run the author's "
+        "instruction — use web search or web fetch whenever it needs current facts "
+        "— then return ONLY the finished fragment text: no preamble, no surrounding "
         "quotes, no markdown, no code fences, no citations or source list. The "
-        "fragment must read naturally where it sits in the surrounding tweet and "
-        "carry forward its voice. "
-        + (" ".join(constraints) + " " if constraints else "")
-        + f"Hard limit: at most {char_budget} characters."
+        "fragment must read naturally where it sits in the surrounding post and "
+        "carry forward its voice. Let the author's instruction set the length — X "
+        "supports long-form posts, so there is no fixed character limit."
+        + (" " + " ".join(constraints) if constraints else "")
     )
     surround = context.strip() or "(the fragment stands on its own)"
     user = (
-        f"SURROUNDING TWEET (the fragment goes where you see {INSERT_MARKER}):\n"
+        f"SURROUNDING POST (the fragment goes where you see {INSERT_MARKER}):\n"
         f"{surround}\n\n"
         f"AUTHOR'S INSTRUCTION FOR THE FRAGMENT:\n{prompt.strip()}"
     )
-    if shorten_from is not None:
-        user += (
-            f"\n\nYour previous draft was too long ({len(shorten_from)} chars). "
-            f"Rewrite it to {char_budget} characters or fewer, same meaning, same "
-            f"voice:\n{shorten_from}"
-        )
     return system, user
 
 
@@ -169,40 +150,26 @@ async def resolve_block(
     context: str = "",
     voice: str = "",
     bans: list[str] | None = None,
-    char_budget: int = 280,
     allowed_domains: list[str] | None = None,
     max_fetches: int = _MAX_FETCHES_DEFAULT,
 ) -> str:
-    """Resolve one dynamic block to its final, tweet-ready fragment text.
+    """Resolve one dynamic block to its final, post-ready fragment text.
 
-    ``context`` is the surrounding composed tweet (optionally with
-    ``INSERT_MARKER`` where the fragment belongs). The length gate makes one
-    bounded "shorten" retry when the first draft overruns ``char_budget``, then
-    hard-caps as a last resort. ``allowed_domains`` (author allowlist; empty = any
-    URL the prompt references) and ``max_fetches`` (author budget) scope the
-    server-side web tools. Raises ``ValueError`` on empty input/output and
-    propagates transport/HTTP errors so the caller can refund / fall back.
+    ``context`` is the surrounding composed post (optionally with
+    ``INSERT_MARKER`` where the fragment belongs). The author's instruction
+    governs length — there is no character cap (X supports long-form posts).
+    ``allowed_domains`` (author allowlist; empty = any URL the prompt references)
+    and ``max_fetches`` (author budget) scope the server-side web tools. Raises
+    ``ValueError`` on empty input/output and propagates transport/HTTP errors so
+    the caller can refund / fall back.
     """
     bans = bans or []
-    budget = clamp_budget(char_budget)
     if not prompt.strip():
         raise ValueError("empty prompt")
 
     tools = _build_tools(allowed_domains, clamp_fetches(max_fetches))
-    system, user = _build_prompt(prompt, context, voice, bans, budget)
+    system, user = _build_prompt(prompt, context, voice, bans)
     text = await _call(api_key, system, user, tools)
-
-    if text and len(text) > budget:
-        # One bounded regenerate to fit the budget before we resort to truncation.
-        system2, user2 = _build_prompt(
-            prompt, context, voice, bans, budget, shorten_from=text,
-        )
-        shortened = await _call(api_key, system2, user2, tools)
-        if shortened:
-            text = shortened
-
     if not text:
         raise ValueError("no text returned")
-    if len(text) > budget:
-        text = text[:budget].rstrip()
     return text

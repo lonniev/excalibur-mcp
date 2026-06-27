@@ -1,4 +1,4 @@
-"""Tests for the dynamic-block resolver (prompt build, cleaning, length gate)."""
+"""Tests for the dynamic-block resolver (prompt build, cleaning, web tools)."""
 
 from unittest.mock import AsyncMock, patch
 
@@ -9,7 +9,6 @@ from excalibur_mcp.resolve import (
     _build_prompt,
     _build_tools,
     _clean,
-    clamp_budget,
     clamp_fetches,
     resolve_block,
 )
@@ -21,36 +20,20 @@ def test_clean_strips_fences_and_quotes():
     assert _clean("  plain  ") == "plain"
 
 
-def test_clamp_budget_bounds():
-    assert clamp_budget(2) == 8          # below floor
-    assert clamp_budget(999999) == 10000  # above ceiling
-    assert clamp_budget(280) == 280
-    assert clamp_budget("nope") == 280    # non-numeric → default
-
-
-def test_prompt_includes_prompt_context_voice_bans_budget():
+def test_prompt_includes_prompt_context_voice_bans_no_char_cap():
     system, user = _build_prompt(
         prompt="state the weather now",
         context="Good morning. ⟨HERE⟩ Stay warm.",
         voice="plain and contrarian",
         bans=["delve", "game-changer"],
-        char_budget=120,
     )
     assert "plain and contrarian" in system
     assert "delve" in system and "game-changer" in system
-    assert "120 characters" in system
+    assert "no fixed character limit" in system  # X is long-form; no 280 cap
+    assert "characters or fewer" not in system
     assert "state the weather now" in user
     assert "Stay warm." in user
     assert resolve.INSERT_MARKER in user
-
-
-def test_prompt_shorten_variant_carries_previous_draft():
-    _, user = _build_prompt(
-        prompt="p", context="", voice="", bans=[], char_budget=50,
-        shorten_from="a draft that was too long",
-    )
-    assert "too long" in user
-    assert "50 characters or fewer" in user
 
 
 def test_clamp_fetches_bounds():
@@ -88,28 +71,17 @@ async def test_resolve_block_passes_web_tools_to_the_call():
 @pytest.mark.asyncio
 async def test_resolve_block_happy_path():
     with patch.object(resolve, "_call", AsyncMock(return_value="sunny, 72°F · BTC $64k")):
-        out = await resolve_block(api_key="k", prompt="weather + btc now", char_budget=280)
+        out = await resolve_block(api_key="k", prompt="weather + btc now")
     assert out == "sunny, 72°F · BTC $64k"
 
 
 @pytest.mark.asyncio
-async def test_resolve_block_over_budget_triggers_shorten_retry():
-    long_text = "x" * 50
-    short_text = "y" * 10
-    call = AsyncMock(side_effect=[long_text, short_text])
-    with patch.object(resolve, "_call", call):
-        out = await resolve_block(api_key="k", prompt="p", char_budget=20)
-    assert out == short_text
-    assert call.await_count == 2  # first draft over budget → one shorten retry
-
-
-@pytest.mark.asyncio
-async def test_resolve_block_hard_caps_when_shorten_still_long():
-    long_text = "x" * 50
-    still_long = "y" * 40
-    with patch.object(resolve, "_call", AsyncMock(side_effect=[long_text, still_long])):
-        out = await resolve_block(api_key="k", prompt="p", char_budget=20)
-    assert len(out) == 20  # last-resort truncation
+async def test_resolve_block_returns_long_output_untruncated():
+    long_text = "x" * 5000  # well past the old 280 cap — no truncation now
+    with patch.object(resolve, "_call", AsyncMock(return_value=long_text)) as call:
+        out = await resolve_block(api_key="k", prompt="write a long essay")
+    assert out == long_text          # returned whole
+    assert call.await_count == 1     # no shorten retry
 
 
 @pytest.mark.asyncio

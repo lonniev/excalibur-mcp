@@ -833,7 +833,6 @@ async def resolve_dynamic_block(
     context: str = "",
     voice: str = "",
     bans: str = "",
-    char_budget: int = 280,
     allowed_domains: str = "",
     max_fetches: int = 5,
     npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "",
@@ -842,10 +841,11 @@ async def resolve_dynamic_block(
     """Resolve a dynamic post block with Claude — server-side.
 
     A dynamic block's ``prompt`` is run by Claude (with web search + web fetch for
-    live data) and woven into the surrounding tweet ``context`` in the author's
-    ``voice``, fitted to ``char_budget``. The operator's Anthropic key stays in
-    the vault and never leaves the server. This powers the editor's Preview
-    dry-run; the scheduler resolves dynamic blocks the same way at fire time.
+    live data) and woven into the surrounding post ``context`` in the author's
+    ``voice``. The author's instruction governs length — there is no character cap
+    (X supports long-form posts). The operator's Anthropic key stays in the vault
+    and never leaves the server. This powers the editor's Preview dry-run; the
+    scheduler resolves dynamic blocks the same way at fire time.
 
     Returns ``{"success": true, "text": "..."}``.
 
@@ -854,10 +854,9 @@ async def resolve_dynamic_block(
 
     Args:
         prompt: The dynamic block's prompt to run.
-        context: The surrounding composed tweet (may contain the ⟨HERE⟩ marker).
+        context: The surrounding composed post (may contain the ⟨HERE⟩ marker).
         voice: Voice-profile text fed to the model (optional).
         bans: Banned constructions — JSON array or comma-separated (optional).
-        char_budget: Max characters for the resolved fragment.
         allowed_domains: Author allowlist for web_fetch — JSON array or
             comma-separated. Blank = fetch any URL the prompt references.
         max_fetches: Author budget for web lookups (search + fetch), 1..25.
@@ -887,11 +886,11 @@ async def resolve_dynamic_block(
     ban_list = _parse_str_list(bans)
     domain_list = _parse_str_list(allowed_domains)
 
-    from excalibur_mcp.resolve import clamp_budget, clamp_fetches, resolve_block
+    from excalibur_mcp.resolve import clamp_fetches, resolve_block
     try:
         text = await resolve_block(
             api_key=key, prompt=prompt, context=context,
-            voice=voice, bans=ban_list, char_budget=clamp_budget(char_budget),
+            voice=voice, bans=ban_list,
             allowed_domains=domain_list, max_fetches=clamp_fetches(max_fetches),
         )
     except Exception as exc:
