@@ -22,7 +22,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     shared `resolve_block` core — the same code the scheduler calls directly, so
     scheduled fires are unchanged (already server-side).
   - FE `resolveDynamicBlock` now starts + polls under the hood (same
-    `{success, text}` result), so Preview/Post-now callers are unchanged.
+    `{success, text}` result), so Preview/Post-now callers are unchanged. Polling
+    uses backoff (≈4s → ×1.6 → 15s ceiling) rather than the server's eager 3s
+    hint, and `fetch_dynamic_block` is quiet in the debug log.
 - Operator: price `fetch_dynamic_block` is free; `resolve_dynamic_block` keeps
   its existing price (charged on start).
 
