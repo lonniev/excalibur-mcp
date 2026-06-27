@@ -12,7 +12,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@tailwindcss/typography": "^0.5.19",
-    "lucide-react": "^0.577.0",
+    "lucide-react": "^1.0.0",
     "nostr-tools": "^2.23.5",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
