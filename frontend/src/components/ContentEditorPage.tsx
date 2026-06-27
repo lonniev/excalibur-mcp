@@ -14,7 +14,7 @@ import { cachedXProfile, ensureXProfile } from "../lib/xProfile";
 import type { XProfile } from "../lib/mcp";
 import { styleText, type UnicodeStyle } from "../lib/unicodeFormat";
 import {
-  addSnippet, loadSnippets, removeSnippet, snippetFallback, snippetIsDynamic,
+  addSnippet, loadSnippets, removeSnippet, snippetIsDynamic,
   toggleDynamic, toggleFavorite, type Snippet,
 } from "../lib/snippets";
 import QuoteScroller from "./QuoteScroller";
@@ -303,6 +303,13 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     (editingBlock ? blocks.find((b) => b.id === editingBlock)?.text : undefined) ??
     (sel ? blocks.find((b) => b.id === sel.blockId)?.text : undefined) ??
     composed;
+  // The block the "Save the focused block" gesture targets — so saving a dynamic
+  // block carries its full settings (dynamic/fallback/domains/maxFetches) into
+  // the snippet doc, not just its text.
+  const focusedBlock =
+    (editingBlock ? blocks.find((b) => b.id === editingBlock) : undefined) ??
+    (sel ? blocks.find((b) => b.id === sel.blockId) : undefined) ??
+    (blocks.length === 1 ? blocks[0] : undefined);
   const allFlags = useMemo(
     () => blocks.flatMap((b) => b.flags.map((f) => ({ ...f, blockId: b.id, blockText: b.text }))),
     [blocks],
@@ -501,13 +508,14 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   // Insert a snippet as a new block. A dynamic snippet lands as a dynamic block
   // (its text is a prompt) carrying its fallback; a static one lands as-is.
   const insertSnippetRow = (s: Snippet) => {
-    const dyn = snippetIsDynamic(s);
-    const fb = dyn ? snippetFallback(s) : "";
-    setBlocks((prev) => [
-      ...prev,
-      { id: uid(), text: s.text, flags: [], ...(dyn ? { dynamic: true as const } : {}), ...(fb ? { fallback: fb } : {}) },
-    ]);
-    setHint(dyn
+    // A snippet is a saved doc of blocks — append it faithfully. parsePostDoc
+    // pulls the real content from the doc (a dynamic block's prompt + fallback +
+    // domains/maxFetches), NOT the composed `text` body (which for a dynamic
+    // snippet is just the ⟨dynamic⟩ placeholder), and falls back to `text` for
+    // legacy text-only snippets. Fresh ids are assigned.
+    const inserted = parsePostDoc(s.doc, s.text);
+    setBlocks((prev) => [...prev, ...inserted]);
+    setHint(inserted.some((b) => b.dynamic)
       ? "Dynamic snippet added — its prompt runs at post time."
       : "Snippet added as a block — drag it where you want.");
   };
@@ -1091,6 +1099,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
               {tab === "snippets" && (
                 <SnippetsTab
                   currentText={focusedBlockText}
+                  focusedBlock={focusedBlock}
                   onInsert={insertSnippetRow}
                   snippets={snippets}
                   setSnippets={setSnippets}
@@ -1415,9 +1424,10 @@ function FlagsTab({
 
 // ── snippets tab ────────────────────────────────────────────────────────────
 function SnippetsTab({
-  currentText, onInsert, snippets, setSnippets,
+  currentText, focusedBlock, onInsert, snippets, setSnippets,
 }: {
   currentText: string;
+  focusedBlock?: Block;
   onInsert: (s: Snippet) => void;
   snippets: Snippet[];
   setSnippets: (s: Snippet[]) => void;
@@ -1425,16 +1435,17 @@ function SnippetsTab({
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
 
-  // Save the focused block as a reusable snippet. A dynamic block (set via the
-  // block's own wand toggle) carries its dynamic/fallback in the doc, so saving
-  // a dynamic block keeps it dynamic with no extra step here.
+  // Save the focused block as a reusable snippet. If it's dynamic, serialize the
+  // whole block into the snippet doc so its prompt + fallback + domains +
+  // maxFetches round-trip on re-insert (not just the text).
   async function save() {
     const n = name.trim();
     const t = currentText.trim();
     if (!n || !t) return;
     setBusy(true);
     try {
-      setSnippets(await addSnippet(n, t));
+      const doc = focusedBlock?.dynamic ? serializeBlocks([focusedBlock]) : undefined;
+      setSnippets(await addSnippet(n, t, doc ? { doc } : {}));
       setName("");
     } finally {
       setBusy(false);
