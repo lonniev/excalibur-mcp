@@ -5,6 +5,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.23.1] — 2026-06-27
+
 ### Fixed — Posts list shows a loading state on every filter change
 
 - Switching status tabs (or filters) refetches with MCP cold-start lag, but the
