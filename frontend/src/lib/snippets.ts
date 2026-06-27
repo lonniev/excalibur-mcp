@@ -63,3 +63,16 @@ export async function toggleFavorite(id: string, favorite: boolean): Promise<Sni
   await saveSnippet({ id, favorite });
   return loadSnippets();
 }
+
+/// Toggle an existing snippet into / out of being dynamic, then return the
+/// refreshed list. Dynamic-ness lives in the snippet's `doc` (a single block
+/// whose text is the prompt); a dynamic snippet's existing fallback is preserved
+/// when toggling on. This is a doc-only patch, so the snippet's favorite/name are
+/// left untouched server-side.
+export async function toggleDynamic(s: Snippet, dynamic: boolean): Promise<Snippet[]> {
+  const doc = dynamic
+    ? { blocks: [{ text: s.text, flags: [], dynamic: true, ...(snippetFallback(s) ? { fallback: snippetFallback(s) } : {}) }] }
+    : { blocks: [{ text: s.text, flags: [] }] };
+  await saveSnippet({ id: s.id, doc });
+  return loadSnippets();
+}
