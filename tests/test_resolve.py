@@ -9,6 +9,7 @@ from excalibur_mcp.resolve import (
     _build_prompt,
     _build_tools,
     _clean,
+    _extract_answer,
     clamp_fetches,
     resolve_block,
 )
@@ -31,9 +32,33 @@ def test_prompt_includes_prompt_context_voice_bans_no_char_cap():
     assert "delve" in system and "game-changer" in system
     assert "no fixed character limit" in system  # X is long-form; no 280 cap
     assert "characters or fewer" not in system
+    assert "<post>" in system and "</post>" in system  # deliverable goes in the tags
     assert "state the weather now" in user
     assert "Stay warm." in user
     assert resolve.INSERT_MARKER in user
+
+
+def test_extract_answer_prefers_post_tag_dropping_narration():
+    data = {"content": [
+        {"type": "text", "text": "The book is X. I now have enough detail to write the fragment."},
+        {"type": "web_fetch_tool_result"},
+        {"type": "text", "text": "scratch <post>Final marketing copy.</post> trailing note"},
+    ]}
+    assert _extract_answer(data) == "Final marketing copy."
+
+
+def test_extract_answer_trailing_fallback_when_no_tag():
+    data = {"content": [
+        {"type": "text", "text": "thinking out loud before the tools"},
+        {"type": "web_search_tool_result"},
+        {"type": "text", "text": "the actual answer"},
+    ]}
+    assert _extract_answer(data) == "the actual answer"  # narration before the tool dropped
+
+
+def test_extract_answer_no_tools_keeps_the_text():
+    data = {"content": [{"type": "text", "text": "<post>just this</post>"}]}
+    assert _extract_answer(data) == "just this"
 
 
 def test_clamp_fetches_bounds():

@@ -5,6 +5,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — dynamic fragments no longer leak the model's self-talk
+
+- A resolved fragment sometimes carried Claude's between-tool narration ("The
+  book is X… I now have enough detail to write the fragment.") glued onto the
+  actual copy, because the resolver concatenated **all** of the response's text
+  blocks. Now the model is told to wrap the finished fragment in `<post>…</post>`
+  and keep all reasoning outside; `resolve.py` extracts only the tag contents
+  (falling back to the text after the last tool block when tags are absent), so
+  the deliverable is just the marketing copy.
+
 ### Changed — dynamic-block resolution no longer caps length at 280 chars
 
 - X is long-form; the resolver's character budget (default 280, with a
