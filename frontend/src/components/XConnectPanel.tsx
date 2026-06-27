@@ -7,7 +7,7 @@
 // code for a token server-side. This panel just sequences the clicks.
 
 import { useEffect, useRef, useState } from "react";
-import { Twitter, ExternalLink, CheckCircle2, Loader2, RefreshCw } from "lucide-react";
+import { AtSign, ExternalLink, CheckCircle2, Loader2, RefreshCw } from "lucide-react";
 import { beginOauth, checkOauthStatus, getXConnection, getStoredNpub } from "../lib/mcp";
 import { ensureXProfile } from "../lib/xProfile";
 
@@ -130,7 +130,7 @@ export default function XConnectPanel() {
   return (
     <div className={`${card} p-5`}>
       <div className="mb-1 flex items-center gap-2">
-        <Twitter className="h-4 w-4 text-amber-500" />
+        <AtSign className="h-4 w-4 text-amber-500" />
         <span className="text-sm font-medium">X account</span>
         {stage === "connected" && (
           <span className="ml-auto inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
