@@ -234,7 +234,7 @@ const QUIET_TOOLS = new Set([
 async function callTool<T = unknown>(
   toolName: string,
   args: Record<string, unknown> = {},
-  opts: { bestEffort?: boolean } = {},
+  opts: { bestEffort?: boolean; timeoutMs?: number } = {},
 ): Promise<T> {
   const quiet = QUIET_TOOLS.has(toolName);
   // `args` holds only the wrapper's own params — never npub/proof (those are
@@ -251,7 +251,7 @@ async function callTool<T = unknown>(
     result = (await c.callTool(
       { name: `${SLUG}_${toolName}`, arguments: merged },
       undefined,
-      { timeout: 120_000 },
+      { timeout: opts.timeoutMs ?? 120_000 },
     )) as ToolResult;
   } catch (e) {
     if (!quiet) debugPush("error", `${SLUG}_${toolName}: ${(e as Error).message}`);
@@ -674,6 +674,9 @@ export async function resolveDynamicBlock(args: {
   allowedDomains?: string[];
   maxFetches?: number;
 }): Promise<ResolveDynamicResult> {
+  // Web search + fetch + generation can run a while. Allow more than the default
+  // 120s, and keep it ABOVE the server's own resolve timeout so a too-slow run
+  // comes back as a clean "failed/refunded" rather than an MCP -32001.
   return callTool<ResolveDynamicResult>("resolve_dynamic_block", {
     prompt: args.prompt,
     context: args.context ?? "",
@@ -681,7 +684,7 @@ export async function resolveDynamicBlock(args: {
     bans: JSON.stringify(args.bans ?? []),
     allowed_domains: JSON.stringify(args.allowedDomains ?? []),
     max_fetches: args.maxFetches ?? 5,
-  });
+  }, { timeoutMs: 240_000 });
 }
 
 // ─── X account OAuth2 (per-patron connect dance) ───────────────────────────

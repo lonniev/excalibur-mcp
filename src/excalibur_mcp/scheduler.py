@@ -18,6 +18,7 @@ charges exactly what an interactive ``post_tweet`` would, demurrage and all.
 
 from __future__ import annotations
 
+import asyncio
 import calendar
 import json
 import logging
@@ -153,35 +154,56 @@ async def _resolve_post_text(
             return [x.strip() for x in raw.replace(",", "\n").split("\n") if x.strip()]
         return []
 
-    # Static texts are known up front; dynamic slots fill in as we resolve, so a
-    # later block's context sees the earlier blocks' resolved values.
+    # Static texts known up front; dynamic slots fill in after resolution.
     rendered: list[str] = [
         "" if (isinstance(b, dict) and b.get("dynamic")) else str((b or {}).get("text", ""))
         for b in blocks
     ]
-    for i, b in enumerate(blocks):
-        if not (isinstance(b, dict) and b.get("dynamic")):
-            continue
+
+    # Context for a dynamic block: static siblings verbatim + OTHER dynamics as
+    # their fallback. Blocks resolve in PARALLEL, so none can see another's
+    # resolved value — independence is the trade for not posting at the sum of the
+    # per-block times.
+    def _context_for(i: int) -> str:
+        parts: list[str] = []
+        for j, bj in enumerate(blocks):
+            if j == i:
+                parts.append(INSERT_MARKER)
+            elif isinstance(bj, dict) and bj.get("dynamic"):
+                parts.append(str(bj.get("fallback", "")).strip())
+            else:
+                parts.append(rendered[j])
+        return "\n\n".join(p for p in parts if p).strip()
+
+    async def _resolve_one(i: int) -> str | None:
+        """Resolved text for dynamic block i; its fallback on failure; None when
+        it failed AND has no fallback (caller then holds the post)."""
+        b = blocks[i]
         prompt = str(b.get("text", "")).strip()
         fallback = str(b.get("fallback", "")).strip()
-        ctx_parts = [INSERT_MARKER if j == i else rendered[j] for j in range(len(blocks))]
-        context = "\n\n".join(p for p in ctx_parts if p).strip()
         resolved = ""
         if api_key and prompt:
             try:
                 resolved = await resolve_block(
-                    api_key=api_key, prompt=prompt, context=context, voice=voice, bans=bans,
-                    allowed_domains=_domains(b),
+                    api_key=api_key, prompt=prompt, context=_context_for(i),
+                    voice=voice, bans=bans, allowed_domains=_domains(b),
                     max_fetches=clamp_fetches(b.get("maxFetches", 5)),
                 )
             except Exception as exc:  # noqa: BLE001 — fall back, report via reason
                 logger.warning("scheduler: dynamic resolve failed for %s: %s", owner, exc)
                 resolved = ""
         if not resolved:
-            if not fallback:
-                return None, None, "dynamic_resolve_failed"
-            resolved = fallback
-        rendered[i] = resolved
+            return fallback or None
+        return resolved
+
+    dynamic_idx = [
+        i for i, b in enumerate(blocks) if isinstance(b, dict) and b.get("dynamic")
+    ]
+    results = await asyncio.gather(*(_resolve_one(i) for i in dynamic_idx))
+    for i, val in zip(dynamic_idx, results):
+        if val is None:
+            return None, None, "dynamic_resolve_failed"
+        rendered[i] = val
 
     text = "\n\n".join(p for p in rendered if p).strip()
     if not text:

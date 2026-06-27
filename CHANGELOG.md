@@ -5,6 +5,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — dynamic blocks resolve in parallel, with sane timeouts
+
+- A post's dynamic blocks now resolve **concurrently** (`asyncio.gather` in the
+  scheduler, `Promise.all` in the editor's Post-now path) instead of
+  sequentially, so a multi-dynamic post takes ~the slowest block, not the sum.
+  Trade-off: blocks no longer see each other's resolved output (each gets static
+  siblings + others' fallback as context) — independence for speed.
+- **Timeouts made coherent** to kill the `MCP error -32001: Request timed out`:
+  the resolver's Anthropic call timeout is 210s and the FE MCP client timeout for
+  `resolve_dynamic_block` is 240s, so a too-slow run returns a clean
+  refundable error from the server instead of a client-side `-32001`.
+- Scheduler resilience unchanged and confirmed: a per-block resolve failure/timeout
+  falls back (if set) or **holds the post for the next cron tick** — it never
+  aborts the whole run.
+
 ### Fixed — inserting a dynamic snippet now carries its prompt + settings
 
 - Inserting a dynamic snippet into a post produced an empty `<dynamic>` block:
