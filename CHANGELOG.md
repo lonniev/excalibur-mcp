@@ -5,6 +5,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.22.0] — 2026-06-27
+
 ### Changed — dynamic blocks resolve in parallel, with sane timeouts
 
 - A post's dynamic blocks now resolve **concurrently** (`asyncio.gather` in the
