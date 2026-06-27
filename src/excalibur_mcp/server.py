@@ -647,15 +647,17 @@ async def save_snippet(
     name: str = "",
     text: str = "",
     snippet_id: str = "",
-    favorite: bool = False,
+    favorite: bool | None = None,
     doc: dict | None = None,
     npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
     proof: str = "",
 ) -> dict:
     """Save a reusable post snippet (opening/footer/CTA). Omit ``snippet_id`` to
     create a new one; pass it to update an existing snippet in place (name/text/
-    favorite/doc). ``doc`` is the same block/flag document a post carries, so the
-    editor is identical for both. Free and owner-scoped. Returns
+    favorite/doc). On update only the fields you pass change — omit ``favorite``
+    (leave it null) to keep it as-is, so a doc-only patch (e.g. toggling a snippet
+    dynamic) doesn't reset it. ``doc`` is the same block/flag document a post
+    carries, so the editor is identical for both. Free and owner-scoped. Returns
     ``{"success": true, "snippet": …}``."""
     from excalibur_mcp.tools import snippets as snippets_tools
 

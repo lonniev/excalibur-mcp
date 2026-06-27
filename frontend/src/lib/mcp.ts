@@ -834,10 +834,13 @@ export async function saveSnippet(opts: {
   favorite?: boolean;
   doc?: unknown;
 }): Promise<SnippetRow | null> {
-  const args: Record<string, unknown> = { favorite: opts.favorite ?? false };
+  // Only send fields the caller set. On update the server leaves omitted fields
+  // untouched, so a doc-only patch (toggling dynamic) keeps favorite as-is.
+  const args: Record<string, unknown> = {};
   if (opts.id) args.snippet_id = opts.id;
   if (opts.name !== undefined) args.name = opts.name;
   if (opts.text !== undefined) args.text = opts.text;
+  if (opts.favorite !== undefined) args.favorite = opts.favorite;
   if (opts.doc !== undefined) args.doc = opts.doc;
   const r = await callTool<SaveSnippetResult>("save_snippet", args);
   return r.snippet ?? null;

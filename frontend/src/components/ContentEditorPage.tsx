@@ -15,7 +15,7 @@ import type { XProfile } from "../lib/mcp";
 import { styleText, type UnicodeStyle } from "../lib/unicodeFormat";
 import {
   addSnippet, loadSnippets, removeSnippet, snippetFallback, snippetIsDynamic,
-  toggleFavorite, type Snippet,
+  toggleDynamic, toggleFavorite, type Snippet,
 } from "../lib/snippets";
 import QuoteScroller from "./QuoteScroller";
 
@@ -1433,7 +1433,13 @@ function SnippetsTab({
                   >
                     <Star className={`h-3.5 w-3.5 ${s.favorite ? "fill-current" : ""}`} />
                   </button>
-                  {dyn && <Wand2 className="h-3.5 w-3.5 flex-none text-violet-400" aria-label="dynamic prompt" />}
+                  <button
+                    onClick={async () => setSnippets(await toggleDynamic(s, !dyn))}
+                    title={dyn ? "Dynamic — its text is a prompt run at post time. Click to make static." : "Make dynamic — treat its text as a prompt run at post time"}
+                    className={`flex-none ${dyn ? "text-violet-400" : "text-zinc-600 hover:text-violet-400"}`}
+                  >
+                    <Wand2 className="h-3.5 w-3.5" />
+                  </button>
                   <span className="flex-1 min-w-0 truncate text-sm text-zinc-200">{s.name}</span>
                   <button onClick={() => onInsert(s)} className="text-xs text-amber-300 hover:text-amber-200" title={dyn ? "Add as a dynamic block" : "Add as a block"}>
                     + Insert

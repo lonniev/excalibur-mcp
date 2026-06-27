@@ -5,6 +5,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — toggle an existing snippet dynamic from the library
+
+- The Snippets tab's library list gains a per-row **wand toggle** (next to the
+  favorite star) to flip an existing snippet into or out of being a dynamic
+  prompt — no need to re-save it through the "dynamic prompt" gesture. Toggling
+  stores the flag in the snippet's `doc` and preserves any existing fallback.
+- `save_snippet` now treats `favorite` as optional (`null` = leave unchanged) so
+  a doc-only patch — e.g. the dynamic toggle — no longer resets the favorite
+  flag. (This also fixes a latent bug where saving a snippet from the editor
+  without passing favorite silently unfavorited it.)
+
 ### Changed — frontend major dependency bumps
 
 - Adopted React 19, react-router-dom 7, TypeScript 6, Vite 8, and

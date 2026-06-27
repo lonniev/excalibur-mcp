@@ -91,10 +91,16 @@ async def save(
     snippet_id: str = "",
     name: str = "",
     text: str = "",
-    favorite: bool = False,
+    favorite: bool | None = None,
     doc: Any = None,
 ) -> dict[str, Any]:
-    """Upsert: create when ``snippet_id`` is empty, else patch in place."""
+    """Upsert: create when ``snippet_id`` is empty, else patch in place.
+
+    On update only the provided fields change — ``favorite=None`` (the default)
+    leaves the flag untouched, so a doc-only patch (e.g. toggling a snippet
+    dynamic) doesn't reset its favorite, and an editor save that omits favorite
+    doesn't unfavorite it.
+    """
     clean_doc = _clean_doc(doc)
     if snippet_id:
         sid = _require_uuid(snippet_id)

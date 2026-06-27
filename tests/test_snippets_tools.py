@@ -72,6 +72,17 @@ async def test_save_with_id_updates():
 
 
 @pytest.mark.asyncio
+async def test_update_omitting_favorite_leaves_it_untouched():
+    """A doc-only patch (toggling a snippet dynamic) must not reset favorite:
+    favorite is forwarded as None so update_snippet leaves the column alone."""
+    row = {"id": SID, "name": "Footer", "text": "thanks", "favorite": True}
+    with patch.object(snippets_tools.snippets_db, "update_snippet",
+                      new=AsyncMock(return_value=row)) as update:
+        await snippets_tools.save(NPUB, snippet_id=SID, doc={"blocks": []})
+    assert update.await_args.kwargs["favorite"] is None
+
+
+@pytest.mark.asyncio
 async def test_update_missing_row_is_not_found():
     with patch.object(snippets_tools.snippets_db, "update_snippet",
                       new=AsyncMock(return_value=None)):
