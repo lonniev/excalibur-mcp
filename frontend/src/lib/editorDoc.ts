@@ -19,9 +19,14 @@ export interface Block {
   flags: Flag[];
   // A dynamic block's `text` IS a runnable prompt: at post time (and in Preview)
   // the server runs it with Claude and weaves a fresh answer into the tweet.
-  // `fallback` is posted instead if resolution fails. Static blocks omit both.
+  // `fallback` is posted instead if resolution fails. Static blocks omit these.
   dynamic?: boolean;
   fallback?: string;
+  // Author web-access controls for the prompt's resolution. `domains` is an
+  // optional allowlist for web fetch (comma/newline; blank = any URL the prompt
+  // references); `maxFetches` bounds web lookups (search + fetch).
+  domains?: string;
+  maxFetches?: number;
 }
 
 export interface Ban {
@@ -139,6 +144,8 @@ interface StoredBlock {
   flags?: StoredFlag[];
   dynamic?: boolean;
   fallback?: string;
+  domains?: string;
+  maxFetches?: number;
 }
 
 /// Normalize a stored `doc` that may arrive as a parsed object OR a JSON string
@@ -169,6 +176,8 @@ export function parsePostDoc(doc: unknown, textCache?: string): Block[] {
             flags: (b as StoredBlock)?.flags,
             dynamic: (b as StoredBlock)?.dynamic,
             fallback: (b as StoredBlock)?.fallback,
+            domains: (b as StoredBlock)?.domains,
+            maxFetches: (b as StoredBlock)?.maxFetches,
           },
     );
   } else if (textCache) {
@@ -186,11 +195,13 @@ export function parsePostDoc(doc: unknown, textCache?: string): Block[] {
           .map((f) => freshFlag(f.start, f.end, f.colorIdx ?? 0, f.note ?? "")),
     ...(b.dynamic ? { dynamic: true } : {}),
     ...(b.fallback ? { fallback: b.fallback } : {}),
+    ...(b.domains ? { domains: b.domains } : {}),
+    ...(b.maxFetches ? { maxFetches: b.maxFetches } : {}),
   }));
 }
 
 export interface PostDocPayload {
-  blocks: { text: string; flags: StoredFlag[]; dynamic?: boolean; fallback?: string }[];
+  blocks: { text: string; flags: StoredFlag[]; dynamic?: boolean; fallback?: string; domains?: string; maxFetches?: number }[];
 }
 
 export function serializeBlocks(blocks: Block[]): PostDocPayload {
@@ -202,6 +213,8 @@ export function serializeBlocks(blocks: Block[]): PostDocPayload {
         : b.flags.map((f) => ({ start: f.start, end: f.end, note: f.note, colorIdx: f.colorIdx })),
       ...(b.dynamic ? { dynamic: true } : {}),
       ...(b.fallback ? { fallback: b.fallback } : {}),
+      ...(b.domains ? { domains: b.domains } : {}),
+      ...(b.maxFetches ? { maxFetches: b.maxFetches } : {}),
     })),
   };
 }

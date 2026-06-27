@@ -304,6 +304,27 @@ async def test_dynamic_resolve_failure_no_fallback_holds_and_refunds(_stub_mark_
 
 
 @pytest.mark.asyncio
+async def test_dynamic_block_passes_author_web_access_to_resolver():
+    rt = _dynamic_runtime()
+    doc = {"blocks": [{
+        "text": "the current BTC price", "flags": [], "dynamic": True, "fallback": "x",
+        "domains": "coindesk.com, kraken.com", "maxFetches": 9,
+    }]}
+    client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "t", "tweet_url": "u"}))
+    rb = AsyncMock(return_value="BTC $64k")
+    with patch.object(scheduler.posts_db, "list_due",
+                      AsyncMock(return_value=[_due_row(doc=doc, recurrence=None, cease_at=None)])), \
+         patch.object(scheduler.posts_db, "mark_sent", AsyncMock()), \
+         patch.object(scheduler, "_owner_voice", AsyncMock(return_value=("", []))), \
+         patch("excalibur_mcp.resolve.resolve_block", rb), \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        await scheduler.process_due_posts(rt)
+    kwargs = rb.await_args.kwargs
+    assert kwargs["allowed_domains"] == ["coindesk.com", "kraken.com"]
+    assert kwargs["max_fetches"] == 9
+
+
+@pytest.mark.asyncio
 async def test_dynamic_insufficient_balance_for_resolve_holds(_stub_mark_attempt):
     rt = _runtime(billing={"success": False, "error_code": "insufficient_balance"})
     rt.load_credentials = AsyncMock(return_value={"anthropic_api_key": "k"})
