@@ -143,7 +143,15 @@ async def _resolve_post_text(
     ``api_key`` is None when the operator has no Anthropic key, so every dynamic
     block falls back.
     """
-    from excalibur_mcp.resolve import INSERT_MARKER, resolve_block
+    from excalibur_mcp.resolve import INSERT_MARKER, clamp_fetches, resolve_block
+
+    def _domains(b: dict[str, Any]) -> list[str]:
+        raw = b.get("domains")
+        if isinstance(raw, list):
+            return [str(x).strip() for x in raw if str(x).strip()]
+        if isinstance(raw, str):
+            return [x.strip() for x in raw.replace(",", "\n").split("\n") if x.strip()]
+        return []
 
     # Static texts are known up front; dynamic slots fill in as we resolve, so a
     # later block's context sees the earlier blocks' resolved values.
@@ -163,6 +171,8 @@ async def _resolve_post_text(
             try:
                 resolved = await resolve_block(
                     api_key=api_key, prompt=prompt, context=context, voice=voice, bans=bans,
+                    allowed_domains=_domains(b),
+                    max_fetches=clamp_fetches(b.get("maxFetches", 5)),
                 )
             except Exception as exc:  # noqa: BLE001 — fall back, report via reason
                 logger.warning("scheduler: dynamic resolve failed for %s: %s", owner, exc)

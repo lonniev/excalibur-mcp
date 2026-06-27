@@ -5,6 +5,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — dynamic blocks can fetch the web (author-scoped)
+
+- The resolver now gives Claude the **`web_fetch`** server tool alongside
+  `web_search` (both bumped to the `_20260209` dynamic-filtering variants), so a
+  dynamic prompt can actually *read* a specific URL — e.g. "visit this page, pick
+  a link, summarize it" — not just search the indexed web. (Search-only couldn't
+  open un-indexed pages like a shop's paginated collection listings.)
+- Web access is **author-controlled per block**, stored in the block's `doc`:
+  an **allowed-domains** allowlist (comma/newline; blank = any URL the prompt
+  references) and a **max-fetches** budget (1–25, default 5), surfaced as two
+  inline fields on the dynamic-block card. They flow through
+  `resolve_dynamic_block` → `resolve.py` into `web_fetch.allowed_domains` /
+  `max_uses`, in both the editor Preview and the scheduler. No hardcoded domains.
+
 ### Changed — dynamic blocks are now block-level and inline (intuitive)
 
 - Making a block dynamic is one click **on the block**: a wand toggle in the

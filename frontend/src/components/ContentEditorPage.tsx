@@ -56,6 +56,12 @@ interface PillPos { blockId: string; flagId: string; x: number; y: number }
 // already-paid-for result and only a changed prompt triggers a fresh (paid) run.
 interface ResolvedState { promptKey: string; text: string; loading: boolean; error: string }
 
+// Parse a dynamic block's author-entered domain allowlist (comma/newline) into a
+// clean list for web_fetch. Blank → [] (the resolver treats that as "any URL").
+function splitDomains(raw?: string): string[] {
+  return (raw ?? "").split(/[\n,]/).map((d) => d.trim()).filter(Boolean);
+}
+
 // The two content kinds share the entire block editor; they differ only in
 // where they load/save and which actions (post/schedule) are offered. A Post is
 // tweet content (postable + schedulable); a Snippet is reusable content.
@@ -529,6 +535,17 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
       b.id === blockId ? { ...b, fallback: fallback || undefined } : b));
   }, []);
 
+  // Author web-access controls for a dynamic block: an optional fetch-domain
+  // allowlist (blank = any URL the prompt references) and a lookup budget.
+  const setBlockDomains = useCallback((blockId: string, domains: string) => {
+    setBlocks((prev) => prev.map((b) =>
+      b.id === blockId ? { ...b, domains: domains || undefined } : b));
+  }, []);
+  const setBlockMaxFetches = useCallback((blockId: string, n: number) => {
+    setBlocks((prev) => prev.map((b) =>
+      b.id === blockId ? { ...b, maxFetches: n > 0 ? n : undefined } : b));
+  }, []);
+
   // Resolve one dynamic block via the (paid) server-side dry-run. Context is the
   // tweet around it, with this slot marked and other blocks shown resolved /
   // fallback so the fragment reads in place.
@@ -545,7 +562,10 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     const activeBans = bans.filter((b) => b.on).map((b) => b.text);
     setResolved((r) => ({ ...r, [block.id]: { promptKey, text: r[block.id]?.text ?? "", loading: true, error: "" } }));
     try {
-      const res = await resolveDynamicBlock({ prompt: block.text, context, voice, bans: activeBans });
+      const res = await resolveDynamicBlock({
+        prompt: block.text, context, voice, bans: activeBans,
+        allowedDomains: splitDomains(block.domains), maxFetches: block.maxFetches,
+      });
       if (!res.success) {
         setResolved((r) => ({ ...r, [block.id]: {
           promptKey, text: block.fallback ?? "", loading: false,
@@ -679,7 +699,10 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
           .filter(Boolean)
           .join("\n\n");
         try {
-          const res = await resolveDynamicBlock({ prompt: b.text, context, voice, bans: activeBans });
+          const res = await resolveDynamicBlock({
+            prompt: b.text, context, voice, bans: activeBans,
+            allowedDomains: splitDomains(b.domains), maxFetches: b.maxFetches,
+          });
           if (!res.success) {
             if (!b.fallback) return { text: "", error: res.message || res.error || "Couldn't resolve a dynamic block." };
             value = b.fallback;
@@ -950,6 +973,8 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
                         onResolve={() => resolveDynamic(b)}
                         onToggleDynamic={() => toggleBlockDynamic(b.id)}
                         onChangeFallback={(t) => setBlockFallback(b.id, t)}
+                        onChangeDomains={(t) => setBlockDomains(b.id, t)}
+                        onChangeMaxFetches={(n) => setBlockMaxFetches(b.id, n)}
                         onMouseUp={onBlockMouseUp}
                         onFlagClick={(flagId, rect) => {
                           setActiveFlag({ blockId: b.id, flagId });
@@ -1092,12 +1117,13 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
 // ── block view ──────────────────────────────────────────────────────────────
 function BlockView({
   block, idx, preview, editing, activeFlagId, overIndex, resolved, onResolve,
-  onToggleDynamic, onChangeFallback,
+  onToggleDynamic, onChangeFallback, onChangeDomains, onChangeMaxFetches,
   onMouseUp, onFlagClick, onEdit, onDoneEdit, onChange, onDelete, onMoveUp, onMoveDown, canDelete, dragHandlers,
 }: {
   block: Block; idx: number; preview: boolean; editing: boolean; activeFlagId: string | null; overIndex: number | null;
   resolved?: ResolvedState; onResolve: () => void;
   onToggleDynamic: () => void; onChangeFallback: (t: string) => void;
+  onChangeDomains: (t: string) => void; onChangeMaxFetches: (n: number) => void;
   onMouseUp: (blockId: string, el: HTMLElement | null) => void;
   onFlagClick: (flagId: string, rect: DOMRect) => void;
   onEdit: () => void; onDoneEdit: () => void; onChange: (t: string) => void; onDelete: () => void;
@@ -1168,6 +1194,23 @@ function BlockView({
             placeholder="Fallback text if it can't resolve (optional)"
             className="mt-1.5 w-full rounded border border-violet-200 bg-white px-2 py-1 text-[12px] text-violet-800 placeholder:text-violet-300 outline-none focus:border-violet-400"
           />
+          <div className="mt-1.5 flex items-center gap-1.5">
+            <input
+              value={block.domains ?? ""}
+              onChange={(e) => onChangeDomains(e.target.value)}
+              placeholder="Allowed web domains, comma-separated (blank = any)"
+              className="min-w-0 flex-1 rounded border border-violet-200 bg-white px-2 py-1 text-[12px] text-violet-800 placeholder:text-violet-300 outline-none focus:border-violet-400"
+            />
+            <input
+              type="number"
+              min={1}
+              max={25}
+              value={block.maxFetches ?? 5}
+              onChange={(e) => onChangeMaxFetches(Number(e.target.value) || 0)}
+              title="Max web lookups (search + fetch) for this prompt"
+              className="w-16 flex-none rounded border border-violet-200 bg-white px-2 py-1 text-[12px] text-violet-800 outline-none focus:border-violet-400"
+            />
+          </div>
           <div className="mt-1.5 flex items-center gap-2">
             <button
               onClick={onResolve}
