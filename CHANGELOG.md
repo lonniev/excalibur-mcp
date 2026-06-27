@@ -5,6 +5,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — dynamic-block resolution no longer caps length at 280 chars
+
+- X is long-form; the resolver's character budget (default 280, with a
+  shorten-retry + hard truncation) was an artificial SMS-era limit. Removed it
+  entirely — `char_budget`/`clamp_budget` and the length gate are gone from
+  `resolve.py`, the `resolve_dynamic_block` tool, and the FE wrapper. The
+  author's prompt now governs length ("one short sentence" vs "a few
+  paragraphs"); the system prompt states there is no fixed character limit.
+- Bumped the generation ceiling (`_MAX_TOKENS` 1500 → 4000, timeout 90s → 110s)
+  so long-form fragments aren't truncated by the token cap, while staying under
+  the FE's per-call timeout. (For truly massive output we'd switch to streaming —
+  not needed for post fragments.)
+
 ### Added — dynamic blocks can fetch the web (author-scoped)
 
 - The resolver now gives Claude the **`web_fetch`** server tool alongside

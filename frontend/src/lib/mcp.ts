@@ -671,7 +671,6 @@ export async function resolveDynamicBlock(args: {
   context?: string;
   voice?: string;
   bans?: string[];
-  charBudget?: number;
   allowedDomains?: string[];
   maxFetches?: number;
 }): Promise<ResolveDynamicResult> {
@@ -680,7 +679,6 @@ export async function resolveDynamicBlock(args: {
     context: args.context ?? "",
     voice: args.voice ?? "",
     bans: JSON.stringify(args.bans ?? []),
-    char_budget: args.charBudget ?? 280,
     allowed_domains: JSON.stringify(args.allowedDomains ?? []),
     max_fetches: args.maxFetches ?? 5,
   });
