@@ -141,8 +141,24 @@ interface StoredBlock {
   fallback?: string;
 }
 
+/// Normalize a stored `doc` that may arrive as a parsed object OR a JSON string
+/// (Neon hands JSONB back either way — the backend does the same in scheduler's
+/// `_as_dict`). Returns the object, or null if absent/unparseable.
+export function asDoc(doc: unknown): { blocks?: unknown } | null {
+  if (doc == null) return null;
+  if (typeof doc === "string") {
+    try {
+      const parsed = JSON.parse(doc);
+      return parsed && typeof parsed === "object" ? (parsed as { blocks?: unknown }) : null;
+    } catch {
+      return null;
+    }
+  }
+  return typeof doc === "object" ? (doc as { blocks?: unknown }) : null;
+}
+
 export function parsePostDoc(doc: unknown, textCache?: string): Block[] {
-  const d = doc as { blocks?: unknown } | null | undefined;
+  const d = asDoc(doc);
   let raw: StoredBlock[] = [];
   if (d && Array.isArray(d.blocks)) {
     raw = d.blocks.map((b) =>

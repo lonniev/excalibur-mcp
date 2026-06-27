@@ -4,6 +4,7 @@
 // Favorites surface as one-click chiclets in the editor.
 
 import { deleteSnippet, listSnippets, saveSnippet, type SnippetRow } from "./mcp";
+import { asDoc } from "./editorDoc";
 
 export type Snippet = SnippetRow;
 
@@ -40,13 +41,13 @@ export async function addSnippet(
 /// from `doc` keeps dynamic-ness in one place (no extra column) — the same flag
 /// a post block carries.
 export function snippetIsDynamic(s: Snippet): boolean {
-  const blocks = (s.doc as { blocks?: { dynamic?: boolean }[] } | undefined)?.blocks;
+  const blocks = (asDoc(s.doc) as { blocks?: { dynamic?: boolean }[] } | null)?.blocks;
   return Array.isArray(blocks) && blocks.some((b) => b?.dynamic);
 }
 
 /// The fallback text stored on a dynamic snippet's block (empty if none).
 export function snippetFallback(s: Snippet): string {
-  const blocks = (s.doc as { blocks?: { fallback?: string }[] } | undefined)?.blocks;
+  const blocks = (asDoc(s.doc) as { blocks?: { fallback?: string }[] } | null)?.blocks;
   const b = Array.isArray(blocks) ? blocks.find((x) => x?.fallback) : undefined;
   return b?.fallback ?? "";
 }
