@@ -5,6 +5,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — frontend major dependency bumps
+
+- Adopted React 19, react-router-dom 7, TypeScript 6, Vite 8, and
+  `@vitejs/plugin-react` 6 (build verified). React 19's types require an initial
+  `useRef` argument — updated the three call sites. Tailwind CSS stays on v3 (v4
+  is a config rewrite, deferred).
+
 ### Added — dynamic (agentic) post blocks
 
 - A post block can now be **dynamic**: its text is a runnable prompt that is

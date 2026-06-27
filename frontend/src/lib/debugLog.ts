@@ -28,7 +28,7 @@ export function clearDebug(): void {
 
 export function useDebugLog(): DebugEntry[] {
   const [, setTick] = useState(0);
-  const ref = useRef<() => void>();
+  const ref = useRef<(() => void) | undefined>(undefined);
   if (!ref.current) {
     ref.current = () => setTick((t) => t + 1);
     _listeners.add(ref.current);
