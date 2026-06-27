@@ -304,6 +304,29 @@ async def test_dynamic_resolve_failure_no_fallback_holds_and_refunds(_stub_mark_
 
 
 @pytest.mark.asyncio
+async def test_multiple_dynamic_blocks_all_resolved_in_parallel():
+    rt = _dynamic_runtime()
+    doc = {"blocks": [
+        {"text": "weather now", "flags": [], "dynamic": True, "fallback": "fa"},
+        {"text": "btc price now", "flags": [], "dynamic": True, "fallback": "fb"},
+        {"text": "static tail", "flags": []},
+    ]}
+    client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "t", "tweet_url": "u"}))
+    rb = AsyncMock(side_effect=["Sunny 72F", "BTC $64k"])
+    with patch.object(scheduler.posts_db, "list_due",
+                      AsyncMock(return_value=[_due_row(doc=doc, recurrence=None, cease_at=None)])), \
+         patch.object(scheduler.posts_db, "mark_sent", AsyncMock()), \
+         patch.object(scheduler, "_owner_voice", AsyncMock(return_value=("", []))), \
+         patch("excalibur_mcp.resolve.resolve_block", rb), \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        out = await scheduler.process_due_posts(rt)
+    assert len(out["posted"]) == 1
+    assert rb.await_count == 2  # both dynamic blocks resolved
+    posted_text = client.post_tweet.await_args.args[0]
+    assert "Sunny 72F" in posted_text and "BTC $64k" in posted_text and "static tail" in posted_text
+
+
+@pytest.mark.asyncio
 async def test_dynamic_block_passes_author_web_access_to_resolver():
     rt = _dynamic_runtime()
     doc = {"blocks": [{

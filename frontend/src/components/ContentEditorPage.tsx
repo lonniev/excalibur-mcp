@@ -695,34 +695,33 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   async function buildFinalText(): Promise<{ text: string; error?: string }> {
     if (!hasDynamic(blocks)) return { text: composed };
     const activeBans = bans.filter((b) => b.on).map((b) => b.text);
-    const rendered: string[] = [];
-    for (let i = 0; i < blocks.length; i++) {
-      const b = blocks[i];
-      if (!b.dynamic) { rendered.push(b.text); continue; }
+    // Context for each dynamic block: static siblings + OTHER dynamics as their
+    // fallback (we resolve in parallel, so none sees another's resolved value).
+    const contextFor = (i: number) =>
+      blocks
+        .map((x, j) => (j === i ? "⟨HERE⟩" : x.dynamic ? (x.fallback ?? "") : x.text))
+        .filter(Boolean)
+        .join("\n\n");
+
+    // Resolve every dynamic block concurrently (reusing a current Preview result).
+    const rendered = await Promise.all(blocks.map(async (b, i): Promise<string | null> => {
+      if (!b.dynamic) return b.text;
       const cached = resolved[b.id];
-      let value = cached && cached.promptKey === b.text && !cached.error ? cached.text : "";
-      if (!value) {
-        const context = blocks
-          .map((x, j) => (j === i ? "⟨HERE⟩" : x.dynamic ? rendered[j] ?? x.fallback ?? "" : x.text))
-          .filter(Boolean)
-          .join("\n\n");
-        try {
-          const res = await resolveDynamicBlock({
-            prompt: b.text, context, voice, bans: activeBans,
-            allowedDomains: splitDomains(b.domains), maxFetches: b.maxFetches,
-          });
-          if (!res.success) {
-            if (!b.fallback) return { text: "", error: res.message || res.error || "Couldn't resolve a dynamic block." };
-            value = b.fallback;
-          } else {
-            value = res.text ?? "";
-          }
-        } catch (e) {
-          if (!b.fallback) return { text: "", error: (e as Error).message };
-          value = b.fallback;
-        }
+      if (cached && cached.promptKey === b.text && !cached.error) return cached.text;
+      try {
+        const res = await resolveDynamicBlock({
+          prompt: b.text, context: contextFor(i), voice, bans: activeBans,
+          allowedDomains: splitDomains(b.domains), maxFetches: b.maxFetches,
+        });
+        if (res.success) return res.text ?? "";
+        return b.fallback ?? null;  // null = failed with no fallback
+      } catch {
+        return b.fallback ?? null;
       }
-      rendered.push(value);
+    }));
+
+    if (rendered.some((v) => v === null)) {
+      return { text: "", error: "A dynamic block couldn't be resolved and has no fallback." };
     }
     return { text: rendered.filter(Boolean).join("\n\n").trim() };
   }

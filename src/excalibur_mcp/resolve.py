@@ -34,7 +34,10 @@ _FRAGMENT_RE = re.compile(r"<post>(.*?)</post>", re.S | re.I)
 
 _MODEL = "claude-sonnet-4-6"
 _ENDPOINT = "https://api.anthropic.com/v1/messages"
-_TIMEOUT = 110.0
+# Web search + fetch + generation can run long. Generous, but kept BELOW the FE
+# MCP client timeout (240s) so a too-slow call returns a clean refundable error
+# here instead of surfacing as an MCP -32001 on the client.
+_TIMEOUT = 210.0
 # Generation ceiling, not a content limit — X supports long-form posts, so the
 # author's instruction governs length. Generous enough for long prose while
 # bounding latency/cost (and staying under the FE's per-call timeout).
