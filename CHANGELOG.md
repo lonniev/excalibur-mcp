@@ -5,6 +5,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Posts list shows a loading state on every filter change
+
+- Switching status tabs (or filters) refetches with MCP cold-start lag, but the
+  loading entertainment only showed on the *first* load (`loading && posts.length
+  === 0`); a tab switch kept the stale table on screen, so it looked like nothing
+  happened and the human click-spammed the tabs. Now the `QuoteScroller` shows on
+  any in-flight query, the tabs/refresh are disabled while loading (the clicked
+  tab still highlights so the action reads as registered), and the refresh icon
+  spins.
+
 ## [0.23.0] — 2026-06-27
 
 ### Added — dynamic-block resolution is async (claim check), surviving the edge cap
