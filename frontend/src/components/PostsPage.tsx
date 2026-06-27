@@ -189,10 +189,11 @@ export default function PostsPage() {
           <button
             key={s || "all"}
             onClick={() => onFilter(s)}
-            className={`px-2.5 py-1 rounded-lg capitalize transition-colors ${
+            disabled={loading}
+            className={`px-2.5 py-1 rounded-lg capitalize transition-colors disabled:cursor-not-allowed ${
               filter === s
                 ? "bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-400"
-                : "text-stone-500 hover:bg-stone-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                : "text-stone-500 hover:bg-stone-100 dark:text-zinc-400 dark:hover:bg-zinc-800 disabled:hover:bg-transparent disabled:opacity-50"
             }`}
           >
             {s || "all"}
@@ -200,9 +201,11 @@ export default function PostsPage() {
         ))}
         <button
           onClick={refresh}
-          className="ml-auto px-2.5 py-1 rounded-lg text-stone-400 hover:bg-stone-100 dark:text-zinc-500 dark:hover:bg-zinc-800 transition-colors"
+          disabled={loading}
+          className="ml-auto px-2.5 py-1 rounded-lg text-stone-400 hover:bg-stone-100 dark:text-zinc-500 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          title="Refresh"
         >
-          ↻
+          <span className={loading ? "inline-block animate-spin" : ""}>↻</span>
         </button>
       </div>
 
@@ -232,7 +235,11 @@ export default function PostsPage() {
         </div>
       )}
 
-      {loading && posts.length === 0 ? (
+      {loading ? (
+        // Show the loading entertainment on ANY in-flight query — not just the
+        // first load. A filter/tab switch keeps the prior posts in state, so
+        // without this the stale table just sits there (no feedback) and the
+        // human click-spams the tabs while the MCP cold-starts.
         <QuoteScroller heading="Loading your posts…" className="py-16" />
       ) : posts.length === 0 ? (
         (search || dateFrom || dateTo) ? (
