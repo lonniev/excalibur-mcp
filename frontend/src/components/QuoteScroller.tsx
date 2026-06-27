@@ -47,8 +47,8 @@ export default function QuoteScroller({
 }) {
   const [index, setIndex] = useState(() => Math.floor(Math.random() * QUOTES.length));
   const [visible, setVisible] = useState(true);
-  const tick = useRef<number>();
-  const fade = useRef<number>();
+  const tick = useRef<number | undefined>(undefined);
+  const fade = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     tick.current = window.setInterval(() => {
