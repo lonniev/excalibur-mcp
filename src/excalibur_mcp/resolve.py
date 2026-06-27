@@ -3,8 +3,11 @@
 A dynamic block's text IS a runnable prompt ("…the current weather and the
 BTC/USD price now"). At post time — or in the editor's Preview dry-run — the
 operator's vaulted Anthropic key runs that prompt, with Claude's server-side
-``web_search`` tool for live facts, and returns one tweet-ready fragment woven
-into the surrounding copy in the author's voice and fitted to a character budget.
+``web_search`` + ``web_fetch`` tools for live data, and returns one post-ready
+fragment woven into the surrounding copy in the author's voice. The author's
+instruction governs length (X is long-form; no character cap), and the finished
+fragment is extracted from the model's ``<post>…</post>`` tags so its reasoning
+never leaks into the copy.
 
 Same posture as ``refine.py``: the operator's key stays in the vault and never
 leaves the server, and the call is metered as a paid tollbooth fare. This module
@@ -15,11 +18,17 @@ caller (the dry-run tool or the scheduler) can refund / fall back.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
+# The model wraps its finished fragment in these tags so its own reasoning /
+# between-tool narration ("I now have enough detail to write the fragment…")
+# stays OUTSIDE and is discarded — we extract only what's inside.
+_FRAGMENT_RE = re.compile(r"<post>(.*?)</post>", re.S | re.I)
 
 _MODEL = "claude-sonnet-4-6"
 _ENDPOINT = "https://api.anthropic.com/v1/messages"
@@ -83,10 +92,14 @@ def _build_prompt(
         )
     system = (
         "You compose a fragment of a post being published to X. Run the author's "
-        "instruction — use web search or web fetch whenever it needs current facts "
-        "— then return ONLY the finished fragment text: no preamble, no surrounding "
-        "quotes, no markdown, no code fences, no citations or source list. The "
-        "fragment must read naturally where it sits in the surrounding post and "
+        "instruction — use web search or web fetch whenever it needs current facts. "
+        "You may think, search, and take notes freely while working. "
+        "Output the FINISHED fragment wrapped in <post> and </post> tags, with "
+        "nothing inside those tags except the fragment itself — no preamble, no "
+        "\"here is\" or \"I now have enough detail\", no notes to yourself, no "
+        "surrounding quotes, no markdown, no code fences, no citations or source "
+        "list. Anything outside the tags is discarded, so put all reasoning there. "
+        "The fragment must read naturally where it sits in the surrounding post and "
         "carry forward its voice. Let the author's instruction set the length — X "
         "supports long-form posts, so there is no fixed character limit."
         + (" " + " ".join(constraints) if constraints else "")
@@ -100,13 +113,28 @@ def _build_prompt(
     return system, user
 
 
-def _extract_text(data: dict[str, Any]) -> str:
-    """Join the model's text blocks (ignoring web-search tool-use blocks)."""
-    return "".join(
-        b.get("text", "")
-        for b in data.get("content", [])
-        if b.get("type") == "text"
-    ).strip()
+def _extract_answer(data: dict[str, Any]) -> str:
+    """Pull the finished fragment from a tool-using response.
+
+    Prefer the text inside the model's ``<post>…</post>`` tags (the deliverable;
+    its reasoning/narration stays outside). If the tags are absent, fall back to
+    the text emitted *after* the last tool block — the final answer — so
+    between-tool narration doesn't leak in.
+    """
+    content = data.get("content", [])
+    full = "".join(b.get("text", "") for b in content if b.get("type") == "text")
+    tagged = _FRAGMENT_RE.findall(full)
+    if tagged:
+        return _clean(tagged[-1])
+
+    last_tool = -1
+    for i, b in enumerate(content):
+        if b.get("type") != "text":
+            last_tool = i
+    trailing = "".join(
+        b.get("text", "") for b in content[last_tool + 1:] if b.get("type") == "text"
+    )
+    return _clean(trailing)
 
 
 def _clean(text: str) -> str:
@@ -140,7 +168,7 @@ async def _call(api_key: str, system: str, user: str, tools: list[dict[str, Any]
             },
         )
     resp.raise_for_status()
-    return _clean(_extract_text(resp.json()))
+    return _extract_answer(resp.json())
 
 
 async def resolve_block(
