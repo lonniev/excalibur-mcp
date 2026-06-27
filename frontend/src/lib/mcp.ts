@@ -229,6 +229,9 @@ const QUIET_TOOLS = new Set([
   "get_scheduler_log",
   // Background personalization hydration (the editor's @handle) — not noteworthy.
   "get_x_profile",
+  // Claim-check polling for a resolving dynamic block — the start call + the
+  // final result are logged; the intermediate polls are just noise.
+  "fetch_dynamic_block",
 ]);
 
 async function callTool<T = unknown>(
@@ -681,6 +684,11 @@ interface ClaimFetch {
 }
 
 const RESOLVE_MAX_WAIT_MS = 300_000; // give a heavy paginate+fetch+search resolve room
+// Poll with backoff: a little eager at first (a light resolve finishes fast),
+// then settle to a calm ceiling so a long job isn't hammered.
+const POLL_START_MS = 4_000;
+const POLL_CEILING_MS = 15_000;
+const POLL_FACTOR = 1.6;
 
 /// Resolve a dynamic block's prompt server-side via the **claim-check** pattern:
 /// `resolve_dynamic_block` starts a background job and returns a claim check
@@ -709,15 +717,15 @@ export async function resolveDynamicBlock(args: {
 
   const claim = start.claim_check;
   const deadline = Date.now() + RESOLVE_MAX_WAIT_MS;
-  let waitSeconds = start.poll_after_seconds ?? 3;
+  let waitMs = POLL_START_MS;
   for (;;) {
-    await new Promise((r) => setTimeout(r, waitSeconds * 1000));
+    await new Promise((r) => setTimeout(r, waitMs));
     const f = await callTool<ClaimFetch>("fetch_dynamic_block", { claim_check: claim });
     if (f.status === "done") return { success: true, text: f.result?.text ?? "" };
     if (f.status === "error") return { success: false, message: f.message || f.error || "The resolve failed — your fare was refunded." };
     if (f.status === "expired") return { success: false, message: f.next_steps || f.message || "The resolve claim expired — try again." };
     if (Date.now() > deadline) return { success: false, message: "Timed out waiting for the dynamic block to resolve." };
-    waitSeconds = f.poll_after_seconds ?? 3;
+    waitMs = Math.min(Math.round(waitMs * POLL_FACTOR), POLL_CEILING_MS);
   }
 }
 
