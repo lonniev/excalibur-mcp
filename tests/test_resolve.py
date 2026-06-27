@@ -6,7 +6,12 @@ import pytest
 
 from excalibur_mcp import resolve
 from excalibur_mcp.resolve import (
-    _build_prompt, _build_tools, _clean, clamp_budget, clamp_fetches, resolve_block,
+    _build_prompt,
+    _build_tools,
+    _clean,
+    clamp_budget,
+    clamp_fetches,
+    resolve_block,
 )
 
 
