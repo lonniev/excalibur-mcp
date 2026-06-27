@@ -5,6 +5,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — inserting a dynamic snippet now carries its prompt + settings
+
+- Inserting a dynamic snippet into a post produced an empty `<dynamic>` block:
+  the insert built a block from the snippet's `text` body, which for a dynamic
+  snippet is the composed `⟨dynamic⟩` **placeholder**, and it dropped
+  domains/maxFetches. Insert now appends the snippet's stored **doc**
+  (`parsePostDoc(s.doc, s.text)`), so the block carries the real prompt, fallback,
+  allowed-domains, and max-fetches (static snippets still insert their text).
+- Saving the focused block as a snippet from the **Post editor** now serializes a
+  dynamic block's full settings into the snippet doc (previously it saved
+  text-only, silently making a dynamic block static on save).
+
 ### Added — dynamic fragments are down-formatted to X-safe Unicode
 
 - A dynamic prompt can ask for anything, but X renders only plain text with

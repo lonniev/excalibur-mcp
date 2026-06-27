@@ -28,11 +28,15 @@ export async function loadSnippets(): Promise<Snippet[]> {
 export async function addSnippet(
   name: string,
   text: string,
-  opts: { dynamic?: boolean; fallback?: string } = {},
+  opts: { dynamic?: boolean; fallback?: string; doc?: unknown } = {},
 ): Promise<Snippet[]> {
-  const doc = opts.dynamic
-    ? { blocks: [{ text, flags: [], dynamic: true, ...(opts.fallback ? { fallback: opts.fallback } : {}) }] }
-    : undefined;
+  // Prefer an explicit serialized doc (carries the focused block's full settings
+  // — dynamic/fallback/domains/maxFetches); else synthesize one for the simple
+  // {dynamic, fallback} case; else a static (no-doc) snippet.
+  const doc = opts.doc
+    ?? (opts.dynamic
+      ? { blocks: [{ text, flags: [], dynamic: true, ...(opts.fallback ? { fallback: opts.fallback } : {}) }] }
+      : undefined);
   await saveSnippet({ name: name.trim(), text, favorite: false, doc });
   return loadSnippets();
 }
