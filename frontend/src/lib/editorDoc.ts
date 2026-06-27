@@ -17,6 +17,11 @@ export interface Block {
   id: string;
   text: string;
   flags: Flag[];
+  // A dynamic block's `text` IS a runnable prompt: at post time (and in Preview)
+  // the server runs it with Claude and weaves a fresh answer into the tweet.
+  // `fallback` is posted instead if resolution fails. Static blocks omit both.
+  dynamic?: boolean;
+  fallback?: string;
 }
 
 export interface Ban {
@@ -99,8 +104,20 @@ export function charOffset(root: Node, node: Node, offset: number): number {
   return chars;
 }
 
+// Placeholder a dynamic block contributes to the FE-composed text_cache (a
+// list-excerpt only — the live post resolves the prompt fresh server-side).
+export const DYNAMIC_PLACEHOLDER = "⟨dynamic⟩";
+
 export function composeText(blocks: Block[]): string {
-  return blocks.map((b) => b.text).join("\n\n").trim();
+  return blocks
+    .map((b) => (b.dynamic ? (b.fallback?.trim() || DYNAMIC_PLACEHOLDER) : b.text))
+    .join("\n\n")
+    .trim();
+}
+
+/// Does this document carry any dynamic (prompt-driven) block?
+export function hasDynamic(blocks: Block[]): boolean {
+  return blocks.some((b) => b.dynamic);
 }
 
 function freshFlag(start: number, end: number, colorIdx: number, note = ""): Flag {
@@ -120,6 +137,8 @@ interface StoredFlag {
 interface StoredBlock {
   text: string;
   flags?: StoredFlag[];
+  dynamic?: boolean;
+  fallback?: string;
 }
 
 export function parsePostDoc(doc: unknown, textCache?: string): Block[] {
@@ -127,7 +146,14 @@ export function parsePostDoc(doc: unknown, textCache?: string): Block[] {
   let raw: StoredBlock[] = [];
   if (d && Array.isArray(d.blocks)) {
     raw = d.blocks.map((b) =>
-      typeof b === "string" ? { text: b } : { text: String((b as StoredBlock)?.text ?? ""), flags: (b as StoredBlock)?.flags },
+      typeof b === "string"
+        ? { text: b }
+        : {
+            text: String((b as StoredBlock)?.text ?? ""),
+            flags: (b as StoredBlock)?.flags,
+            dynamic: (b as StoredBlock)?.dynamic,
+            fallback: (b as StoredBlock)?.fallback,
+          },
     );
   } else if (textCache) {
     raw = textCache.split(/\n\n+/).map((t) => ({ text: t }));
@@ -136,21 +162,30 @@ export function parsePostDoc(doc: unknown, textCache?: string): Block[] {
   return raw.map((b) => ({
     id: uid(),
     text: b.text,
-    flags: (b.flags ?? [])
-      .filter((f) => typeof f.start === "number" && typeof f.end === "number" && f.end > f.start)
-      .map((f) => freshFlag(f.start, f.end, f.colorIdx ?? 0, f.note ?? "")),
+    // A dynamic block's text is a prompt, not flaggable copy — drop any flags.
+    flags: b.dynamic
+      ? []
+      : (b.flags ?? [])
+          .filter((f) => typeof f.start === "number" && typeof f.end === "number" && f.end > f.start)
+          .map((f) => freshFlag(f.start, f.end, f.colorIdx ?? 0, f.note ?? "")),
+    ...(b.dynamic ? { dynamic: true } : {}),
+    ...(b.fallback ? { fallback: b.fallback } : {}),
   }));
 }
 
 export interface PostDocPayload {
-  blocks: { text: string; flags: StoredFlag[] }[];
+  blocks: { text: string; flags: StoredFlag[]; dynamic?: boolean; fallback?: string }[];
 }
 
 export function serializeBlocks(blocks: Block[]): PostDocPayload {
   return {
     blocks: blocks.map((b) => ({
       text: b.text,
-      flags: b.flags.map((f) => ({ start: f.start, end: f.end, note: f.note, colorIdx: f.colorIdx })),
+      flags: b.dynamic
+        ? []
+        : b.flags.map((f) => ({ start: f.start, end: f.end, note: f.note, colorIdx: f.colorIdx })),
+      ...(b.dynamic ? { dynamic: true } : {}),
+      ...(b.fallback ? { fallback: b.fallback } : {}),
     })),
   };
 }

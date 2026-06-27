@@ -93,6 +93,102 @@ def _next_state(
     return "scheduled", nxt
 
 
+# -- dynamic-block resolution ------------------------------------------------
+
+def _dynamic_blocks(doc: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """The dynamic blocks in a post's doc (empty for legacy/static posts)."""
+    if not isinstance(doc, dict):
+        return []
+    blocks = doc.get("blocks")
+    if not isinstance(blocks, list):
+        return []
+    return [b for b in blocks if isinstance(b, dict) and b.get("dynamic")]
+
+
+async def _owner_voice(owner: str) -> tuple[str, list[str]]:
+    """The owner's saved Voice (profile + active ban texts) for tone-matching.
+
+    Best-effort: a missing/unreadable Voice just means no voice constraints.
+    """
+    try:
+        from excalibur_mcp.tools import voices as voices_tools
+
+        v = await voices_tools.get(owner)
+        voice_obj = (v or {}).get("voice") or {}
+        profile = str(voice_obj.get("profile") or "")
+        bans = [
+            str(b.get("text"))
+            for b in (voice_obj.get("bans") or [])
+            if isinstance(b, dict) and b.get("on") and b.get("text")
+        ]
+        return profile, bans
+    except Exception:  # noqa: BLE001 — voice is an enhancement, never a blocker
+        logger.exception("scheduler: failed to load voice for %s", owner)
+        return "", []
+
+
+async def _resolve_post_text(
+    owner: str,
+    blocks: list[dict[str, Any]],
+    voice: str,
+    bans: list[str],
+    api_key: str | None,
+) -> tuple[str | None, list[dict[str, Any]] | None, str | None]:
+    """Compose the final tweet text by resolving each dynamic block at fire time.
+
+    Returns ``(text, rendered_blocks, None)`` on success, where ``rendered_blocks``
+    is a static snapshot (dynamic blocks replaced by their resolved text) for the
+    Sent occurrence. Returns ``(None, None, reason)`` when a dynamic block failed
+    AND carried no fallback — the caller holds the post and never posts a gap.
+    ``api_key`` is None when the operator has no Anthropic key, so every dynamic
+    block falls back.
+    """
+    from excalibur_mcp.resolve import INSERT_MARKER, resolve_block
+
+    # Static texts are known up front; dynamic slots fill in as we resolve, so a
+    # later block's context sees the earlier blocks' resolved values.
+    rendered: list[str] = [
+        "" if (isinstance(b, dict) and b.get("dynamic")) else str((b or {}).get("text", ""))
+        for b in blocks
+    ]
+    for i, b in enumerate(blocks):
+        if not (isinstance(b, dict) and b.get("dynamic")):
+            continue
+        prompt = str(b.get("text", "")).strip()
+        fallback = str(b.get("fallback", "")).strip()
+        ctx_parts = [INSERT_MARKER if j == i else rendered[j] for j in range(len(blocks))]
+        context = "\n\n".join(p for p in ctx_parts if p).strip()
+        resolved = ""
+        if api_key and prompt:
+            try:
+                resolved = await resolve_block(
+                    api_key=api_key, prompt=prompt, context=context, voice=voice, bans=bans,
+                )
+            except Exception as exc:  # noqa: BLE001 — fall back, report via reason
+                logger.warning("scheduler: dynamic resolve failed for %s: %s", owner, exc)
+                resolved = ""
+        if not resolved:
+            if not fallback:
+                return None, None, "dynamic_resolve_failed"
+            resolved = fallback
+        rendered[i] = resolved
+
+    text = "\n\n".join(p for p in rendered if p).strip()
+    if not text:
+        return None, None, "empty_after_resolve"
+
+    # Static snapshot: dynamic blocks become plain text of what actually went out.
+    rendered_blocks: list[dict[str, Any]] = []
+    for i, b in enumerate(blocks):
+        if isinstance(b, dict) and b.get("dynamic"):
+            rendered_blocks.append({"text": rendered[i], "flags": []})
+        elif isinstance(b, dict):
+            rendered_blocks.append(b)
+        else:
+            rendered_blocks.append({"text": str(b), "flags": []})
+    return text, rendered_blocks, None
+
+
 # -- main loop ---------------------------------------------------------------
 
 async def process_due_posts(runtime: Any) -> dict[str, Any]:
@@ -103,6 +199,7 @@ async def process_due_posts(runtime: Any) -> dict[str, Any]:
     from excalibur_mcp.x_client import XAPIError
 
     post_tweet_id = capability_uuid("post_tweet")
+    resolve_id = capability_uuid("resolve_dynamic_block")
     now = datetime.now(timezone.utc)
     due = await posts_db.list_due(now.isoformat())
 
@@ -135,9 +232,14 @@ async def process_due_posts(runtime: Any) -> dict[str, Any]:
     for row in due:
         pid = row["post_id"]
         owner = row["npub"]
+        doc = _as_dict(row.get("doc"))
+        dynamic = _dynamic_blocks(doc)
         text = (row.get("text_cache") or "").strip()
+        # The doc snapshotted into a recurring occurrence — replaced below with the
+        # rendered (static) doc when the post carried dynamic blocks.
+        occurrence_doc: dict[str, Any] = doc or {}
 
-        if not text:  # content reason
+        if not dynamic and not text:  # content reason
             await _hold(skipped, pid, owner, "empty_text_cache")
             continue
 
@@ -148,14 +250,53 @@ async def process_due_posts(runtime: Any) -> dict[str, Any]:
             await _hold(skipped, pid, owner, code)
             continue
 
+        # 1b. Dynamic blocks: bill the owner once for resolution, run each prompt,
+        #     and compose the final text. A failed block falls back to its author
+        #     text; a failed block with no fallback holds the post (refunding the
+        #     resolve fare) — we never post a gap. The resolve fare is also
+        #     refunded if anything downstream holds the post (see refunds below).
+        resolve_charged = False
+        if dynamic:
+            rcost, rdenial = await runtime._resolve_pricing(
+                resolve_id, "resolve_dynamic_block", "heavy", {},
+            )
+            if rdenial is not None:
+                await _hold(errors, pid, owner, rdenial.get("error_code", "pricing_unavailable"))
+                continue
+            rbilling = await runtime._apply_billing(owner, "resolve_dynamic_block", rcost, [])
+            if isinstance(rbilling, dict):  # finance reason
+                await _hold(skipped, pid, owner, "insufficient_balance_resolve", cost_sats=rcost)
+                continue
+            resolve_charged = True
+
+            try:
+                creds = await runtime.load_credentials(["anthropic_api_key"])
+                key = creds.get("anthropic_api_key")
+            except Exception:  # noqa: BLE001 — no key → blocks fall back
+                key = None
+            voice, bans = await _owner_voice(owner)
+            rendered, rendered_blocks, reason = await _resolve_post_text(
+                owner, list(doc.get("blocks") or []) if doc else [], voice, bans, key,
+            )
+            if rendered is None:
+                await runtime.rollback_debit(resolve_id, owner)
+                await _hold(errors, pid, owner, reason or "dynamic_resolve_failed")
+                continue
+            text = rendered
+            occurrence_doc = {"blocks": rendered_blocks or []}
+
         # 2. Price + bill the owner for post_tweet (tranche-expiry guard inside).
         cost, denial = await runtime._resolve_pricing(post_tweet_id, "post_tweet", "write", {})
         if denial is not None:
+            if resolve_charged:
+                await runtime.rollback_debit(resolve_id, owner)
             await _hold(errors, pid, owner, denial.get("error_code", "pricing_unavailable"))
             continue
         billing = await runtime._apply_billing(owner, "post_tweet", cost, [])
         if isinstance(billing, dict):
             # Insufficient / expired balance — leave it scheduled, report it. — finance reason
+            if resolve_charged:
+                await runtime.rollback_debit(resolve_id, owner)
             await _hold(skipped, pid, owner, "insufficient_balance", cost_sats=cost)
             continue
 
@@ -164,6 +305,8 @@ async def process_due_posts(runtime: Any) -> dict[str, Any]:
             result = await client.post_tweet(markdown_to_unicode(text))
         except XAPIError as exc:
             await runtime.rollback_debit(post_tweet_id, owner)
+            if resolve_charged:
+                await runtime.rollback_debit(resolve_id, owner)
             reason = f"x_api_error: {exc}"
             if getattr(exc, "status_code", None) == 402:
                 # Non-transient: the owner's X subscription/tier lapsed. Pause so
@@ -176,6 +319,8 @@ async def process_due_posts(runtime: Any) -> dict[str, Any]:
             continue
         except Exception as exc:  # noqa: BLE001 — money path, refund then report
             await runtime.rollback_debit(post_tweet_id, owner)
+            if resolve_charged:
+                await runtime.rollback_debit(resolve_id, owner)
             await _hold(errors, pid, owner, str(exc))
             continue
 
@@ -190,8 +335,10 @@ async def process_due_posts(runtime: Any) -> dict[str, Any]:
             # Recurring: snapshot THIS occurrence as its own Sent post (with the X
             # URL), then advance the recurring template — so every posting stays
             # visible instead of collapsing into a row that silently reschedules.
+            # For a dynamic post the snapshot carries the RESOLVED text + a static
+            # rendered doc, so history shows exactly what went out, not the prompt.
             await posts_db.create_sent_occurrence(
-                npub=owner, doc=_as_dict(row.get("doc")) or {}, text_cache=text,
+                npub=owner, doc=occurrence_doc, text_cache=text,
                 tweet_url=tweet_url, sent_at=sent_at.isoformat(),
                 publish_at=str(row.get("publish_at")) if row.get("publish_at") else None,
             )

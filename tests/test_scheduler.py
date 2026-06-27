@@ -229,3 +229,87 @@ async def test_empty_text_cache_skipped_early():
         out = await scheduler.process_due_posts(rt)
     assert out["skipped"][0]["reason"] == "empty_text_cache"
     resolve.assert_not_called()
+
+
+# -- dynamic blocks ----------------------------------------------------------
+
+def _dynamic_runtime():
+    rt = _runtime()
+    rt.load_credentials = AsyncMock(return_value={"anthropic_api_key": "k"})
+    return rt
+
+
+_DYNAMIC_DOC = {"blocks": [
+    {"text": "Markets update.", "flags": []},
+    {"text": "the BTC/USD price now", "flags": [], "dynamic": True, "fallback": "Markets moving fast."},
+]}
+
+
+@pytest.mark.asyncio
+async def test_dynamic_block_resolved_then_posted():
+    rt = _dynamic_runtime()
+    url = "https://x.com/i/status/tw9"
+    client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "tw9", "tweet_url": url}))
+    with patch.object(scheduler.posts_db, "list_due",
+                      AsyncMock(return_value=[_due_row(doc=_DYNAMIC_DOC, recurrence=None, cease_at=None)])), \
+         patch.object(scheduler.posts_db, "mark_sent", AsyncMock()) as mark, \
+         patch.object(scheduler, "_owner_voice", AsyncMock(return_value=("", []))), \
+         patch("excalibur_mcp.resolve.resolve_block", AsyncMock(return_value="BTC at $64,000")), \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        out = await scheduler.process_due_posts(rt)
+    assert len(out["posted"]) == 1
+    posted_text = client.post_tweet.await_args.args[0]
+    assert "Markets update." in posted_text and "BTC at $64,000" in posted_text
+    # billed twice: resolve fare + post fare
+    assert rt._apply_billing.await_count == 2
+    # one-shot row marked sent with the resolved text reflected in its text_cache
+    assert mark.await_args.args[2] == "sent"
+    rt.rollback_debit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_dynamic_resolve_failure_uses_fallback_and_posts():
+    rt = _dynamic_runtime()
+    client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "t", "tweet_url": "u"}))
+    with patch.object(scheduler.posts_db, "list_due",
+                      AsyncMock(return_value=[_due_row(doc=_DYNAMIC_DOC, recurrence=None, cease_at=None)])), \
+         patch.object(scheduler.posts_db, "mark_sent", AsyncMock()), \
+         patch.object(scheduler, "_owner_voice", AsyncMock(return_value=("", []))), \
+         patch("excalibur_mcp.resolve.resolve_block", AsyncMock(side_effect=RuntimeError("anthropic down"))), \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        out = await scheduler.process_due_posts(rt)
+    assert len(out["posted"]) == 1
+    posted_text = client.post_tweet.await_args.args[0]
+    assert "Markets moving fast." in posted_text  # the author's fallback
+    rt.rollback_debit.assert_not_awaited()  # it posted → resolve fare stands
+
+
+@pytest.mark.asyncio
+async def test_dynamic_resolve_failure_no_fallback_holds_and_refunds(_stub_mark_attempt):
+    rt = _dynamic_runtime()
+    doc = {"blocks": [{"text": "the price now", "flags": [], "dynamic": True}]}  # no fallback
+    client = SimpleNamespace(post_tweet=AsyncMock())
+    with patch.object(scheduler.posts_db, "list_due", AsyncMock(return_value=[_due_row(doc=doc)])), \
+         patch.object(scheduler.posts_db, "mark_sent", AsyncMock()) as mark, \
+         patch.object(scheduler, "_owner_voice", AsyncMock(return_value=("", []))), \
+         patch("excalibur_mcp.resolve.resolve_block", AsyncMock(side_effect=RuntimeError("down"))), \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        out = await scheduler.process_due_posts(rt)
+    assert out["errors"] and out["errors"][0]["reason"] == "dynamic_resolve_failed"
+    client.post_tweet.assert_not_awaited()  # never post a gap
+    mark.assert_not_called()
+    rt.rollback_debit.assert_awaited_once()  # resolve fare refunded on hold
+    # post_tweet fare was never charged (held before that billing)
+    assert rt._apply_billing.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_dynamic_insufficient_balance_for_resolve_holds(_stub_mark_attempt):
+    rt = _runtime(billing={"success": False, "error_code": "insufficient_balance"})
+    rt.load_credentials = AsyncMock(return_value={"anthropic_api_key": "k"})
+    client = SimpleNamespace(post_tweet=AsyncMock())
+    with patch.object(scheduler.posts_db, "list_due", AsyncMock(return_value=[_due_row(doc=_DYNAMIC_DOC)])), \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        out = await scheduler.process_due_posts(rt)
+    assert out["skipped"][0]["reason"] == "insufficient_balance_resolve"
+    client.post_tweet.assert_not_awaited()

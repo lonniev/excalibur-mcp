@@ -20,10 +20,35 @@ export async function loadSnippets(): Promise<Snippet[]> {
   }
 }
 
-/// Create a snippet, then return the refreshed list.
-export async function addSnippet(name: string, text: string): Promise<Snippet[]> {
-  await saveSnippet({ name: name.trim(), text, favorite: false });
+/// Create a snippet, then return the refreshed list. A `dynamic` snippet stores
+/// a single dynamic block in its `doc` (its `text` is a runnable prompt); an
+/// optional `fallback` is what posts if resolution fails. Static snippets store
+/// just the text (no doc), exactly as before.
+export async function addSnippet(
+  name: string,
+  text: string,
+  opts: { dynamic?: boolean; fallback?: string } = {},
+): Promise<Snippet[]> {
+  const doc = opts.dynamic
+    ? { blocks: [{ text, flags: [], dynamic: true, ...(opts.fallback ? { fallback: opts.fallback } : {}) }] }
+    : undefined;
+  await saveSnippet({ name: name.trim(), text, favorite: false, doc });
   return loadSnippets();
+}
+
+/// A snippet is dynamic when its stored `doc` carries a dynamic block. Reading
+/// from `doc` keeps dynamic-ness in one place (no extra column) — the same flag
+/// a post block carries.
+export function snippetIsDynamic(s: Snippet): boolean {
+  const blocks = (s.doc as { blocks?: { dynamic?: boolean }[] } | undefined)?.blocks;
+  return Array.isArray(blocks) && blocks.some((b) => b?.dynamic);
+}
+
+/// The fallback text stored on a dynamic snippet's block (empty if none).
+export function snippetFallback(s: Snippet): string {
+  const blocks = (s.doc as { blocks?: { fallback?: string }[] } | undefined)?.blocks;
+  const b = Array.isArray(blocks) ? blocks.find((x) => x?.fallback) : undefined;
+  return b?.fallback ?? "";
 }
 
 /// Delete a snippet, then return the refreshed list.

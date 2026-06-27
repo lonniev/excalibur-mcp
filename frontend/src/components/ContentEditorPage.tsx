@@ -13,7 +13,10 @@ import { avatarFor } from "../lib/avatar";
 import { cachedXProfile, ensureXProfile } from "../lib/xProfile";
 import type { XProfile } from "../lib/mcp";
 import { styleText, type UnicodeStyle } from "../lib/unicodeFormat";
-import { addSnippet, loadSnippets, removeSnippet, toggleFavorite, type Snippet } from "../lib/snippets";
+import {
+  addSnippet, loadSnippets, removeSnippet, snippetFallback, snippetIsDynamic,
+  toggleFavorite, type Snippet,
+} from "../lib/snippets";
 import QuoteScroller from "./QuoteScroller";
 
 // Categorized symbols + emoji for the picker. X renders the full Unicode/Twemoji
@@ -32,13 +35,13 @@ const EMOJI_GROUPS: { label: string; emojis: string[] }[] = [
 ];
 import {
   createPost, deletePost, getPost, getSnippet, getVoice, listPosts, postTweet, refinePostRegion,
-  saveSnippet, saveVoice, updatePost,
+  resolveDynamicBlock, saveSnippet, saveVoice, updatePost,
   OAUTH_NEEDED_CODES, type PostRow, type PostSummary, type Recurrence,
 } from "../lib/mcp";
 import { debugPush } from "../lib/debugLog";
 import TweetPreviewModal from "./TweetPreviewModal";
 import {
-  charOffset, composeText, DEFAULT_BANS, DEFAULT_VOICE, overlaps, paletteOf,
+  charOffset, composeText, DEFAULT_BANS, DEFAULT_VOICE, hasDynamic, overlaps, paletteOf,
   parsePostDoc, segmentize, serializeBlocks, uid,
   type Ban, type Block, type Flag as FlagT,
 } from "../lib/editorDoc";
@@ -48,6 +51,10 @@ type Freq = "none" | "daily" | "weekly" | "monthly";
 interface Sel { blockId: string; start: number; end: number; x: number; y: number }
 interface ActiveFlag { blockId: string; flagId: string }
 interface PillPos { blockId: string; flagId: string; x: number; y: number }
+// Cached resolution of a dynamic block, keyed by block id. `promptKey` is the
+// prompt text it was resolved for, so re-entering Preview reuses an
+// already-paid-for result and only a changed prompt triggers a fresh (paid) run.
+interface ResolvedState { promptKey: string; text: string; loading: boolean; error: string }
 
 // The two content kinds share the entire block editor; they differ only in
 // where they load/save and which actions (post/schedule) are offered. A Post is
@@ -75,6 +82,8 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   const [sel, setSel] = useState<Sel | null>(null);
   const [clearPill, setClearPill] = useState<PillPos | null>(null);
   const [hint, setHint] = useState("");
+  // Resolved dynamic blocks (Preview dry-run output), keyed by block id.
+  const [resolved, setResolved] = useState<Record<string, ResolvedState>>({});
 
   // Voice is server-persisted (per-npub, free + proof-gated). It loads async on
   // mount; until then we show the defaults as a non-dirty placeholder so the
@@ -288,6 +297,10 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     (editingBlock ? blocks.find((b) => b.id === editingBlock)?.text : undefined) ??
     (sel ? blocks.find((b) => b.id === sel.blockId)?.text : undefined) ??
     composed;
+  // The block the "save as snippet / make dynamic" gesture targets: the one being
+  // edited, else the selected one, else the sole block when there's only one.
+  const focusedBlockId =
+    editingBlock ?? sel?.blockId ?? (blocks.length === 1 ? blocks[0].id : null);
   const allFlags = useMemo(
     () => blocks.flatMap((b) => b.flags.map((f) => ({ ...f, blockId: b.id, blockText: b.text }))),
     [blocks],
@@ -483,10 +496,60 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   };
 
   const addBlock = () => setBlocks((prev) => [...prev, { id: uid(), text: "New line…", flags: [] }]);
-  const insertSnippet = (text: string) => {
-    setBlocks((prev) => [...prev, { id: uid(), text, flags: [] }]);
-    setHint("Snippet added as a block — drag it where you want.");
+  // Insert a snippet as a new block. A dynamic snippet lands as a dynamic block
+  // (its text is a prompt) carrying its fallback; a static one lands as-is.
+  const insertSnippetRow = (s: Snippet) => {
+    const dyn = snippetIsDynamic(s);
+    const fb = dyn ? snippetFallback(s) : "";
+    setBlocks((prev) => [
+      ...prev,
+      { id: uid(), text: s.text, flags: [], ...(dyn ? { dynamic: true as const } : {}), ...(fb ? { fallback: fb } : {}) },
+    ]);
+    setHint(dyn
+      ? "Dynamic snippet added — its prompt runs at post time."
+      : "Snippet added as a block — drag it where you want.");
   };
+
+  // Mark the focused block dynamic (its text becomes a runnable prompt). Wired to
+  // the "dynamic prompt" toggle on the snippet-save gesture; clears any flags.
+  const markBlockDynamic = useCallback((blockId: string | null, fallback: string) => {
+    if (!blockId) { setHint("Click into the block you want to make dynamic first."); return; }
+    setBlocks((prev) => prev.map((b) =>
+      b.id === blockId ? { ...b, dynamic: true, fallback: fallback.trim() || undefined, flags: [] } : b));
+    setHint("This block is now dynamic — its prompt runs at post time.");
+  }, []);
+
+  // Resolve one dynamic block via the (paid) server-side dry-run. Context is the
+  // tweet around it, with this slot marked and other blocks shown resolved /
+  // fallback so the fragment reads in place.
+  const resolveDynamic = useCallback(async (block: Block) => {
+    const promptKey = block.text;
+    const context = blocks
+      .map((b) => {
+        if (b.id === block.id) return "⟨HERE⟩";
+        if (b.dynamic) return resolved[b.id]?.text || b.fallback || "";
+        return b.text;
+      })
+      .filter(Boolean)
+      .join("\n\n");
+    const activeBans = bans.filter((b) => b.on).map((b) => b.text);
+    setResolved((r) => ({ ...r, [block.id]: { promptKey, text: r[block.id]?.text ?? "", loading: true, error: "" } }));
+    try {
+      const res = await resolveDynamicBlock({ prompt: block.text, context, voice, bans: activeBans });
+      if (!res.success) {
+        setResolved((r) => ({ ...r, [block.id]: {
+          promptKey, text: block.fallback ?? "", loading: false,
+          error: res.message || res.error || "Couldn't resolve this prompt.",
+        } }));
+        return;
+      }
+      setResolved((r) => ({ ...r, [block.id]: { promptKey, text: res.text ?? "", loading: false, error: "" } }));
+    } catch (e) {
+      setResolved((r) => ({ ...r, [block.id]: {
+        promptKey, text: block.fallback ?? "", loading: false, error: (e as Error).message,
+      } }));
+    }
+  }, [blocks, resolved, voice, bans]);
   // A 20-char U+2500 horizontal-rule block. X renders no markdown, so a row of
   // box-drawing chars is how a divider survives to the timeline.
   const DIVIDER = "─".repeat(20);
@@ -496,6 +559,22 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   };
   const deleteBlock = (blockId: string) =>
     setBlocks((prev) => (prev.length > 1 ? prev.filter((b) => b.id !== blockId) : prev));
+
+  // Entering Preview resolves each dynamic block (the priced dry-run), reusing a
+  // cached result when its prompt is unchanged so toggling Preview never re-bills.
+  useEffect(() => {
+    if (!preview) return;
+    for (const b of blocks) {
+      if (!b.dynamic) continue;
+      const cached = resolved[b.id];
+      if (cached?.loading) continue;
+      if (cached && cached.promptKey === b.text && !cached.error) continue;
+      void resolveDynamic(b);
+    }
+    // resolveDynamic/resolved intentionally omitted: re-run on Preview open or a
+    // block edit, not on every cache write (which would loop).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preview, blocks]);
 
   // ── persistence ───────────────────────────────────────────────────────────
   async function persist(scheduled: boolean) {
@@ -572,6 +651,41 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     try { await deletePost(id!, false); nav(listPath); } catch (e) { setError((e as Error).message); }
   }
 
+  // Compose the text to actually post: static blocks verbatim, each dynamic block
+  // resolved now (reusing a current Preview result, else a fresh paid run). A
+  // dynamic block that fails with no fallback aborts the post — never a gap.
+  async function buildFinalText(): Promise<{ text: string; error?: string }> {
+    if (!hasDynamic(blocks)) return { text: composed };
+    const activeBans = bans.filter((b) => b.on).map((b) => b.text);
+    const rendered: string[] = [];
+    for (let i = 0; i < blocks.length; i++) {
+      const b = blocks[i];
+      if (!b.dynamic) { rendered.push(b.text); continue; }
+      const cached = resolved[b.id];
+      let value = cached && cached.promptKey === b.text && !cached.error ? cached.text : "";
+      if (!value) {
+        const context = blocks
+          .map((x, j) => (j === i ? "⟨HERE⟩" : x.dynamic ? rendered[j] ?? x.fallback ?? "" : x.text))
+          .filter(Boolean)
+          .join("\n\n");
+        try {
+          const res = await resolveDynamicBlock({ prompt: b.text, context, voice, bans: activeBans });
+          if (!res.success) {
+            if (!b.fallback) return { text: "", error: res.message || res.error || "Couldn't resolve a dynamic block." };
+            value = b.fallback;
+          } else {
+            value = res.text ?? "";
+          }
+        } catch (e) {
+          if (!b.fallback) return { text: "", error: (e as Error).message };
+          value = b.fallback;
+        }
+      }
+      rendered.push(value);
+    }
+    return { text: rendered.filter(Boolean).join("\n\n").trim() };
+  }
+
   // Post to X now (paid), then save the post as sent so it lands in the list.
   async function handlePostNow() {
     debugPush("info", `Post It clicked (${composed.trim().length} chars)`);
@@ -580,7 +694,10 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     setError(null);
     setNeedsXConnect(false);
     try {
-      const r = await postTweet(composed);
+      const { text: finalText, error: buildErr } = await buildFinalText();
+      if (buildErr) { setError(buildErr); return; }
+      if (!finalText.trim()) { setError("Nothing to post after resolving the dynamic blocks."); return; }
+      const r = await postTweet(finalText);
       if (r.error || r.success === false) {
         if (r.error_code && OAUTH_NEEDED_CODES.has(r.error_code)) {
           debugPush("info", `post_tweet needs X connect (${r.error_code})`);
@@ -595,14 +712,14 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
       const docPayload = serializeBlocks(blocks);
       if (isNew) {
         const c = await createPost({
-          doc: docPayload, textCache: composed, status: "sent",
+          doc: docPayload, textCache: finalText, status: "sent",
           clientReqId: createReqId.current, tweetUrl,
         });
         if (!c.post_id) setHint("Posted to X (couldn't save a copy).");
       } else {
         await updatePost({
           postId: id!, patch: { doc: docPayload, status: "sent", tweet_url: tweetUrl },
-          textCache: composed, clientReqId: uid(),
+          textCache: finalText, clientReqId: uid(),
         });
       }
       setHint("Posted to X.");
@@ -819,6 +936,8 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
                         editing={editingBlock === b.id}
                         activeFlagId={activeFlag?.flagId ?? null}
                         overIndex={overIndex}
+                        resolved={resolved[b.id]}
+                        onResolve={() => resolveDynamic(b)}
                         onMouseUp={onBlockMouseUp}
                         onFlagClick={(flagId, rect) => {
                           setActiveFlag({ blockId: b.id, flagId });
@@ -871,11 +990,11 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
                 {snippets.filter((s) => s.favorite).map((s) => (
                   <button
                     key={s.id}
-                    onClick={() => insertSnippet(s.text)}
-                    title={`Insert "${s.name}"`}
+                    onClick={() => insertSnippetRow(s)}
+                    title={`Insert "${s.name}"${snippetIsDynamic(s) ? " (dynamic prompt)" : ""}`}
                     className="flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-400/10 px-3 py-1.5 text-sm text-amber-300 hover:bg-amber-400/20 transition-colors"
                   >
-                    <Star className="h-3 w-3 fill-current" /> {s.name}
+                    {snippetIsDynamic(s) ? <Wand2 className="h-3 w-3" /> : <Star className="h-3 w-3 fill-current" />} {s.name}
                   </button>
                 ))}
               </div>
@@ -935,9 +1054,11 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
               {tab === "snippets" && (
                 <SnippetsTab
                   currentText={focusedBlockText}
-                  onInsert={insertSnippet}
+                  onInsert={insertSnippetRow}
                   snippets={snippets}
                   setSnippets={setSnippets}
+                  canMarkDynamic={focusedBlockId !== null}
+                  onMarkDynamic={(fallback) => markBlockDynamic(focusedBlockId, fallback)}
                 />
               )}
               {tab === "schedule" && !isSnippet && (
@@ -960,10 +1081,11 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
 
 // ── block view ──────────────────────────────────────────────────────────────
 function BlockView({
-  block, idx, preview, editing, activeFlagId, overIndex,
+  block, idx, preview, editing, activeFlagId, overIndex, resolved, onResolve,
   onMouseUp, onFlagClick, onEdit, onDoneEdit, onChange, onDelete, onMoveUp, onMoveDown, canDelete, dragHandlers,
 }: {
   block: Block; idx: number; preview: boolean; editing: boolean; activeFlagId: string | null; overIndex: number | null;
+  resolved?: ResolvedState; onResolve: () => void;
   onMouseUp: (blockId: string, el: HTMLElement | null) => void;
   onFlagClick: (flagId: string, rect: DOMRect) => void;
   onEdit: () => void; onDoneEdit: () => void; onChange: (t: string) => void; onDelete: () => void;
@@ -976,7 +1098,60 @@ function BlockView({
   const segs = useMemo(() => segmentize(block.text, block.flags), [block.text, block.flags]);
 
   if (preview) {
+    // A dynamic block shows its resolved (dry-run) text — loading/fallback while
+    // it resolves or if it failed. The live post resolves fresh at fire time.
+    if (block.dynamic) {
+      if (resolved?.loading) {
+        return (
+          <p className="flex items-center gap-1.5 text-[15px] italic leading-normal text-zinc-400">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> resolving…
+          </p>
+        );
+      }
+      const shown = resolved?.text || block.fallback || "";
+      return (
+        <p className="whitespace-pre-wrap break-words text-[15px] leading-normal text-zinc-900">
+          {shown || <span className="italic text-zinc-400">(dynamic block — no preview yet)</span>}
+        </p>
+      );
+    }
     return <p className="whitespace-pre-wrap break-words text-[15px] leading-normal text-zinc-900">{block.text}</p>;
+  }
+  // A dynamic block's text is a prompt, not flaggable copy — show it as a distinct
+  // card (no text-selection / Flag affordance) so its nature is unmistakable.
+  if (block.dynamic && !editing) {
+    return (
+      <div className={`group relative -ml-7 rounded-md pl-7 ${overIndex === idx ? "ring-1 ring-amber-300" : ""}`} draggable {...dragHandlers}>
+        <div className="absolute left-0 top-0 flex flex-col items-center opacity-0 transition-opacity group-hover:opacity-100">
+          <GripVertical className="h-4 w-4 cursor-grab text-zinc-300" />
+          <button onClick={onMoveUp} className="text-zinc-300 hover:text-amber-500"><ChevronUp className="h-3.5 w-3.5" /></button>
+          <button onClick={onMoveDown} className="text-zinc-300 hover:text-amber-500"><ChevronDown className="h-3.5 w-3.5" /></button>
+        </div>
+        <div className="rounded-md border border-dashed border-violet-400 bg-violet-50 p-2">
+          <div className="mb-1 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-violet-600">
+            <Wand2 className="h-3 w-3" /> dynamic prompt · resolves at post time
+          </div>
+          <p className="whitespace-pre-wrap break-words text-[13px] leading-snug text-violet-900">{block.text}</p>
+          {block.fallback && (
+            <p className="mt-1 text-[11px] text-violet-500">Fallback: {block.fallback}</p>
+          )}
+          <div className="mt-1.5 flex items-center gap-3">
+            <button onClick={onResolve} className="flex items-center gap-1 text-[11px] text-violet-600 hover:text-violet-800">
+              <Sparkles className="h-3 w-3" /> Test run
+            </button>
+            {resolved?.loading && <Loader2 className="h-3 w-3 animate-spin text-violet-500" />}
+            {resolved && !resolved.loading && resolved.text && !resolved.error && (
+              <span className="truncate text-[11px] text-emerald-600">→ {resolved.text}</span>
+            )}
+            {resolved?.error && <span className="truncate text-[11px] text-rose-500">{resolved.error}</span>}
+          </div>
+        </div>
+        <div className="absolute right-1 top-1 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+          <button onClick={onEdit} title="Edit prompt" className="rounded bg-white p-1 text-zinc-400 shadow hover:text-amber-500"><Pencil className="h-3.5 w-3.5" /></button>
+          {canDelete && <button onClick={onDelete} title="Delete block" className="rounded bg-white p-1 text-zinc-400 shadow hover:text-rose-500"><Trash2 className="h-3.5 w-3.5" /></button>}
+        </div>
+      </div>
+    );
   }
   if (editing) {
     const applyStyle = (style: UnicodeStyle) => {
@@ -1049,7 +1224,9 @@ function BlockView({
           className="w-full resize-none bg-amber-50 p-2 text-[15px] leading-normal text-zinc-900 outline-none"
         />
         <div className="flex items-center justify-between rounded-b-md bg-amber-100 px-2 py-1">
-          <span className="font-mono text-[10px] text-amber-700">editing clears this block's flags</span>
+          <span className="font-mono text-[10px] text-amber-700">
+            {block.dynamic ? "this is a dynamic prompt — it runs at post time" : "editing clears this block's flags"}
+          </span>
           <button onClick={onDoneEdit} className="rounded bg-zinc-900 px-2 py-0.5 text-xs text-white hover:bg-zinc-700">Done</button>
         </div>
       </div>
@@ -1155,15 +1332,21 @@ function FlagsTab({
 
 // ── snippets tab ────────────────────────────────────────────────────────────
 function SnippetsTab({
-  currentText, onInsert, snippets, setSnippets,
+  currentText, onInsert, snippets, setSnippets, canMarkDynamic, onMarkDynamic,
 }: {
   currentText: string;
-  onInsert: (text: string) => void;
+  onInsert: (s: Snippet) => void;
   snippets: Snippet[];
   setSnippets: (s: Snippet[]) => void;
+  canMarkDynamic: boolean;
+  onMarkDynamic: (fallback: string) => void;
 }) {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
+  // "Dynamic prompt" turns the focused block's text into a runnable prompt and
+  // saves it as a reusable dynamic snippet; `fallback` posts if resolution fails.
+  const [dynamic, setDynamic] = useState(false);
+  const [fallback, setFallback] = useState("");
 
   async function save() {
     const n = name.trim();
@@ -1171,8 +1354,11 @@ function SnippetsTab({
     if (!n || !t) return;
     setBusy(true);
     try {
-      setSnippets(await addSnippet(n, t));
+      setSnippets(await addSnippet(n, t, dynamic ? { dynamic: true, fallback } : {}));
+      if (dynamic) onMarkDynamic(fallback);
       setName("");
+      setDynamic(false);
+      setFallback("");
     } finally {
       setBusy(false);
     }
@@ -1202,6 +1388,29 @@ function SnippetsTab({
             ? `Saves: "${currentText.trim().slice(0, 80)}${currentText.trim().length > 80 ? "…" : ""}"`
             : "Click into a block first, then save its text as a reusable snippet."}
         </p>
+        {/* Dynamic-prompt toggle: marks the focused block dynamic and stores a
+            reusable dynamic snippet. The block's text becomes the prompt. */}
+        <label
+          className={`mt-2 flex items-center gap-2 text-[12px] ${canMarkDynamic ? "text-zinc-300" : "text-zinc-600"}`}
+          title={canMarkDynamic ? "Treat this block's text as a prompt run at post time" : "Click into a single block first"}
+        >
+          <input
+            type="checkbox"
+            checked={dynamic}
+            disabled={!canMarkDynamic}
+            onChange={(e) => setDynamic(e.target.checked)}
+            className="accent-violet-500"
+          />
+          <Wand2 className="h-3.5 w-3.5 text-violet-400" /> Dynamic prompt (runs at post time)
+        </label>
+        {dynamic && (
+          <input
+            value={fallback}
+            onChange={(e) => setFallback(e.target.value)}
+            placeholder="Fallback text if it can't resolve (optional)"
+            className="mt-2 w-full rounded-md border border-violet-500/50 bg-zinc-950 px-2 py-1.5 text-[12px] text-zinc-200 placeholder:text-zinc-600 outline-none focus:border-violet-400"
+          />
+        )}
       </div>
 
       <div>
@@ -1212,7 +1421,9 @@ function SnippetsTab({
           </p>
         ) : (
           <div className="space-y-2">
-            {snippets.map((s) => (
+            {snippets.map((s) => {
+              const dyn = snippetIsDynamic(s);
+              return (
               <div key={s.id} className="rounded-lg border border-zinc-800 bg-zinc-900 p-2.5">
                 <div className="flex items-center gap-2">
                   <button
@@ -1222,8 +1433,9 @@ function SnippetsTab({
                   >
                     <Star className={`h-3.5 w-3.5 ${s.favorite ? "fill-current" : ""}`} />
                   </button>
+                  {dyn && <Wand2 className="h-3.5 w-3.5 flex-none text-violet-400" aria-label="dynamic prompt" />}
                   <span className="flex-1 min-w-0 truncate text-sm text-zinc-200">{s.name}</span>
-                  <button onClick={() => onInsert(s.text)} className="text-xs text-amber-300 hover:text-amber-200" title="Add as a block">
+                  <button onClick={() => onInsert(s)} className="text-xs text-amber-300 hover:text-amber-200" title={dyn ? "Add as a dynamic block" : "Add as a block"}>
                     + Insert
                   </button>
                   <button onClick={async () => setSnippets(await removeSnippet(s.id))} className="text-zinc-500 hover:text-rose-400" title="Delete snippet">
@@ -1232,7 +1444,7 @@ function SnippetsTab({
                 </div>
                 <p className="mt-1 text-[11px] text-zinc-500 line-clamp-2">{s.text}</p>
               </div>
-            ))}
+            ); })}
           </div>
         )}
       </div>
