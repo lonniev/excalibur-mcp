@@ -651,6 +651,37 @@ export async function refinePostRegion(args: {
   });
 }
 
+// ─── Resolve a dynamic block (server-side; operator's vaulted Claude key) ──
+
+export interface ResolveDynamicResult {
+  success: boolean;
+  text?: string;
+  error?: string;
+  error_code?: string;
+  message?: string;
+}
+
+/// Run a dynamic block's prompt server-side: the wheel calls Claude (with web
+/// search) using the operator's vaulted key, weaves the answer into `context` in
+/// the author's `voice`, and returns the finished fragment. Paid tool (the AI
+/// cost is metered; refunded on failure) — npub/proof envelope injected by
+/// callTool. Powers the editor's Preview dry-run.
+export async function resolveDynamicBlock(args: {
+  prompt: string;
+  context?: string;
+  voice?: string;
+  bans?: string[];
+  charBudget?: number;
+}): Promise<ResolveDynamicResult> {
+  return callTool<ResolveDynamicResult>("resolve_dynamic_block", {
+    prompt: args.prompt,
+    context: args.context ?? "",
+    voice: args.voice ?? "",
+    bans: JSON.stringify(args.bans ?? []),
+    char_budget: args.charBudget ?? 280,
+  });
+}
+
 // ─── X account OAuth2 (per-patron connect dance) ───────────────────────────
 // post_tweet posts to the logged-in npub's OWN X account, which needs a
 // per-patron OAuth2 token. The dance: begin_oauth → open authorize_url in a

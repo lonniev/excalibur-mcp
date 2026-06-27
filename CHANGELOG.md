@@ -5,6 +5,34 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — dynamic (agentic) post blocks
+
+- A post block can now be **dynamic**: its text is a runnable prompt that is
+  executed at post time (and in Preview), woven into the surrounding tweet in the
+  author's Voice, and posted as the final rendition. A daily recurring post
+  therefore re-resolves fresh every fire.
+- **Gesture (no new editor):** write a normal text block, then **Save as Snippet
+  → "dynamic prompt"**. The toggle flips the focused block to dynamic (with an
+  optional fallback line) and stores a reusable dynamic snippet. Dynamic snippets
+  insert as dynamic blocks and show a wand badge / chiclet.
+- **Resolution** (`resolve.py` + new `resolve_dynamic_block` tool, mirroring
+  `refine_post_region`): the operator's vaulted Anthropic key runs the prompt with
+  Claude's server-side `web_search` tool for live facts, fitted to a character
+  budget (length-gated with one shorten retry, then hard-capped). The key never
+  leaves the server; the call is a metered fare, refunded on no-key / upstream
+  failure / empty output.
+- **Scheduler:** a due post carrying dynamic blocks is billed one
+  `resolve_dynamic_block` fare on top of `post_tweet`, resolves each block, and
+  composes the final text. A failed block falls back to its author text; a failed
+  block with **no fallback holds the post** (refunding the resolve fare) — never a
+  posted gap. Recurring occurrences snapshot the **resolved** text + a static
+  rendered doc, so Sent history shows exactly what went out.
+- **Preview** runs the same priced resolution as a dry-run, cached per block until
+  its prompt changes so toggling Edit/Preview never re-bills.
+- Dynamic-ness lives in the block's `doc` (posts and snippets) — **no DB
+  migration**. Operator prices `resolve_dynamic_block` in Pricing Studio (new
+  tools start unpriced).
+
 ## [0.21.0] — 2026-06-25
 
 ### Fixed — X API 402 now reads as "renew your subscription," and the scheduler stops looping on it

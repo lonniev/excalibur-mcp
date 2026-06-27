@@ -91,6 +91,14 @@ _DOMAIN_TOOLS = [
     ToolIdentity(tool_id=capability_uuid("refine_post_region"), capability="refine_post_region",
                  category="heavy", intent="Refine a flagged post region with Claude (server-side, metered)",
                  pricing_hint_type="flat", pricing_hint_value=25),
+    # Resolve a *dynamic* post block: its text is a runnable prompt that Claude
+    # executes (with web search) at post time / preview, weaving a fresh answer
+    # into the surrounding tweet. Same posture as refine — operator's vaulted key,
+    # metered as a paid fare, refunded on no-key / upstream failure. The scheduler
+    # bills the owner for this per fire when a due post carries dynamic blocks.
+    ToolIdentity(tool_id=capability_uuid("resolve_dynamic_block"), capability="resolve_dynamic_block",
+                 category="heavy", intent="Resolve a dynamic post block's prompt with Claude (server-side, metered)",
+                 pricing_hint_type="flat", pricing_hint_value=25),
     # Snippet library — reusable openings/footers/CTAs the patron saves once and
     # drops into the editor (favorites become one-click chiclets). Free: managing
     # your own snippets carries no fare, but every call is proof-gated and
@@ -800,6 +808,94 @@ async def refine_post_region(
         }
 
     return {"success": True, "suggestions": suggestions}
+
+
+@tool
+@runtime.paid_tool(capability_uuid("resolve_dynamic_block"), catch_errors=True)
+async def resolve_dynamic_block(
+    prompt: str,
+    context: str = "",
+    voice: str = "",
+    bans: str = "",
+    char_budget: int = 280,
+    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "",
+    proof: str = "",
+) -> dict:
+    """Resolve a dynamic post block with Claude — server-side.
+
+    A dynamic block's ``prompt`` is run by Claude (with web search for live
+    facts) and woven into the surrounding tweet ``context`` in the author's
+    ``voice``, fitted to ``char_budget``. The operator's Anthropic key stays in
+    the vault and never leaves the server. This powers the editor's Preview
+    dry-run; the scheduler resolves dynamic blocks the same way at fire time.
+
+    Returns ``{"success": true, "text": "..."}``.
+
+    Paid: the AI cost is metered as a tollbooth fare, refunded if no Anthropic
+    key is configured or the upstream call returns nothing.
+
+    Args:
+        prompt: The dynamic block's prompt to run.
+        context: The surrounding composed tweet (may contain the ⟨HERE⟩ marker).
+        voice: Voice-profile text fed to the model (optional).
+        bans: Banned constructions — JSON array or comma-separated (optional).
+        char_budget: Max characters for the resolved fragment.
+        npub: Your DPYC patron npub for credit billing.
+    """
+    tool_id = capability_uuid("resolve_dynamic_block")
+    if not prompt.strip():
+        await runtime.rollback_debit(tool_id, npub)
+        return {"success": False, "error_code": "tool_input_invalid", "error": "prompt is required."}
+
+    try:
+        creds = await runtime.load_credentials(["anthropic_api_key"])
+        key = creds.get("anthropic_api_key")
+    except Exception:
+        key = None
+    if not key:
+        await runtime.rollback_debit(tool_id, npub)
+        return {
+            "success": False,
+            "error_code": "operator_llm_unconfigured",
+            "message": (
+                "Dynamic blocks are unavailable — the operator hasn't configured "
+                "an Anthropic key yet. No fare was charged."
+            ),
+        }
+
+    ban_list: list[str] = []
+    if bans:
+        try:
+            parsed = json.loads(bans)
+            if isinstance(parsed, list):
+                ban_list = [str(b) for b in parsed if str(b).strip()]
+        except (json.JSONDecodeError, TypeError):
+            ban_list = [b.strip() for b in bans.split(",") if b.strip()]
+
+    from excalibur_mcp.resolve import clamp_budget, resolve_block
+    try:
+        text = await resolve_block(
+            api_key=key, prompt=prompt, context=context,
+            voice=voice, bans=ban_list, char_budget=clamp_budget(char_budget),
+        )
+    except Exception as exc:
+        await runtime.rollback_debit(tool_id, npub)
+        logger.warning("resolve_dynamic_block upstream failed: %s: %s", type(exc).__name__, exc)
+        return {
+            "success": False,
+            "error_code": "llm_upstream_error",
+            "message": "Resolving the dynamic block failed upstream — your fare was refunded. Try again shortly.",
+        }
+
+    if not text:
+        await runtime.rollback_debit(tool_id, npub)
+        return {
+            "success": False,
+            "error_code": "llm_no_output",
+            "message": "No text came back — your fare was refunded.",
+        }
+
+    return {"success": True, "text": text}
 
 
 # ---------------------------------------------------------------------------
