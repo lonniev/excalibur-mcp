@@ -5,6 +5,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.23.0] — 2026-06-27
+
 ### Added — dynamic-block resolution is async (claim check), surviving the edge cap
 
 - Heavy dynamic prompts (paginate a collection, fetch product pages, web-search,
