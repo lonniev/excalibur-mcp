@@ -33,6 +33,7 @@ def test_prompt_includes_prompt_context_voice_bans_no_char_cap():
     assert "no fixed character limit" in system  # X is long-form; no 280 cap
     assert "characters or fewer" not in system
     assert "<post>" in system and "</post>" in system  # deliverable goes in the tags
+    assert "DOWN-FORMAT" in system and "HTML" in system  # X-unicode-only guard
     assert "state the weather now" in user
     assert "Stay warm." in user
     assert resolve.INSERT_MARKER in user
@@ -107,6 +108,16 @@ async def test_resolve_block_returns_long_output_untruncated():
         out = await resolve_block(api_key="k", prompt="write a long essay")
     assert out == long_text          # returned whole
     assert call.await_count == 1     # no shorten retry
+
+
+@pytest.mark.asyncio
+async def test_resolve_block_downformats_markup_to_x_text():
+    # Even if rich markup slips through, resolve_block returns X-ready plain text.
+    raw = "<b>Hi</b> — see [shop](https://e.com/p)"
+    with patch.object(resolve, "_call", AsyncMock(return_value=raw)):
+        out = await resolve_block(api_key="k", prompt="p")
+    assert "<b>" not in out and "</b>" not in out and "](" not in out
+    assert "Hi" in out and "https://e.com/p" in out
 
 
 @pytest.mark.asyncio

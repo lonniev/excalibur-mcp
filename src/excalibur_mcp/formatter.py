@@ -129,3 +129,38 @@ def markdown_to_unicode(text: str) -> str:
     )
 
     return text
+
+
+# ---------------------------------------------------------------------------
+# X down-formatting: X renders only plain text (with Unicode styling). Strip the
+# rich markup a model might emit when a prompt asks for HTML/CSS/JSX/markdown,
+# keeping the readable content. Conservative by design — a stray "a < b" can be
+# touched, but that's rare in post copy and the resolver also instructs the model
+# to produce X-ready text in the first place.
+# ---------------------------------------------------------------------------
+
+_MD_IMAGE_RE = re.compile(r"!\[[^\]]*\]\((https?://[^\s)]+)\)")   # ![alt](url) → url
+_FENCE_RE = re.compile(r"```[a-zA-Z0-9]*\n?(.*?)```", re.S)        # ```code``` → inner
+_TAG_RE = re.compile(r"</?[a-zA-Z][^>]*>")                         # HTML / XML / JSX tags
+_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^\s)]+)\)")    # [label](url) → label url
+_HEADING_RE = re.compile(r"(?m)^[ \t]{0,3}#{1,6}[ \t]+")          # markdown heading markers
+_BLANKS_RE = re.compile(r"\n{3,}")
+
+
+def to_x_text(text: str) -> str:
+    """Down-format arbitrary text to plain, X-ready content.
+
+    X accepts only plain text via the API; styling is conveyed with Unicode.
+    Strips HTML/JSX/XML tags, fenced code blocks, markdown headings, and markdown
+    image/link *syntax* the platform won't render (URLs are left bare so X
+    auto-links them), then converts inline markdown emphasis to Unicode glyphs.
+    """
+    if not text:
+        return text
+    t = _MD_IMAGE_RE.sub(r"\1", text)
+    t = _FENCE_RE.sub(lambda m: m.group(1), t)
+    t = _TAG_RE.sub("", t)
+    t = _MD_LINK_RE.sub(r"\1 \2", t)
+    t = _HEADING_RE.sub("", t)
+    t = markdown_to_unicode(t)
+    return _BLANKS_RE.sub("\n\n", t).strip()

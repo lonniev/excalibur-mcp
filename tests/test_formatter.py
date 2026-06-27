@@ -7,7 +7,35 @@ from excalibur_mcp.formatter import (
     to_bold_italic,
     to_italic,
     to_monospace,
+    to_x_text,
 )
+
+# ---------------------------------------------------------------------------
+# to_x_text — down-format rich markup to X-ready plain text + Unicode
+# ---------------------------------------------------------------------------
+
+def test_to_x_text_strips_html_and_jsx_tags():
+    out = to_x_text("<div class='hero'>Hello</div> <Card title='x'/> world")
+    assert "<" not in out and ">" not in out
+    assert "Hello" in out and "world" in out
+
+
+def test_to_x_text_converts_markdown_link_to_label_plus_bare_url():
+    out = to_x_text("Read more at [the shop](https://stablecoin.myshopify.com/p/1)")
+    assert "[the shop]" not in out and "](" not in out
+    assert "the shop" in out
+    assert "https://stablecoin.myshopify.com/p/1" in out  # bare URL — X auto-links
+
+
+def test_to_x_text_drops_heading_markers_and_converts_emphasis():
+    out = to_x_text("# Big Title\nthe **bold** truth")
+    assert out.startswith("Big Title")
+    assert "**" not in out
+    assert to_bold("bold") in out
+
+
+def test_to_x_text_passes_through_plain_copy():
+    assert to_x_text("sunny, 72°F · BTC $64k") == "sunny, 72°F · BTC $64k"
 
 # ---------------------------------------------------------------------------
 # Individual conversion functions

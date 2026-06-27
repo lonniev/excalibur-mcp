@@ -5,6 +5,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — dynamic fragments are down-formatted to X-safe Unicode
+
+- A dynamic prompt can ask for anything, but X renders only plain text with
+  Unicode styling — so the resolved fragment is now normalized to X-safe output.
+  New `formatter.to_x_text` strips HTML/JSX/XML tags, fenced code blocks, and
+  markdown headings/image/link *syntax* (URLs left bare so X auto-links them),
+  then converts inline `**bold**` / `*italic*` / `` `mono` `` to Unicode glyphs.
+  `resolve_block` runs it on every fragment (Preview + scheduler).
+- The resolver's system prompt now tells the model to format for X (plain text +
+  Unicode emphasis, bare URLs) and to **down-format** any rich/structured/coded
+  request (HTML, CSS, a JSX component, a table, a code block) to the closest
+  plain X rendering — model-side down-conversion first, `to_x_text` as the net.
+  (Also fixes the literal `[label](url)` markdown link that posted verbatim.)
+
 ### Fixed — dynamic fragments no longer leak the model's self-talk
 
 - A resolved fragment sometimes carried Claude's between-tool narration ("The

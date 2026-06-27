@@ -23,6 +23,8 @@ from typing import Any
 
 import httpx
 
+from excalibur_mcp.formatter import to_x_text
+
 logger = logging.getLogger(__name__)
 
 # The model wraps its finished fragment in these tags so its own reasoning /
@@ -97,8 +99,17 @@ def _build_prompt(
         "Output the FINISHED fragment wrapped in <post> and </post> tags, with "
         "nothing inside those tags except the fragment itself — no preamble, no "
         "\"here is\" or \"I now have enough detail\", no notes to yourself, no "
-        "surrounding quotes, no markdown, no code fences, no citations or source "
-        "list. Anything outside the tags is discarded, so put all reasoning there. "
+        "surrounding quotes, no citations or source list. Anything outside the "
+        "tags is discarded, so put all reasoning there. "
+        "Format for X, which renders only plain text with Unicode styling: use "
+        "plain text, line breaks, and emoji; for emphasis use markdown **bold**, "
+        "*italic*, or `monospace` (these become Unicode glyphs). Write URLs bare — "
+        "X auto-links them; do not use markdown link syntax. NEVER output HTML, "
+        "CSS, JSX/XML, tags of any kind, markdown headings or tables, or fenced "
+        "code blocks. If the author asks for rich, structured, or coded formatting "
+        "(a web page, a React/JSX component, HTML/CSS, a table, a code block), "
+        "DOWN-FORMAT it to the closest plain X rendering — keep the readable "
+        "content with simple Unicode emphasis and drop the markup. "
         "The fragment must read naturally where it sits in the surrounding post and "
         "carry forward its voice. Let the author's instruction set the length — X "
         "supports long-form posts, so there is no fixed character limit."
@@ -198,6 +209,10 @@ async def resolve_block(
     tools = _build_tools(allowed_domains, clamp_fetches(max_fetches))
     system, user = _build_prompt(prompt, context, voice, bans)
     text = await _call(api_key, system, user, tools)
+    # Down-format to X-ready plain text + Unicode styling, in case the prompt
+    # asked for (or the model produced) HTML/CSS/JSX/markdown the platform can't
+    # render. The model is also instructed to do this; this is the safety net.
+    text = to_x_text(text)
     if not text:
         raise ValueError("no text returned")
     return text
