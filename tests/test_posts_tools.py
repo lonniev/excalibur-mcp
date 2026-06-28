@@ -86,6 +86,17 @@ async def test_create_rejects_bad_recurrence_freq():
         )
 
 
+def test_clean_title_trims_blanks_to_none_and_bounds_length():
+    assert posts_tools._clean_title("  Launch Teaser  ") == "Launch Teaser"
+    assert posts_tools._clean_title("") is None       # blank -> NULL (no title)
+    assert posts_tools._clean_title("   ") is None     # whitespace-only -> NULL
+    assert posts_tools._clean_title(None) is None
+    with pytest.raises(ValueError):
+        posts_tools._clean_title("x" * (posts_tools._TITLE_MAX + 1))
+    with pytest.raises(ValueError):
+        posts_tools._clean_title(123)  # non-string
+
+
 def test_validate_recurrence_accepts_weekdays_rejects_yearly():
     # "weekdays" (every Mon-Fri, skip weekends) is a first-class cadence.
     posts_tools._validate_recurrence({"freq": "weekdays", "interval": 1})

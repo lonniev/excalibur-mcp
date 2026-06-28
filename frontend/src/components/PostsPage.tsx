@@ -185,6 +185,7 @@ export default function PostsPage() {
         doc: row.doc,
         textCache: row.text_cache ?? "",
         status: "draft",
+        title: row.title || undefined,
         publishAt: row.publish_at ?? undefined,
         recurrence: row.recurrence ? (row.recurrence as Recurrence) : undefined,
         ceaseAt: row.cease_at ?? undefined,
@@ -327,7 +328,14 @@ export default function PostsPage() {
                     )}
                   </td>
                   <td className="px-3 py-2.5 align-top max-w-md">
-                    <p className="truncate text-stone-800 dark:text-zinc-200">{p.excerpt || "(empty draft)"}</p>
+                    {p.title ? (
+                      <>
+                        <p className="truncate font-medium text-stone-900 dark:text-zinc-100">{p.title}</p>
+                        {p.excerpt && <p className="truncate text-xs text-stone-500 dark:text-zinc-400">{p.excerpt}</p>}
+                      </>
+                    ) : (
+                      <p className="truncate text-stone-800 dark:text-zinc-200">{p.excerpt || "(empty draft)"}</p>
+                    )}
                     {p.last_sent_at && (p.tweet_url ? (
                       <button
                         onClick={(e) => { e.stopPropagation(); e.preventDefault(); setPreview({ url: p.tweet_url!, text: p.excerpt || "" }); }}

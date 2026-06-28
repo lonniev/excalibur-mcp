@@ -76,6 +76,7 @@ async def _ensure_domain_schema(vault: Any) -> None:
         "id UUID PRIMARY KEY DEFAULT gen_random_uuid(), "
         "npub TEXT NOT NULL, "
         "status TEXT NOT NULL DEFAULT 'draft', "  # draft|scheduled|sent|archived
+        "title TEXT, "                     # optional human label; falls back to first body line
         "doc JSONB NOT NULL, "
         "text_cache TEXT, "
         "publish_at TIMESTAMPTZ, "
@@ -90,6 +91,7 @@ async def _ensure_domain_schema(vault: Any) -> None:
         "updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
 
         # Idempotent column adds for tables created before these columns existed.
+        f"ALTER TABLE {t('posts')} ADD COLUMN IF NOT EXISTS title TEXT",
         f"ALTER TABLE {t('posts')} ADD COLUMN IF NOT EXISTS tweet_url TEXT",
         f"ALTER TABLE {t('posts')} ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMPTZ",
         f"ALTER TABLE {t('posts')} ADD COLUMN IF NOT EXISTS last_attempt_reason TEXT",

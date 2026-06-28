@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS posts (
     id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     npub          TEXT        NOT NULL,        -- owner; access-control key
     status        TEXT        NOT NULL DEFAULT 'draft',  -- draft|scheduled|sent|archived
+    title         TEXT,                        -- optional human label; falls back to first body line
     doc           JSONB       NOT NULL,        -- editable Doc (source of truth)
     text_cache    TEXT,                        -- composed text (scheduler + excerpts)
     publish_at    TIMESTAMPTZ,                 -- first/next intended publish
