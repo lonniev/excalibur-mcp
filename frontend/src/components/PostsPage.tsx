@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   createPost, deletePost, getPost, listPosts, postTweet, updatePost,
-  type PostSummary, type SortDir,
+  type PostSummary, type Recurrence, type SortDir,
 } from "../lib/mcp";
 import { uid } from "../lib/editorDoc";
 import TweetPreviewModal from "./TweetPreviewModal";
@@ -168,10 +168,11 @@ export default function PostsPage() {
     }
   }
 
-  // Duplicate a post: copy its content (doc + cached text) into a fresh draft
-  // and open it in the editor. The copy carries NO publish_at/recurrence/cease_at
-  // so it can never double-fire alongside the original — the user sets a new
-  // schedule on the copy. Works from any source status (draft, scheduled, sent…).
+  // Duplicate a post: a deep copy of its content AND schedule (publish time,
+  // recurrence cadence, cease date) into a fresh draft, then open it in the
+  // editor. The copy lands as `draft`, so even with a publish time carried over
+  // it never fires until the user reviews and schedules it — no double-posting
+  // alongside the original. Works from any source status (draft, scheduled, …).
   async function handleDuplicate(e: React.MouseEvent, id: string) {
     e.stopPropagation();
     e.preventDefault();
@@ -184,6 +185,9 @@ export default function PostsPage() {
         doc: row.doc,
         textCache: row.text_cache ?? "",
         status: "draft",
+        publishAt: row.publish_at ?? undefined,
+        recurrence: row.recurrence ? (row.recurrence as Recurrence) : undefined,
+        ceaseAt: row.cease_at ?? undefined,
         clientReqId: uid(),
       });
       if (r.error || !r.post_id) { setError(r.error || "Duplicate failed."); return; }
