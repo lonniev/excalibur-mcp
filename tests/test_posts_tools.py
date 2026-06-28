@@ -86,6 +86,15 @@ async def test_create_rejects_bad_recurrence_freq():
         )
 
 
+def test_validate_recurrence_accepts_weekdays_rejects_yearly():
+    # "weekdays" (every Mon-Fri, skip weekends) is a first-class cadence.
+    posts_tools._validate_recurrence({"freq": "weekdays", "interval": 1})
+    for freq in ("daily", "weekly", "monthly"):
+        posts_tools._validate_recurrence({"freq": freq, "interval": 2})
+    with pytest.raises(ValueError):
+        posts_tools._validate_recurrence({"freq": "yearly", "interval": 1})
+
+
 @pytest.mark.asyncio
 async def test_list_rejects_invalid_regex_search():
     with pytest.raises(ValueError):

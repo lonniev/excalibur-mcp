@@ -66,12 +66,27 @@ def _add_months(dt: datetime, months: int) -> datetime:
     return dt.replace(year=year, month=month, day=day)
 
 
+def _add_business_days(dt: datetime, n: int) -> datetime:
+    """Advance ``n`` business days (Mon-Fri), skipping Sat/Sun, preserving the
+    time of day. Stepping forward from a Friday (or a weekend) lands on the
+    next Monday, so a daily-on-weekdays cadence never fires on a weekend."""
+    r = dt
+    added = 0
+    while added < n:
+        r = r + timedelta(days=1)
+        if r.weekday() < 5:  # Mon=0 .. Fri=4
+            added += 1
+    return r
+
+
 def _advance(sent_at: datetime, recurrence: dict[str, Any]) -> datetime | None:
     freq = recurrence.get("freq")
     interval = recurrence.get("interval", 1)
     interval = interval if isinstance(interval, int) and interval >= 1 else 1
     if freq == "daily":
         return sent_at + timedelta(days=interval)
+    if freq == "weekdays":
+        return _add_business_days(sent_at, interval)
     if freq == "weekly":
         return sent_at + timedelta(weeks=interval)
     if freq == "monthly":

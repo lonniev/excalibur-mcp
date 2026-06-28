@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 _CREATE_STATUS = {"draft", "scheduled", "sent"}
 _PATCH_STATUS = {"draft", "scheduled", "archived", "sent"}
 _PATCHABLE = {"doc", "publish_at", "recurrence", "cease_at", "status", "tweet_url"}
-_FREQ = {"daily", "weekly", "monthly"}
+_FREQ = {"daily", "weekdays", "weekly", "monthly"}
 
 
 # -- validation --------------------------------------------------------------

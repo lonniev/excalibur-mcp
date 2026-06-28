@@ -47,7 +47,7 @@ import {
 } from "../lib/editorDoc";
 
 type Kind = "post" | "snippet";
-type Freq = "none" | "daily" | "weekly" | "monthly";
+type Freq = "none" | "daily" | "weekdays" | "weekly" | "monthly";
 interface Sel { blockId: string; start: number; end: number; x: number; y: number }
 interface ActiveFlag { blockId: string; flagId: string }
 interface PillPos { blockId: string; flagId: string; x: number; y: number }
@@ -1644,6 +1644,7 @@ function ScheduleTab({
           <select value={freq} onChange={(e) => setFreq(e.target.value as Freq)} className={field}>
             <option value="none">Once, no repeat</option>
             <option value="daily">Daily</option>
+            <option value="weekdays">Business Days (Mon–Fri)</option>
             <option value="weekly">Weekly</option>
             <option value="monthly">Monthly</option>
           </select>
@@ -1678,11 +1679,20 @@ function ScheduleTab({
 }
 
 // Step a date forward one recurrence step (mirrors the BE scheduler's _advance:
-// daily/weekly add days; monthly adds months and clamps to the month's length).
+// daily/weekly add days; weekdays adds business days skipping Sat/Sun; monthly
+// adds months and clamps to the month's length).
 function advance(d: Date, freq: Freq, interval: number): Date {
   const n = Math.max(1, Number(interval) || 1);
   const r = new Date(d);
   if (freq === "daily") r.setDate(r.getDate() + n);
+  else if (freq === "weekdays") {
+    let added = 0;
+    while (added < n) {
+      r.setDate(r.getDate() + 1);
+      const dow = r.getDay(); // 0=Sun .. 6=Sat
+      if (dow !== 0 && dow !== 6) added += 1;
+    }
+  }
   else if (freq === "weekly") r.setDate(r.getDate() + 7 * n);
   else if (freq === "monthly") {
     const day = r.getDate();

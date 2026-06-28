@@ -56,6 +56,23 @@ def test_advance_units():
     assert scheduler._advance(d, {"freq": "hourly"}) is None
 
 
+def test_advance_weekdays_skips_weekend():
+    # 2026-06-05 is a Friday. One business day forward lands on Monday 06-08,
+    # never Saturday/Sunday; the time of day is preserved.
+    fri = datetime(2026, 6, 5, 9, 30, tzinfo=timezone.utc)
+    nxt = scheduler._advance(fri, {"freq": "weekdays", "interval": 1})
+    assert nxt.date().isoformat() == "2026-06-08" and nxt.hour == 9 and nxt.minute == 30
+    # interval = 5 business days == one calendar week forward (Fri -> Fri).
+    assert scheduler._advance(fri, {"freq": "weekdays", "interval": 5}).date().isoformat() == "2026-06-12"
+
+
+def test_advance_weekdays_never_lands_on_weekend():
+    cur = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)  # Monday
+    for _ in range(40):
+        cur = scheduler._advance(cur, {"freq": "weekdays", "interval": 1})
+        assert cur.weekday() < 5  # Mon=0 .. Fri=4, never Sat(5)/Sun(6)
+
+
 def test_next_state_no_recurrence_retires():
     d = datetime(2026, 6, 1, tzinfo=timezone.utc)
     assert scheduler._next_state(d, None, None) == ("sent", None)
