@@ -546,7 +546,7 @@ export interface CreatePostResult {
 }
 
 export interface Recurrence {
-  freq: "daily" | "weekly" | "monthly";
+  freq: "daily" | "weekdays" | "weekly" | "monthly";
   interval: number;
 }
 
