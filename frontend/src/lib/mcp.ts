@@ -229,9 +229,10 @@ const QUIET_TOOLS = new Set([
   "get_scheduler_log",
   // Background personalization hydration (the editor's @handle) — not noteworthy.
   "get_x_profile",
-  // Claim-check polling for a resolving dynamic block — the start call + the
-  // final result are logged; the intermediate polls are just noise.
-  "fetch_dynamic_block",
+  // NOTE: `fetch_dynamic_block` (the claim-check poll for a resolving dynamic
+  // block) is intentionally NOT quiet. Each poll's status (pending → done/error)
+  // must be visible in the debug panel — otherwise a resolve looks like it never
+  // calls back, and a silent poll failure (e.g. a proof bounce) is undiagnosable.
 ]);
 
 async function callTool<T = unknown>(
