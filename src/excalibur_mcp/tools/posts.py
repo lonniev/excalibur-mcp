@@ -30,8 +30,9 @@ logger = logging.getLogger(__name__)
 # a brand-new draft) and patch (Post It on an existing draft).
 _CREATE_STATUS = {"draft", "scheduled", "sent"}
 _PATCH_STATUS = {"draft", "scheduled", "archived", "sent"}
-_PATCHABLE = {"doc", "publish_at", "recurrence", "cease_at", "status", "tweet_url"}
+_PATCHABLE = {"doc", "publish_at", "recurrence", "cease_at", "status", "tweet_url", "title"}
 _FREQ = {"daily", "weekdays", "weekly", "monthly"}
+_TITLE_MAX = 200
 
 
 # -- validation --------------------------------------------------------------
@@ -41,6 +42,22 @@ def _require_uuid(post_id: str) -> str:
         return str(uuid.UUID(str(post_id)))
     except (ValueError, AttributeError, TypeError):
         raise ValueError("post_id must be a valid UUID")
+
+
+def _clean_title(title: Any) -> str | None:
+    """Normalize an optional post title: trimmed, length-bounded, blank -> None.
+
+    Title is optional — the list falls back to the first body line when absent."""
+    if title is None:
+        return None
+    if not isinstance(title, str):
+        raise ValueError("title must be a string")
+    cleaned = title.strip()
+    if not cleaned:
+        return None
+    if len(cleaned) > _TITLE_MAX:
+        raise ValueError(f"title exceeds {_TITLE_MAX} characters")
+    return cleaned
 
 
 def _validate_recurrence(recurrence: Any) -> None:
@@ -71,6 +88,7 @@ async def create(
     client_req_id: str,
     npub: str,
     tweet_url: str = "",
+    title: str = "",
 ) -> dict[str, Any]:
     if not isinstance(doc, dict) or not doc:
         raise ValueError("doc must be a non-empty object")
@@ -79,6 +97,7 @@ async def create(
     if status == "scheduled" and not publish_at:
         raise ValueError("a scheduled post requires publish_at")
     _validate_recurrence(recurrence)
+    clean_title = _clean_title(title)
 
     # Idempotency: a repeated client_req_id returns the prior post, no 2nd charge.
     if client_req_id:
@@ -97,6 +116,7 @@ async def create(
         publish_at=publish_at or None, recurrence=recurrence,
         cease_at=cease_at or None, status=status,
         client_req_id=client_req_id or None, tweet_url=tweet_url or None,
+        title=clean_title,
     )
     return {
         "post_id": row["post_id"],
@@ -116,6 +136,7 @@ async def get(runtime: Any, tool_id: str, *, post_id: str, npub: str) -> dict[st
                 "error": f"No post {pid} owned by this npub."}
     return {
         "post_id": row["post_id"], "npub": row["npub"], "status": row["status"],
+        "title": row.get("title") or "",
         "doc": row["doc"], "text_cache": row.get("text_cache"),
         "publish_at": str(row["publish_at"]) if row.get("publish_at") else None,
         "recurrence": row.get("recurrence"),
@@ -162,6 +183,9 @@ async def update(
         raise ValueError(f"status must be one of {sorted(_PATCH_STATUS)}")
     if "recurrence" in patch:
         _validate_recurrence(patch["recurrence"])
+    if "title" in patch:
+        # Normalize in place: trim, length-bound, blank -> NULL (clears the title).
+        patch = {**patch, "title": _clean_title(patch["title"])}
 
     # Idempotency: a repeated client_req_id (debounced autosave retry) is a no-op.
     if client_req_id:

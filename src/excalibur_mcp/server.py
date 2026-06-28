@@ -486,6 +486,7 @@ async def create_post(
     status: str = "draft",
     client_req_id: str = "",
     tweet_url: str = "",
+    title: str = "",
     npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "", proof: str = "",
 ) -> dict:
     """Store a new post (draft or scheduled). Returns its ``post_id``.
@@ -499,6 +500,8 @@ async def create_post(
         status: ``draft`` or ``scheduled``.
         client_req_id: Idempotency key — re-sending the same id returns the same
             post without a second charge.
+        title: Optional human label for the post; the list falls back to the
+            first body line when it is blank.
         npub: Your DPYC patron Nostr public key for credit attribution.
     """
     from excalibur_mcp.tools import posts as posts_tools
@@ -507,7 +510,7 @@ async def create_post(
         runtime, capability_uuid("create_post"),
         doc=doc, text_cache=text_cache, publish_at=publish_at,
         recurrence=recurrence, cease_at=cease_at, status=status,
-        client_req_id=client_req_id, npub=npub, tweet_url=tweet_url,
+        client_req_id=client_req_id, npub=npub, tweet_url=tweet_url, title=title,
     )
 
 

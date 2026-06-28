@@ -463,6 +463,9 @@ export async function getAccountStatement(days = 30): Promise<AccountStatementRe
 export interface PostSummary {
   post_id: string;
   status: string;
+  // Optional human label; the list falls back to `excerpt` (first body line)
+  // when it's blank.
+  title?: string;
   excerpt: string;
   publish_at: string | null;
   updated_at: string | null;
@@ -519,6 +522,7 @@ export interface PostRow {
   id?: string;
   npub?: string;
   status?: string;
+  title?: string;
   doc?: unknown;
   text_cache?: string;
   publish_at?: string | null;
@@ -559,6 +563,7 @@ export async function createPost(opts: {
   ceaseAt?: string;
   clientReqId?: string;
   tweetUrl?: string;
+  title?: string;
 }): Promise<CreatePostResult> {
   const args: Record<string, unknown> = {
     doc: opts.doc,
@@ -570,6 +575,7 @@ export async function createPost(opts: {
   if (opts.ceaseAt) args.cease_at = opts.ceaseAt;
   if (opts.clientReqId) args.client_req_id = opts.clientReqId;
   if (opts.tweetUrl) args.tweet_url = opts.tweetUrl;
+  if (opts.title) args.title = opts.title;
   return callTool<CreatePostResult>("create_post", args);
 }
 

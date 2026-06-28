@@ -31,10 +31,12 @@ async def test_create_post_serializes_json_and_scopes_npub():
             recurrence=None, cease_at=None, status="draft", client_req_id=None,
         )
     assert "INSERT INTO posts" in captured["query"]
+    # Column order: npub, status, title, doc, text_cache, publish_at, recurrence, …
     # doc is json-encoded; recurrence None stays None (not the string "null")
     assert captured["args"][0] == NPUB
-    assert json.loads(captured["args"][2]) == {"blocks": [1]}
-    assert captured["args"][5] is None  # recurrence
+    assert captured["args"][2] is None  # title omitted → NULL
+    assert json.loads(captured["args"][3]) == {"blocks": [1]}
+    assert captured["args"][6] is None  # recurrence
 
 
 @pytest.mark.asyncio

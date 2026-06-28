@@ -77,6 +77,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
 
   const [blocks, setBlocks] = useState<Block[]>([{ id: uid(), text: "", flags: [] }]);
   const [name, setName] = useState(""); // snippet-only
+  const [title, setTitle] = useState(""); // post-only — optional human label
   const [activeFlag, setActiveFlag] = useState<ActiveFlag | null>(null);
   const [preview, setPreview] = useState(false);
   const [tab, setTab] = useState<"flags" | "voice" | "schedule" | "snippets">("flags");
@@ -137,8 +138,8 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   // prefs, not post content, so they're excluded from the signature.
   const baseline = useRef<string | null>(null);
   const sigOf = useCallback(
-    (blks: Block[], pub: string, fq: Freq, iv: number, cz: string) =>
-      JSON.stringify([serializeBlocks(blks), pub, fq, iv, cz]),
+    (blks: Block[], pub: string, fq: Freq, iv: number, cz: string, ttl: string) =>
+      JSON.stringify([serializeBlocks(blks), pub, fq, iv, cz, ttl.trim()]),
     [],
   );
   // Full PostRow cache keyed by post_id. The adjacent posts are prefetched so a
@@ -154,13 +155,15 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     const fq: Freq = rec?.freq ?? "none";
     const iv = rec?.interval || 1;
     const cz = row.cease_at ? toLocalInput(row.cease_at) : "";
+    const ttl = row.title ?? "";
     setBlocks(loaded);
     setPublishAt(pub);
     setFreq(fq);
     setIntervalN(iv);
     setCeaseAt(cz);
+    setTitle(ttl);
     setTweetUrl(row.tweet_url ?? null);
-    baseline.current = sigOf(loaded, pub, fq, iv, cz);
+    baseline.current = sigOf(loaded, pub, fq, iv, cz, ttl);
   }, [sigOf]);
 
   // ── load ────────────────────────────────────────────────────────────────
@@ -168,7 +171,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     if (isNew) {
       const init: Block[] = [{ id: uid(), text: "", flags: [] }];
       setBlocks(init);
-      baseline.current = sigOf(init, "", "none", 1, "");
+      baseline.current = sigOf(init, "", "none", 1, "", "");
       setLoading(false);
       return;
     }
@@ -318,8 +321,8 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   // Has the live document diverged from what we loaded? (Drives the swipe guard.)
   const dirty = useMemo(
     () => baseline.current !== null
-      && sigOf(blocks, publishAt, freq, interval, ceaseAt) !== baseline.current,
-    [blocks, publishAt, freq, interval, ceaseAt, sigOf],
+      && sigOf(blocks, publishAt, freq, interval, ceaseAt, title) !== baseline.current,
+    [blocks, publishAt, freq, interval, ceaseAt, title, sigOf],
   );
   const curIndex = useMemo(
     () => (isNew ? -1 : neighbors.findIndex((p) => p.post_id === id)),
@@ -631,11 +634,13 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
         const r = await createPost({
           doc: docPayload, textCache: composed, status,
           publishAt: publishIso, recurrence, ceaseAt: ceaseIso, clientReqId: createReqId.current,
+          title: title.trim() || undefined,
         });
         if (r.error) setError(r.error);
         else if (r.post_id) nav(`/post/${r.post_id}`, { replace: true });
       } else {
-        const patch: Record<string, unknown> = { doc: docPayload, status };
+        // Always send title (even blank) so clearing it persists as NULL.
+        const patch: Record<string, unknown> = { doc: docPayload, status, title: title.trim() };
         if (publishIso) patch.publish_at = publishIso;
         if (recurrence) patch.recurrence = recurrence;
         if (ceaseIso) patch.cease_at = ceaseIso;
@@ -643,7 +648,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
         if (r.error) setError(r.error);
         else {
           setHint(scheduled ? "Scheduled." : "Saved.");
-          baseline.current = sigOf(blocks, publishAt, freq, interval, ceaseAt);
+          baseline.current = sigOf(blocks, publishAt, freq, interval, ceaseAt, title);
           postCache.current.delete(id!); // saved content differs from any cached row
         }
       }
@@ -753,19 +758,19 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
       if (isNew) {
         const c = await createPost({
           doc: docPayload, textCache: finalText, status: "sent",
-          clientReqId: createReqId.current, tweetUrl,
+          clientReqId: createReqId.current, tweetUrl, title: title.trim() || undefined,
         });
         if (!c.post_id) setHint("Posted to X (couldn't save a copy).");
       } else {
         await updatePost({
-          postId: id!, patch: { doc: docPayload, status: "sent", tweet_url: tweetUrl },
+          postId: id!, patch: { doc: docPayload, status: "sent", tweet_url: tweetUrl, title: title.trim() },
           textCache: finalText, clientReqId: uid(),
         });
       }
       setHint("Posted to X.");
       setTweetUrl(tweetUrl);
       setPostedUrl(tweetUrl);
-      baseline.current = sigOf(blocks, publishAt, freq, interval, ceaseAt);
+      baseline.current = sigOf(blocks, publishAt, freq, interval, ceaseAt, title);
       if (id) postCache.current.delete(id); // sent status differs from any cached row
     } catch (e) {
       setError((e as Error).message);
@@ -942,6 +947,18 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="My CTA Footer"
+                  className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-amber-400"
+                />
+              </div>
+            )}
+            {!isSnippet && !preview && (
+              <div className="mb-3">
+                <label className="mb-1.5 block font-mono text-[11px] uppercase tracking-widest text-zinc-500">Title <span className="text-zinc-600">(optional)</span></label>
+                <input
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  maxLength={200}
+                  placeholder="Untitled — the list shows the first line"
                   className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-amber-400"
                 />
               </div>

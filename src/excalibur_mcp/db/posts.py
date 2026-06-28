@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 # Columns returned for a full single-post read.
 _FULL_COLS = (
-    "id::text AS post_id, npub, status, doc, text_cache, "
+    "id::text AS post_id, npub, status, title, doc, text_cache, "
     "publish_at, recurrence, cease_at, last_sent_at, tweet_url, "
     "last_attempt_at, last_attempt_reason, "
     "created_at, updated_at"
@@ -52,6 +52,7 @@ _DATE_FIELDS: dict[str, str] = {
 # input only selects a key; the column expression never comes from the caller,
 # so an unknown patch key can't reach the query as raw SQL.
 _PATCHABLE: dict[str, str] = {
+    "title": "",
     "doc": "::jsonb",
     "publish_at": "::timestamptz",
     "recurrence": "::jsonb",
@@ -72,6 +73,7 @@ async def create_post(
     status: str,
     client_req_id: str | None,
     tweet_url: str | None = None,
+    title: str | None = None,
 ) -> dict[str, Any]:
     """Insert a post; return ``{post_id, status, created_at}``.
 
@@ -81,14 +83,15 @@ async def create_post(
     row = await fetchrow(
         """
         INSERT INTO posts
-            (npub, status, doc, text_cache, publish_at, recurrence, cease_at,
+            (npub, status, title, doc, text_cache, publish_at, recurrence, cease_at,
              client_req_id, tweet_url, last_sent_at)
-        VALUES ($1, $2, $3::jsonb, $4, $5::timestamptz, $6::jsonb, $7::timestamptz,
-                $8, $9, CASE WHEN $2 = 'sent' THEN NOW() ELSE NULL END)
+        VALUES ($1, $2, $3, $4::jsonb, $5, $6::timestamptz, $7::jsonb, $8::timestamptz,
+                $9, $10, CASE WHEN $2 = 'sent' THEN NOW() ELSE NULL END)
         RETURNING id::text AS post_id, status, created_at
         """,
         npub,
         status,
+        title or None,
         json.dumps(doc),
         text_cache,
         publish_at,
@@ -195,7 +198,7 @@ async def list_posts(
 
     rows = await fetch(
         f"""
-        SELECT id::text AS post_id, status, left(text_cache, 120) AS excerpt,
+        SELECT id::text AS post_id, status, title, left(text_cache, 120) AS excerpt,
                publish_at, updated_at, created_at, tweet_url, last_sent_at,
                last_attempt_at, last_attempt_reason
         FROM posts
@@ -210,6 +213,7 @@ async def list_posts(
         {
             "post_id": r["post_id"],
             "status": r["status"],
+            "title": r.get("title") or "",
             "excerpt": r.get("excerpt") or "",
             "publish_at": str(r["publish_at"]) if r.get("publish_at") else None,
             "updated_at": str(r.get("updated_at") or ""),
