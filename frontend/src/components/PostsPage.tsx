@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
-  deletePost, getPost, listPosts, postTweet, updatePost,
+  createPost, deletePost, getPost, listPosts, postTweet, updatePost,
   type PostSummary, type SortDir,
 } from "../lib/mcp";
 import { uid } from "../lib/editorDoc";
@@ -74,6 +74,7 @@ export default function PostsPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [reposting, setReposting] = useState<string | null>(null);
   const [resuming, setResuming] = useState<string | null>(null);
+  const [duplicating, setDuplicating] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ url: string; text: string } | null>(null);
 
   const refresh = useCallback(async () => {
@@ -164,6 +165,33 @@ export default function PostsPage() {
       setError((err as Error).message);
     } finally {
       setResuming(null);
+    }
+  }
+
+  // Duplicate a post: copy its content (doc + cached text) into a fresh draft
+  // and open it in the editor. The copy carries NO publish_at/recurrence/cease_at
+  // so it can never double-fire alongside the original — the user sets a new
+  // schedule on the copy. Works from any source status (draft, scheduled, sent…).
+  async function handleDuplicate(e: React.MouseEvent, id: string) {
+    e.stopPropagation();
+    e.preventDefault();
+    setError(null);
+    setNotice(null);
+    setDuplicating(id);
+    try {
+      const row = await getPost(id);
+      const r = await createPost({
+        doc: row.doc,
+        textCache: row.text_cache ?? "",
+        status: "draft",
+        clientReqId: uid(),
+      });
+      if (r.error || !r.post_id) { setError(r.error || "Duplicate failed."); return; }
+      nav(`/post/${r.post_id}`);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setDuplicating(null);
     }
   }
 
@@ -321,6 +349,9 @@ export default function PostsPage() {
                   </td>
                   <td className="px-3 py-2.5 align-top text-right whitespace-nowrap">
                     <span className="inline-flex gap-2 text-xs text-stone-400 dark:text-zinc-500">
+                      <span role="button" onClick={(e) => handleDuplicate(e, p.post_id)} className={action} title="Duplicate: open an editable draft copy of this post (unscheduled)">
+                        {duplicating === p.post_id ? "…" : "duplicate"}
+                      </span>
                       {p.status === "paused" && (
                         <span role="button" onClick={(e) => handleResume(e, p.post_id)} className="hover:text-amber-600 dark:hover:text-amber-400 cursor-pointer" title="Resume: reschedule this post so the next scheduler tick posts it">
                           {resuming === p.post_id ? "…" : "resume"}
