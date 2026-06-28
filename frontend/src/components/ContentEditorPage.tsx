@@ -6,6 +6,7 @@ import {
   Sparkles, Flag, GripVertical, Pencil, Trash2, Plus, Calendar, Repeat,
   Octagon, Check, ChevronUp, ChevronDown, Eye, EyeOff,
   Wand2, Loader2, Swords, Save, Bold, Italic, Code, Smile, Star, Minus,
+  CopyPlus,
 } from "lucide-react";
 import { useSession } from "../App";
 import Avatar from "./Avatar";
@@ -682,6 +683,47 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     }
   }
 
+  // "Save as…" — fork the current body into a NEW item of the same kind,
+  // leaving the original untouched. A post copy is a fresh draft (title
+  // optional); a snippet copy needs a name. Lands in the new item's editor.
+  async function saveAsCopy() {
+    if (!composed.trim()) { setError("Write something first."); return; }
+    const docPayload = serializeBlocks(blocks);
+    if (isSnippet) {
+      const newName = window.prompt("Save as a new snippet named:", `${name.trim() || "Snippet"} copy`);
+      if (newName === null) return; // cancelled
+      if (!newName.trim()) { setError("Name your snippet copy."); return; }
+      setSaving(true);
+      setError(null);
+      try {
+        const row = await saveSnippet({ name: newName.trim(), text: composed, doc: docPayload });
+        if (!row) { setError("Couldn't save the copy."); return; }
+        nav(`/snippet/${row.id}`);
+      } catch (e) {
+        setError((e as Error).message);
+      } finally {
+        setSaving(false);
+      }
+    } else {
+      const newTitle = window.prompt("Save as a new draft post titled:", `${title.trim() || "Untitled"} copy`);
+      if (newTitle === null) return; // cancelled
+      setSaving(true);
+      setError(null);
+      try {
+        const r = await createPost({
+          doc: docPayload, textCache: composed, status: "draft",
+          title: newTitle.trim() || undefined, clientReqId: uid(),
+        });
+        if (r.error) { setError(r.error); return; }
+        if (r.post_id) nav(`/post/${r.post_id}`);
+      } catch (e) {
+        setError((e as Error).message);
+      } finally {
+        setSaving(false);
+      }
+    }
+  }
+
   async function handleDiscard() {
     if (isSnippet) {
       if (isNew) { nav(listPath); return; }
@@ -905,6 +947,14 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
               </button>
             </>
           )}
+          <button
+            onClick={() => void saveAsCopy()}
+            disabled={saving}
+            title={isSnippet ? "Save the current body as a new snippet" : "Save the current body as a new draft post"}
+            className="flex items-center gap-1.5 rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:border-zinc-500 hover:text-zinc-100 disabled:opacity-40 transition-colors"
+          >
+            <CopyPlus className="h-4 w-4" /> Save as…
+          </button>
           <button
             onClick={() => { setPreview((p) => !p); setSel(null); setClearPill(null); }}
             className="flex items-center gap-1.5 rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:border-zinc-500 hover:text-zinc-100 transition-colors"
