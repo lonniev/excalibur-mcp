@@ -362,7 +362,7 @@ def _x_api_error_to_response(exc: Any) -> dict[str, Any]:
 @runtime.paid_tool(capability_uuid("post_tweet"), catch_errors=True)
 async def post_tweet(
     text: str,
-    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "", proof: str = "",
+    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "", dpop_token: str = "",
 ) -> dict:
     """Post a text tweet with markdown formatting converted to Unicode rich text.
 
@@ -400,7 +400,7 @@ async def post_tweet(
 @runtime.paid_tool(capability_uuid("get_x_profile"), catch_errors=True)
 async def get_x_profile(
     npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
-    proof: str = "",
+    dpop_token: str = "",
 ) -> dict:
     """Fetch the connected X account's handle and name for this patron (free).
 
@@ -426,7 +426,7 @@ async def post_tweet_image(
     text: str,
     image_url: str = "",
     banner_svg: str = "",
-    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "", proof: str = "",
+    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "", dpop_token: str = "",
 ) -> dict:
     """Post a tweet with a hero banner image to X/Twitter.
 
@@ -496,7 +496,7 @@ async def create_post(
     client_req_id: str = "",
     tweet_url: str = "",
     title: str = "",
-    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "", proof: str = "",
+    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "", dpop_token: str = "",
 ) -> dict:
     """Store a new post (draft or scheduled). Returns its ``post_id``.
 
@@ -527,7 +527,7 @@ async def create_post(
 @runtime.paid_tool(capability_uuid("get_post"), catch_errors=True)
 async def get_post(
     post_id: str,
-    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "", proof: str = "",
+    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "", dpop_token: str = "",
 ) -> dict:
     """Read one stored post by id (owner-scoped)."""
     from excalibur_mcp.tools import posts as posts_tools
@@ -547,7 +547,7 @@ async def list_posts(
     date_from: str = "",
     date_to: str = "",
     date_field: str = "created",
-    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "", proof: str = "",
+    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "", dpop_token: str = "",
 ) -> dict:
     """List your stored posts, server-side sorted, filtered, and offset-paginated.
 
@@ -575,7 +575,7 @@ async def update_post(
     patch: dict,
     text_cache: str = "",
     client_req_id: str = "",
-    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "", proof: str = "",
+    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "", dpop_token: str = "",
 ) -> dict:
     """Patch a stored post. ``patch`` may set ``doc, publish_at, recurrence,
     cease_at, status`` (omit a field to leave it unchanged). ``text_cache`` is
@@ -595,7 +595,7 @@ async def update_post(
 async def delete_post(
     post_id: str,
     hard: bool = False,
-    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "", proof: str = "",
+    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "", dpop_token: str = "",
 ) -> dict:
     """Delete a stored post. Default is a soft delete (``status='archived'``);
     pass ``hard=True`` to remove the row permanently."""
@@ -624,7 +624,7 @@ async def list_snippets(
     date_to: str = "",
     date_field: str = "created",
     npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
-    proof: str = "",
+    dpop_token: str = "",
 ) -> dict:
     """List your saved post snippets, server-side sorted, filtered, and
     offset-paginated. ``sort_col`` is one of ``favorite|created|updated|name``
@@ -647,7 +647,7 @@ async def list_snippets(
 async def get_snippet(
     snippet_id: str,
     npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
-    proof: str = "",
+    dpop_token: str = "",
 ) -> dict:
     """Read one of your saved snippets by id (full row incl. ``doc`` block
     document). Free and owner-scoped. Returns ``{"success": true, "snippet": …}``
@@ -666,7 +666,7 @@ async def save_snippet(
     favorite: bool | None = None,
     doc: dict | None = None,
     npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
-    proof: str = "",
+    dpop_token: str = "",
 ) -> dict:
     """Save a reusable post snippet (opening/footer/CTA). Omit ``snippet_id`` to
     create a new one; pass it to update an existing snippet in place (name/text/
@@ -688,7 +688,7 @@ async def save_snippet(
 async def delete_snippet(
     snippet_id: str,
     npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
-    proof: str = "",
+    dpop_token: str = "",
 ) -> dict:
     """Delete one of your saved snippets by id. Free and owner-scoped."""
     from excalibur_mcp.tools import snippets as snippets_tools
@@ -705,7 +705,7 @@ async def delete_snippet(
 @runtime.paid_tool(capability_uuid("get_voice"), catch_errors=True)
 async def get_voice(
     npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
-    proof: str = "",
+    dpop_token: str = "",
 ) -> dict:
     """Read your saved writing Voice — a profile blurb plus a list of "banned
     construction" chips (``{text, on}``) the editor passes to
@@ -724,7 +724,7 @@ async def save_voice(
     profile: str = "",
     bans: list | None = None,
     npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
-    proof: str = "",
+    dpop_token: str = "",
 ) -> dict:
     """Save your writing Voice (replaces the previous one — it is a per-npub
     singleton). ``profile`` is free text. ``bans`` is a list of ``{text, on}``
@@ -751,7 +751,7 @@ async def refine_post_region(
     voice: str = "",
     bans: str = "",
     npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "",
-    proof: str = "",
+    dpop_token: str = "",
 ) -> dict:
     """Refine a flagged region of a post with Claude — server-side.
 
@@ -852,7 +852,7 @@ async def resolve_dynamic_block(
     allowed_domains: str = "",
     max_fetches: int = 5,
     npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "",
-    proof: str = "",
+    dpop_token: str = "",
 ) -> dict:
     """Start resolving a dynamic post block with Claude — returns a CLAIM CHECK.
 
@@ -930,7 +930,7 @@ async def resolve_dynamic_block(
 async def fetch_dynamic_block(
     claim_check: str,
     npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
-    proof: str = "",
+    dpop_token: str = "",
 ) -> dict:
     """Redeem a ``resolve_dynamic_block`` claim check (free, proof-gated).
 
@@ -1132,7 +1132,7 @@ runtime.register_job_spec(
 @runtime.paid_tool(capability_uuid("process_scheduled_posts"), catch_errors=True)
 async def process_scheduled_posts(
     npub: Annotated[str, Field(description="The OPERATOR's npub (npub1...); this tool is operator-only.")] = "",
-    proof: str = "",
+    dpop_token: str = "",
 ) -> dict:
     """Publish every due scheduled post (operator-only).
 
@@ -1151,7 +1151,7 @@ async def process_scheduled_posts(
 @runtime.paid_tool(capability_uuid("get_scheduler_log"), catch_errors=True)
 async def get_scheduler_log(
     npub: Annotated[str, Field(description="Your npub (npub1...).")] = "",
-    proof: str = "",
+    dpop_token: str = "",
     limit: Annotated[int, Field(description="How many recent runs to return (1..100).")] = 25,
 ) -> dict:
     """Read recent scheduler-tick outcomes.

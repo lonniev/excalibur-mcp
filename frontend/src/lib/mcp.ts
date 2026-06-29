@@ -248,7 +248,7 @@ async function callTool<T = unknown>(
   const c = await getClient();
   const merged: Record<string, unknown> = BOOTSTRAP_TOOLS.has(toolName)
     ? { ...args }
-    : { npub: getStoredNpub(), proof: getCachedProof(toolName), ...args };
+    : { npub: getStoredNpub(), dpop_token: getCachedProof(toolName), ...args };
 
   let result: ToolResult;
   try {
@@ -338,7 +338,7 @@ export interface NpubProofResult {
   verified?: boolean; // legacy field; current wheel uses `success`
   status?: string;
   message?: string;
-  proof_token?: string;
+  dpop_token?: string; // wheel 0.57.0+ (was proof_token)
   popped_dms?: number;
   expires_in_seconds?: number;
   expires_at?: string;
@@ -354,12 +354,12 @@ export async function requestNpubProof(patronNpub: string): Promise<NpubProofRes
 
 /// Step 2 of DM login. Destructively drains DMs looking for the signed
 /// reply to step 1. Call ONLY after the user has actually replied — do not
-/// poll or speculatively retry (feedback_human_in_loop_courier). `poison`
-/// is the proof_token from step 1.
-export async function receiveNpubProof(patronNpub: string, poison: string): Promise<NpubProofResult> {
+/// poll or speculatively retry (feedback_human_in_loop_courier). `dpopToken`
+/// is the dpop_token from step 1 (wheel 0.57.0+; was the poison/proof_token).
+export async function receiveNpubProof(patronNpub: string, dpopToken: string): Promise<NpubProofResult> {
   return callTool<NpubProofResult>("receive_npub_proof", {
     patron_npub: patronNpub,
-    poison,
+    dpop_token: dpopToken,
   });
 }
 

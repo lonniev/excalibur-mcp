@@ -99,12 +99,12 @@ export default function NpubGate({
         setError(r.error);
         return;
       }
-      if (!r.proof_token) {
+      if (!r.dpop_token) {
         setError("The service did not return a session phrase. Try again.");
         return;
       }
       setStoredNpub(trimmed);
-      setPendingProof(r.proof_token);
+      setPendingProof(r.dpop_token);
       setStage("awaiting");
     } catch (e) {
       setError(`Could not send the proof DM: ${(e as Error).message}`);
@@ -126,7 +126,7 @@ export default function NpubGate({
         setStage("awaiting");
         return;
       }
-      const token = r.proof_token || pendingProof;
+      const token = r.dpop_token || pendingProof;
       if (!token) {
         setError("No session phrase came back. Resend the DM and try again.");
         setStage("awaiting");
