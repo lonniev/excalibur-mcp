@@ -5,6 +5,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.24.1] — 2026-06-29
+
+### Fixed — dynamic-block resolution now actually runs on detached compute
+
+- Bump `tollbooth-dpyc[nostr,prefect]==0.55.2`, which fixes `PrefectClosureExecutor`
+  never authenticating to the operator's standalone Prefect account. Before this,
+  `run_deployment` failed on the FastMCP/Horizon front (which sets its own
+  `PREFECT_*` env) and the wheel silently fell back to the in-process runner — so
+  resolve jobs ran on the recycling front after all (quick ones completed before a
+  recycle and masked it). With 0.55.2 the dispatch reaches the detached pool.
+
 ## [0.24.0] — 2026-06-29
 
 ### Added — dynamic-block resolution runs on durable detached compute
