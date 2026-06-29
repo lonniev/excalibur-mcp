@@ -5,6 +5,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.25.1] — 2026-06-29
+
+### Changed — editor surfaces the dynamic-block failure hint
+
+- When a dynamic block can't resolve, the block already falls back to its
+  fallback ("oops") text so the post stays publishable; now the editor's error
+  line also appends the situation's `next_steps` (e.g. "Please try again later")
+  and the `resolveDynamicBlock` wrapper passes the structured `error_code` /
+  `transient` through, so future UX can branch on them. Frontend-only.
+
 ## [0.25.0] — 2026-06-29
 
 ### Added — dynamic-block failures become informative UX, not blank errors

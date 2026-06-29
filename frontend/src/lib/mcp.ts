@@ -669,6 +669,8 @@ export interface ResolveDynamicResult {
   error?: string;
   error_code?: string;
   message?: string;
+  next_steps?: string;
+  transient?: boolean;
 }
 
 // Claim-check shapes (mirrors optionality-mcp's async-job pattern). The start
@@ -686,8 +688,10 @@ interface ClaimFetch {
   result?: { text?: string };
   poll_after_seconds?: number;
   error?: string;
+  error_code?: string;
   message?: string;
   next_steps?: string;
+  transient?: boolean;
 }
 
 const RESOLVE_MAX_WAIT_MS = 300_000; // give a heavy paginate+fetch+search resolve room
@@ -729,7 +733,20 @@ export async function resolveDynamicBlock(args: {
     await new Promise((r) => setTimeout(r, waitMs));
     const f = await callTool<ClaimFetch>("fetch_dynamic_block", { claim_check: claim });
     if (f.status === "done") return { success: true, text: f.result?.text ?? "" };
-    if (f.status === "error") return { success: false, message: f.message || f.error || "The resolve failed — your fare was refunded." };
+    if (f.status === "error") {
+      // Surface the curated situation: the message already explains the cause
+      // ("…temporarily unavailable. No fare was charged."); append next_steps so
+      // the author gets the actionable hint, and pass the structured fields
+      // through (error_code/transient) for any UX that wants to branch on them.
+      const base = f.error || f.message || "The resolve failed — your fare was refunded.";
+      return {
+        success: false,
+        error_code: f.error_code,
+        message: f.next_steps ? `${base} ${f.next_steps}` : base,
+        next_steps: f.next_steps,
+        transient: f.transient,
+      };
+    }
     if (f.status === "expired") return { success: false, message: f.next_steps || f.message || "The resolve claim expired — try again." };
     if (Date.now() > deadline) return { success: false, message: "Timed out waiting for the dynamic block to resolve." };
     waitMs = Math.min(Math.round(waitMs * POLL_FACTOR), POLL_CEILING_MS);
