@@ -541,7 +541,7 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.1.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.3.0" },
-    { name = "tollbooth-dpyc", extras = ["nostr"], specifier = "==0.54.0" },
+    { name = "tollbooth-dpyc", extras = ["nostr"], specifier = "==0.55.0" },
 ]
 provides-extras = ["dev"]
 
@@ -1582,16 +1582,16 @@ sdist = { url = "https://files.pythonhosted.org/packages/bb/89/6df40b0c5fd9a1c30
 
 [[package]]
 name = "tollbooth-dpyc"
-version = "0.54.0"
+version = "0.55.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cryptography" },
     { name = "httpx" },
     { name = "pynostr" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/bc/dc/3605d635e5ef3ce8c125c28accd8c61c7ebb8b16852861a07ea5a5c499b2/tollbooth_dpyc-0.54.0.tar.gz", hash = "sha256:93efcbb7ca96ec6fea5a77561372720919679d6f289a3afc100a8301ae1b0b7d", size = 2458227, upload-time = "2026-06-29T02:53:22.465Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/44/9c/e696c732fb9818ad5f227e8bc8cbd66906c7813aa4228e7c038d8a0117f4/tollbooth_dpyc-0.55.0.tar.gz", hash = "sha256:625ba2c4d70fe12d32928755268cd993ecf32571e9f9a934a43dad84693e61c2", size = 2533535, upload-time = "2026-06-29T12:54:46.036Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/41/6d/a5b0cc202610c0cc48bd4cf56ac315fd9323b56e71a8f9d65c46a1109906/tollbooth_dpyc-0.54.0-py3-none-any.whl", hash = "sha256:aed96d7f32028bfff8b69c677a66f8028ccddd58306888a045f4b52768f66f36", size = 339993, upload-time = "2026-06-29T02:53:20.518Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/b3/b5deb1adb17d62fd2ce8f7f51880ce085836037b2d299d1fa90fb946f246/tollbooth_dpyc-0.55.0-py3-none-any.whl", hash = "sha256:b3c128f34fa3caa4f418b2d7b059e5b2eb1624a0104c2e4e7c61255d9fba2d30", size = 341750, upload-time = "2026-06-29T12:54:44.402Z" },
 ]
 
 [package.optional-dependencies]
