@@ -5,6 +5,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.26.0] — 2026-06-29
+
+### Changed — adopt the wheel's `dpop_token` rename (lockstep with tollbooth-dpyc 0.57.0)
+
+- Bump `tollbooth-dpyc[nostr,prefect]==0.57.0`, which renames the Secure Courier
+  possession token to `dpop_token` everywhere it is code-/wire-visible — retiring
+  `proof` (paid-call param), `proof_token` (request_npub_proof return), and
+  `poison` (receive param). This is a lockstep change: a consumer on 0.57.0 still
+  declaring `proof` fails every paid call, so eXcalibur moves in the same release.
+- Backend: every domain tool's `proof: str = ""` parameter → `dpop_token: str = ""`
+  (the wheel's `paid_tool` decorator now reads `dpop_token`).
+- Frontend: the paid-call envelope sends `dpop_token` (was `proof`); the DM-login
+  flow reads `dpop_token` from `request_npub_proof` and sends `dpop_token` to
+  `receive_npub_proof` (were `proof_token` / `poison`). The retrieval/wait protocol
+  is unchanged — symbol/wire-field rename only. The inline kind-27235 signing
+  tactic keeps "proof" naming (it is a genuine proof).
+
 ## [0.25.1] — 2026-06-29
 
 ### Changed — editor surfaces the dynamic-block failure hint
