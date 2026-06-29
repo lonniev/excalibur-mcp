@@ -971,6 +971,63 @@ async def _resolve_dynamic_runner(
 runtime.register_job_runner("resolve_dynamic_block", _resolve_dynamic_runner)
 
 
+async def _resolve_build_closure(
+    npub: str = "",
+    prompt: str = "",
+    context: str = "",
+    voice: str = "",
+    bans: list | None = None,
+    allowed_domains: list | None = None,
+    max_fetches: int = 5,
+    **_,
+) -> dict:
+    """Build the sealed-closure job spec for the durable long-runner path.
+
+    Runs in-process with full vault access: loads the operator's Anthropic key
+    and bakes a fully-formed Anthropic request into a declarative ``http_request``
+    spec. The wheel seals this (AES-256-GCM) before it leaves the process, so the
+    key reaches detached compute only as ciphertext. Uses the same
+    ``build_anthropic_request`` the in-process runner does, so both paths issue an
+    identical call.
+    """
+    creds = await runtime.load_credentials(["anthropic_api_key"])
+    key = creds.get("anthropic_api_key")
+    if not key:
+        raise RuntimeError("operator anthropic_api_key not configured")
+
+    from excalibur_mcp.resolve import build_anthropic_request
+
+    return {
+        "op": "http_request",
+        "request": build_anthropic_request(
+            api_key=key, prompt=prompt, context=context, voice=voice,
+            bans=bans or [], allowed_domains=allowed_domains or [],
+            max_fetches=max_fetches,
+        ),
+    }
+
+
+def _resolve_shape_result(raw: dict | None) -> dict:
+    """Shape the detached flow's raw result into the stored job result.
+
+    ``raw`` is the generic flow's return — ``{"status": 200, "json": <response>}``.
+    Extract the X-ready fragment with the same ``extract_resolved_text`` the
+    in-process path uses; it raises on empty/unusable output, which the wheel
+    turns into a refund (symmetric with the in-process runner).
+    """
+    from excalibur_mcp.resolve import extract_resolved_text
+
+    return {"text": extract_resolved_text((raw or {}).get("json", {}))}
+
+
+# Register the closure (detached) path for the same kind. The wheel auto-installs
+# a detached executor when the operator has couriered the dpyc-longrunner creds;
+# until then the in-process runner above serves. No set_async_executor() here.
+runtime.register_job_spec(
+    "resolve_dynamic_block", _resolve_build_closure, _resolve_shape_result
+)
+
+
 # ---------------------------------------------------------------------------
 # Scheduler entrypoint — operator-only (restricted). Triggered by the
 # Cloudflare Worker cron, which holds the operator's long-lived proof_token.
