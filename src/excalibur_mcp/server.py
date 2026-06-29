@@ -14,6 +14,7 @@ from typing import Annotated, Any
 
 from fastmcp import FastMCP
 from pydantic import Field
+from tollbooth import AsyncJobSituation
 from tollbooth.credential_templates import (
     LONGRUNNER_CREDENTIAL_FIELDS,
     CredentialTemplate,
@@ -943,6 +944,69 @@ async def fetch_dynamic_block(
     return await runtime.fetch_async_job(claim_check, npub)
 
 
+def _anthropic_error_message(body: object) -> str:
+    """Pull Anthropic's ``error.message`` from a response body, if present."""
+    if isinstance(body, dict):
+        err = body.get("error")
+        if isinstance(err, dict):
+            return str(err.get("message") or "")
+    return ""
+
+
+def _resolve_failure_situation(status: int | None, upstream_msg: str) -> AsyncJobSituation:
+    """Curate a non-2xx Anthropic response into a frontend-facing situation.
+
+    The raw status + body stay operator-side (Prefect run logs / wheel logs).
+    The patron's frontend gets only a machine ``error_code`` (to branch UX), safe
+    human copy, and a ``transient`` flag. Anthropic reports billing exhaustion as
+    a 400 with a "credit balance too low" message — not a 402 — so we match on the
+    message; genuine 402s are handled by the SDK's upstream-payment path elsewhere.
+    """
+    low = (upstream_msg or "").lower()
+    if status in (400, 402) and any(
+        s in low for s in ("credit balance", "purchase credits", "plans & billing", "billing")
+    ):
+        return AsyncJobSituation(
+            error_code="operator_llm_unfunded",
+            message="This service's AI provider is temporarily unavailable, so the "
+                    "dynamic block couldn't be resolved. No fare was charged.",
+            next_steps="Please try again later.",
+            transient=False,
+        )
+    if status in (401, 403):
+        return AsyncJobSituation(
+            error_code="operator_llm_auth",
+            message="This service's AI access is misconfigured, so the dynamic block "
+                    "couldn't be resolved. No fare was charged.",
+            next_steps="Please try again later.",
+            transient=False,
+        )
+    if status == 429:
+        return AsyncJobSituation(
+            error_code="upstream_rate_limited",
+            message="The AI provider is busy right now, so the dynamic block couldn't "
+                    "be resolved. No fare was charged.",
+            next_steps="Try again in a minute.",
+            transient=True,
+        )
+    return AsyncJobSituation(
+        error_code="dynamic_block_unresolved",
+        message="The dynamic block couldn't be resolved right now. No fare was charged.",
+        next_steps="Please try again.",
+        transient=True,
+    )
+
+
+def _empty_result_situation() -> AsyncJobSituation:
+    """A 2xx that yielded no usable text — the prompt likely needs adjusting."""
+    return AsyncJobSituation(
+        error_code="dynamic_block_empty",
+        message="The AI returned no usable text for this block. No fare was charged.",
+        next_steps="Try rewording the block's prompt, then resolve again.",
+        transient=True,
+    )
+
+
 async def _resolve_dynamic_runner(
     npub: str = "",
     prompt: str = "",
@@ -953,14 +1017,17 @@ async def _resolve_dynamic_runner(
     max_fetches: int = 5,
     **_,
 ) -> dict:
-    """Background job runner for ``resolve_dynamic_block``.
+    """Background job runner for ``resolve_dynamic_block`` (in-process path).
 
     Loads the operator's vaulted Anthropic key (never stored in the job params)
     and resolves the fragment via the shared ``resolve_block`` core — the same
-    code the scheduler calls directly. Raises on failure so the wheel marks the
-    job errored and refunds the start fare. Registered at import so any fresh
+    code the scheduler calls directly. On failure it raises an ``AsyncJobSituation``
+    so the wheel refunds AND the frontend gets a curated reason (mirrors the
+    detached path's ``_resolve_shape_result``). Registered at import so any fresh
     container can resume an orphaned job when it's next polled.
     """
+    import httpx
+
     creds = await runtime.load_credentials(["anthropic_api_key"])
     key = creds.get("anthropic_api_key")
     if not key:
@@ -968,11 +1035,21 @@ async def _resolve_dynamic_runner(
 
     from excalibur_mcp.resolve import clamp_fetches, resolve_block
 
-    text = await resolve_block(
-        api_key=key, prompt=prompt, context=context, voice=voice,
-        bans=bans or [], allowed_domains=allowed_domains or [],
-        max_fetches=clamp_fetches(max_fetches),
-    )
+    try:
+        text = await resolve_block(
+            api_key=key, prompt=prompt, context=context, voice=voice,
+            bans=bans or [], allowed_domains=allowed_domains or [],
+            max_fetches=clamp_fetches(max_fetches),
+        )
+    except httpx.HTTPStatusError as exc:
+        msg = ""
+        try:
+            msg = _anthropic_error_message(exc.response.json())
+        except Exception:
+            pass
+        raise _resolve_failure_situation(exc.response.status_code, msg) from exc
+    except ValueError as exc:  # resolve_block raises on empty/unusable output
+        raise _empty_result_situation() from exc
     return {"text": text}
 
 
@@ -1018,14 +1095,23 @@ async def _resolve_build_closure(
 def _resolve_shape_result(raw: dict | None) -> dict:
     """Shape the detached flow's raw result into the stored job result.
 
-    ``raw`` is the generic flow's return — ``{"status": 200, "json": <response>}``.
-    Extract the X-ready fragment with the same ``extract_resolved_text`` the
-    in-process path uses; it raises on empty/unusable output, which the wheel
-    turns into a refund (symmetric with the in-process runner).
+    ``raw`` is the generic flow's return for ANY status —
+    ``{"status": <code>, "json"|"text": <body>}``. On 2xx, extract the X-ready
+    fragment. On non-2xx (the flow is a faithful messenger and no longer raises),
+    curate the upstream error into a frontend-facing ``AsyncJobSituation`` — the
+    raw status/body stay operator-side (Prefect logs); the patron sees only the
+    machine ``error_code`` + safe copy. Symmetric with the in-process runner.
     """
     from excalibur_mcp.resolve import extract_resolved_text
 
-    return {"text": extract_resolved_text((raw or {}).get("json", {}))}
+    raw = raw or {}
+    status = raw.get("status")
+    if status == 200:
+        try:
+            return {"text": extract_resolved_text(raw.get("json", {}))}
+        except ValueError as exc:
+            raise _empty_result_situation() from exc
+    raise _resolve_failure_situation(status, _anthropic_error_message(raw.get("json")))
 
 
 # Register the closure (detached) path for the same kind. The wheel auto-installs

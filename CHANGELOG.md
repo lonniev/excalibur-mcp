@@ -5,6 +5,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.25.0] — 2026-06-29
+
+### Added — dynamic-block failures become informative UX, not blank errors
+
+- Bump `tollbooth-dpyc[nostr,prefect]==0.56.0` (adds `AsyncJobSituation`). Both the
+  detached `shape_result` and the in-process runner now classify an Anthropic
+  failure into a curated, frontend-facing situation — a machine `error_code`, safe
+  copy, and a `transient` flag — instead of letting a raw HTTP error settle the
+  job. The raw upstream status/body stay operator-side (Prefect logs); the DPYC
+  patron never sees `400 … request_id …`.
+- Mapped situations: `operator_llm_unfunded` (Anthropic "credit balance too low" —
+  the real cause behind the recent 400s, reported as a 400 not a 402),
+  `operator_llm_auth` (401/403), `upstream_rate_limited` (429, transient),
+  `dynamic_block_empty` (2xx but no usable text), and a generic
+  `dynamic_block_unresolved` fallback. `fetch_dynamic_block` returns these so the
+  Posts Manager can branch its UX (retry vs. "service temporarily unavailable").
+
 ## [0.24.2] — 2026-06-29
 
 ### Changed — long-runner secrets are normal operator secrets
