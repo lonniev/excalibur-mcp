@@ -5,6 +5,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.24.2] — 2026-06-29
+
+### Changed — long-runner secrets are normal operator secrets
+
+- Bump `tollbooth-dpyc[nostr,prefect]==0.55.3`, which removes the separate
+  `dpyc-longrunner` credential service. The Prefect long-runner secrets
+  (`prefect_api_url`, `prefect_api_key`, `closure_seal_key`) are now declared in
+  eXcalibur's own `operator_credential_template` via the wheel-exported
+  `LONGRUNNER_CREDENTIAL_FIELDS` (optional) — so they show in onboarding / the
+  Pricing Studio and deliver via the normal Secure Courier card like every other
+  operator secret. Template `version` 3 → 4.
+- **Migration:** the three values, previously couriered under the `dpyc-longrunner`
+  service, must be re-couriered once under `excalibur-operator`.
+
 ## [0.24.1] — 2026-06-29
 
 ### Fixed — dynamic-block resolution now actually runs on detached compute

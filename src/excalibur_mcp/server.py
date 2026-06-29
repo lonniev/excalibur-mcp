@@ -14,7 +14,11 @@ from typing import Annotated, Any
 
 from fastmcp import FastMCP
 from pydantic import Field
-from tollbooth.credential_templates import CredentialTemplate, FieldSpec
+from tollbooth.credential_templates import (
+    LONGRUNNER_CREDENTIAL_FIELDS,
+    CredentialTemplate,
+    FieldSpec,
+)
 from tollbooth.credential_validators import validate_btcpay_creds, validate_required
 from tollbooth.oauth_config import OAuthProviderConfig
 from tollbooth.runtime import OperatorRuntime, register_standard_tools
@@ -170,7 +174,7 @@ runtime = OperatorRuntime(
     tool_registry={**STANDARD_IDENTITIES, **TOOL_REGISTRY},
     operator_credential_template=CredentialTemplate(
         service="excalibur-operator",
-        version=3,
+        version=4,
         fields={
             "btcpay_host": FieldSpec(
                 required=True, sensitive=True,
@@ -196,8 +200,12 @@ runtime = OperatorRuntime(
                 required=False, sensitive=True,
                 description="Anthropic API key for the editor's FE-direct 'Refine with Claude'. Optional — posting works without it.",
             ),
+            # Durable long-runner secrets (optional): when present, the 90–210s
+            # dynamic-block resolve offloads to detached Prefect compute instead
+            # of the recycling front. Normal operator secrets — wheel-owned defs.
+            **LONGRUNNER_CREDENTIAL_FIELDS,
         },
-        description="BTCPay Lightning payment + X OAuth2 app credentials",
+        description="BTCPay Lightning payment + X OAuth2 app credentials (+ optional durable long-runner)",
     ),
     oauth_provider=OAuthProviderConfig(
         authorize_url="https://x.com/i/oauth2/authorize",
