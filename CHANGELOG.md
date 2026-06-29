@@ -5,6 +5,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.24.0] — 2026-06-29
+
+### Added — dynamic-block resolution runs on durable detached compute
+
+- The 90–210s "resolve dynamic block" job no longer runs as an in-process
+  `asyncio` task on Horizon's stateless front (which freezes/recycles mid-run and
+  silently drops the work). It now offloads to the shared DPYC long-runner —
+  detached Prefect-managed compute — via the generic closure path in
+  `tollbooth-dpyc` 0.55.1. `resolve.py` is split into `build_anthropic_request`
+  (the declarative request sealed into the closure, in-process, so the operator
+  key never leaves as plaintext) and `extract_resolved_text` (shapes the detached
+  result); `resolve_block` recomposes them, so the in-process runner and the
+  scheduler still produce identical output and serve as the fallback.
+- `server.py` registers the closure path with `register_job_spec("resolve_dynamic_block", …)`.
+  No executor wiring and no credential-template changes here: the wheel
+  auto-installs the detached executor once the operator has couriered the
+  built-in `dpyc-longrunner` credentials, and serves in-process until then.
+- Pin `tollbooth-dpyc[nostr,prefect]==0.55.1` (the `prefect` extra ships the
+  `run_deployment` client used to dispatch detached runs).
+
 ## [0.23.1] — 2026-06-27
 
 ### Fixed — Posts list shows a loading state on every filter change

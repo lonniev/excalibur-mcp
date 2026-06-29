@@ -1,6 +1,6 @@
 """Tests for the dynamic-block resolver (prompt build, cleaning, web tools)."""
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -10,7 +10,9 @@ from excalibur_mcp.resolve import (
     _build_tools,
     _clean,
     _extract_answer,
+    build_anthropic_request,
     clamp_fetches,
+    extract_resolved_text,
     resolve_block,
 )
 
@@ -84,47 +86,78 @@ def test_build_tools_with_domains_restricts_fetch():
     assert fetch["max_uses"] == 9
 
 
-@pytest.mark.asyncio
-async def test_resolve_block_passes_web_tools_to_the_call():
-    call = AsyncMock(return_value="ok")
-    with patch.object(resolve, "_call", call):
-        await resolve_block(api_key="k", prompt="p", allowed_domains=["a.com"], max_fetches=3)
-    tools = call.await_args.args[3]  # _call(api_key, system, user, tools)
-    fetch = next(t for t in tools if t["name"] == "web_fetch")
+# --- build_anthropic_request: the half sealed into the durable closure --------
+
+def test_build_anthropic_request_bakes_key_tools_and_body():
+    req = build_anthropic_request(
+        api_key="k", prompt="p", allowed_domains=["a.com"], max_fetches=3,
+    )
+    assert req["method"] == "POST"
+    assert req["url"].endswith("/v1/messages")
+    # the operator key rides only as the x-api-key header (sealed by the wheel)
+    assert req["headers"]["x-api-key"] == "k"
+    fetch = next(t for t in req["json"]["tools"] if t["name"] == "web_fetch")
     assert fetch["allowed_domains"] == ["a.com"] and fetch["max_uses"] == 3
+    assert req["json"]["messages"][0]["content"]  # the user prompt is present
+    # fully JSON-serializable (it must survive sealing as a closure)
+    import json as _json
+    _json.dumps(req)
 
 
-@pytest.mark.asyncio
-async def test_resolve_block_happy_path():
-    with patch.object(resolve, "_call", AsyncMock(return_value="sunny, 72°F · BTC $64k")):
-        out = await resolve_block(api_key="k", prompt="weather + btc now")
-    assert out == "sunny, 72°F · BTC $64k"
+def test_build_anthropic_request_empty_prompt_raises():
+    with pytest.raises(ValueError):
+        build_anthropic_request(api_key="k", prompt="   ")
 
 
-@pytest.mark.asyncio
-async def test_resolve_block_returns_long_output_untruncated():
+# --- extract_resolved_text: the half that shapes the detached result ----------
+
+def test_extract_resolved_text_happy_path():
+    body = {"content": [{"type": "text", "text": "<post>sunny, 72°F · BTC $64k</post>"}]}
+    assert extract_resolved_text(body) == "sunny, 72°F · BTC $64k"
+
+
+def test_extract_resolved_text_returns_long_output_untruncated():
     long_text = "x" * 5000  # well past the old 280 cap — no truncation now
-    with patch.object(resolve, "_call", AsyncMock(return_value=long_text)) as call:
-        out = await resolve_block(api_key="k", prompt="write a long essay")
-    assert out == long_text          # returned whole
-    assert call.await_count == 1     # no shorten retry
+    body = {"content": [{"type": "text", "text": f"<post>{long_text}</post>"}]}
+    assert extract_resolved_text(body) == long_text
 
 
-@pytest.mark.asyncio
-async def test_resolve_block_downformats_markup_to_x_text():
-    # Even if rich markup slips through, resolve_block returns X-ready plain text.
-    raw = "<b>Hi</b> — see [shop](https://e.com/p)"
-    with patch.object(resolve, "_call", AsyncMock(return_value=raw)):
-        out = await resolve_block(api_key="k", prompt="p")
+def test_extract_resolved_text_downformats_markup_to_x_text():
+    # Even if rich markup slips through, the result is X-ready plain text.
+    body = {"content": [
+        {"type": "text", "text": "<post><b>Hi</b> — see [shop](https://e.com/p)</post>"},
+    ]}
+    out = extract_resolved_text(body)
     assert "<b>" not in out and "</b>" not in out and "](" not in out
     assert "Hi" in out and "https://e.com/p" in out
 
 
+def test_extract_resolved_text_empty_raises():
+    with pytest.raises(ValueError):
+        extract_resolved_text({"content": []})
+
+
+# --- resolve_block: the in-process / scheduler path recomposes both halves ----
+
 @pytest.mark.asyncio
-async def test_resolve_block_empty_output_raises():
-    with patch.object(resolve, "_call", AsyncMock(return_value="")):
-        with pytest.raises(ValueError):
-            await resolve_block(api_key="k", prompt="p")
+async def test_resolve_block_recomposes_build_and_extract():
+    body = {"content": [{"type": "text", "text": "<post>sunny, 72°F · BTC $64k</post>"}]}
+
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return body
+
+    async def fake_post(self, url, **kwargs):
+        # the request was built by build_anthropic_request → carries the key
+        assert kwargs["headers"]["x-api-key"] == "k"
+        return _Resp()
+
+    with patch.object(resolve.httpx.AsyncClient, "post", fake_post):
+        out = await resolve_block(api_key="k", prompt="weather + btc now")
+    assert out == "sunny, 72°F · BTC $64k"
 
 
 @pytest.mark.asyncio

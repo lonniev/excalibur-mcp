@@ -163,26 +163,62 @@ def _clean(text: str) -> str:
     return t
 
 
-async def _call(api_key: str, system: str, user: str, tools: list[dict[str, Any]]) -> str:
-    """One Anthropic messages call with the given web tools; returns clean text."""
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        resp = await client.post(
-            _ENDPOINT,
-            headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": _MODEL,
-                "max_tokens": _MAX_TOKENS,
-                "system": system,
-                "tools": tools,
-                "messages": [{"role": "user", "content": user}],
-            },
-        )
-    resp.raise_for_status()
-    return _extract_answer(resp.json())
+def build_anthropic_request(
+    *,
+    api_key: str,
+    prompt: str,
+    context: str = "",
+    voice: str = "",
+    bans: list[str] | None = None,
+    allowed_domains: list[str] | None = None,
+    max_fetches: int = _MAX_FETCHES_DEFAULT,
+) -> dict[str, Any]:
+    """Build the fully-formed Anthropic messages request for one dynamic block.
+
+    Returns a declarative, JSON-serializable request envelope (method, url,
+    headers, json body, timeout) — exactly the shape the durable long-runner's
+    generic ``http_request`` op executes. The operator's ``api_key`` is baked in
+    here, in-process, where it can be sealed into the closure before it ever
+    leaves the server; it appears in the request only as the ``x-api-key`` header.
+    Raises ``ValueError`` on empty prompt.
+    """
+    bans = bans or []
+    if not prompt.strip():
+        raise ValueError("empty prompt")
+
+    tools = _build_tools(allowed_domains, clamp_fetches(max_fetches))
+    system, user = _build_prompt(prompt, context, voice, bans)
+    return {
+        "method": "POST",
+        "url": _ENDPOINT,
+        "headers": {
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
+        "json": {
+            "model": _MODEL,
+            "max_tokens": _MAX_TOKENS,
+            "system": system,
+            "tools": tools,
+            "messages": [{"role": "user", "content": user}],
+        },
+        "timeout": _TIMEOUT,
+    }
+
+
+def extract_resolved_text(raw_json: dict[str, Any]) -> str:
+    """Turn a raw Anthropic messages response into the final X-ready fragment.
+
+    Pulls the ``<post>…</post>`` deliverable and down-formats it to X plain text +
+    Unicode styling (a safety net in case the model emitted HTML/CSS/JSX/markdown
+    the platform can't render). Raises ``ValueError`` when nothing usable comes
+    back, so the caller (in-process runner or detached closure) refunds the fare.
+    """
+    text = to_x_text(_extract_answer(raw_json))
+    if not text:
+        raise ValueError("no text returned")
+    return text
 
 
 async def resolve_block(
@@ -197,6 +233,11 @@ async def resolve_block(
 ) -> str:
     """Resolve one dynamic block to its final, post-ready fragment text.
 
+    The in-process / scheduler path: build the request, call Anthropic, extract.
+    The durable long-runner path uses the same two halves separately
+    (``build_anthropic_request`` is sealed into the closure; ``extract_resolved_text``
+    shapes the detached result) so both paths produce identical output.
+
     ``context`` is the surrounding composed post (optionally with
     ``INSERT_MARKER`` where the fragment belongs). The author's instruction
     governs length — there is no character cap (X supports long-form posts).
@@ -205,17 +246,13 @@ async def resolve_block(
     ``ValueError`` on empty input/output and propagates transport/HTTP errors so
     the caller can refund / fall back.
     """
-    bans = bans or []
-    if not prompt.strip():
-        raise ValueError("empty prompt")
-
-    tools = _build_tools(allowed_domains, clamp_fetches(max_fetches))
-    system, user = _build_prompt(prompt, context, voice, bans)
-    text = await _call(api_key, system, user, tools)
-    # Down-format to X-ready plain text + Unicode styling, in case the prompt
-    # asked for (or the model produced) HTML/CSS/JSX/markdown the platform can't
-    # render. The model is also instructed to do this; this is the safety net.
-    text = to_x_text(text)
-    if not text:
-        raise ValueError("no text returned")
-    return text
+    req = build_anthropic_request(
+        api_key=api_key, prompt=prompt, context=context, voice=voice,
+        bans=bans, allowed_domains=allowed_domains, max_fetches=max_fetches,
+    )
+    async with httpx.AsyncClient(timeout=req["timeout"]) as client:
+        resp = await client.post(
+            req["url"], headers=req["headers"], json=req["json"]
+        )
+    resp.raise_for_status()
+    return extract_resolved_text(resp.json())
