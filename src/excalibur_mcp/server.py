@@ -851,6 +851,11 @@ async def resolve_dynamic_block(
     bans: str = "",
     allowed_domains: str = "",
     max_fetches: int = 5,
+    runtime_limit_seconds: Annotated[int, Field(
+        description="Author's time budget for this block in seconds (60–900). "
+                    "Bounds how long the job may run AND sets the poll cadence; "
+                    "the operator may price it ad valorem.",
+    )] = 210,
     npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "",
     dpop_token: str = "",
 ) -> dict:
@@ -881,6 +886,9 @@ async def resolve_dynamic_block(
         allowed_domains: Author allowlist for web_fetch — JSON array or
             comma-separated. Blank = fetch any URL the prompt references.
         max_fetches: Author budget for web lookups (search + fetch), 1..25.
+        runtime_limit_seconds: Author's time budget (clamped 60..900). Sets the
+            job's runtime ceiling and the poll cadence (first poll ~75% of it),
+            and is available to the operator's pricing model for ad-valorem fares.
         npub: Your DPYC patron npub for credit billing.
     """
     tool_id = capability_uuid("resolve_dynamic_block")
@@ -905,6 +913,10 @@ async def resolve_dynamic_block(
             ),
         }
 
+    # Author's declared time budget bounds both the runtime ceiling and the poll
+    # cadence (passed as expected_seconds so the first poll waits ~75% of it).
+    budget = max(60, min(int(runtime_limit_seconds or 210), 900))
+
     # Kick the slow resolve into a background job and hand back a claim check.
     # Params are persisted in Neon — never the API key (the runner loads it).
     return await runtime.start_async_job(
@@ -920,8 +932,9 @@ async def resolve_dynamic_block(
             "max_fetches": max_fetches,
         },
         tool_id=tool_id,
-        max_runtime_seconds=210,
+        max_runtime_seconds=budget,
         result_ttl_seconds=900,
+        expected_seconds=budget,
     )
 
 
