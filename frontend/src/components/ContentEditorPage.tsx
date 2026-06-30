@@ -557,6 +557,12 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     setBlocks((prev) => prev.map((b) =>
       b.id === blockId ? { ...b, maxFetches: n > 0 ? n : undefined } : b));
   }, []);
+  // Author time budget (seconds) for resolving a dynamic block: bounds runtime,
+  // sets the poll cadence, and is priceable ad valorem by the operator.
+  const setBlockRuntimeLimit = useCallback((blockId: string, n: number) => {
+    setBlocks((prev) => prev.map((b) =>
+      b.id === blockId ? { ...b, runtimeLimit: n > 0 ? n : undefined } : b));
+  }, []);
 
   // Resolve one dynamic block via the (paid) server-side dry-run. Context is the
   // tweet around it, with this slot marked and other blocks shown resolved /
@@ -577,6 +583,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
       const res = await resolveDynamicBlock({
         prompt: block.text, context, voice, bans: activeBans,
         allowedDomains: splitDomains(block.domains), maxFetches: block.maxFetches,
+        runtimeLimitSeconds: block.runtimeLimit,
       });
       if (!res.success) {
         setResolved((r) => ({ ...r, [block.id]: {
@@ -759,6 +766,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
         const res = await resolveDynamicBlock({
           prompt: b.text, context: contextFor(i), voice, bans: activeBans,
           allowedDomains: splitDomains(b.domains), maxFetches: b.maxFetches,
+          runtimeLimitSeconds: b.runtimeLimit,
         });
         if (res.success) return res.text ?? "";
         return b.fallback ?? null;  // null = failed with no fallback
@@ -1049,6 +1057,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
                         onChangeFallback={(t) => setBlockFallback(b.id, t)}
                         onChangeDomains={(t) => setBlockDomains(b.id, t)}
                         onChangeMaxFetches={(n) => setBlockMaxFetches(b.id, n)}
+                        onChangeRuntimeLimit={(n) => setBlockRuntimeLimit(b.id, n)}
                         onMouseUp={onBlockMouseUp}
                         onFlagClick={(flagId, rect) => {
                           setActiveFlag({ blockId: b.id, flagId });
@@ -1192,13 +1201,14 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
 // ── block view ──────────────────────────────────────────────────────────────
 function BlockView({
   block, idx, preview, editing, activeFlagId, overIndex, resolved, onResolve,
-  onToggleDynamic, onChangeFallback, onChangeDomains, onChangeMaxFetches,
+  onToggleDynamic, onChangeFallback, onChangeDomains, onChangeMaxFetches, onChangeRuntimeLimit,
   onMouseUp, onFlagClick, onEdit, onDoneEdit, onChange, onDelete, onMoveUp, onMoveDown, canDelete, dragHandlers,
 }: {
   block: Block; idx: number; preview: boolean; editing: boolean; activeFlagId: string | null; overIndex: number | null;
   resolved?: ResolvedState; onResolve: () => void;
   onToggleDynamic: () => void; onChangeFallback: (t: string) => void;
   onChangeDomains: (t: string) => void; onChangeMaxFetches: (n: number) => void;
+  onChangeRuntimeLimit: (n: number) => void;
   onMouseUp: (blockId: string, el: HTMLElement | null) => void;
   onFlagClick: (flagId: string, rect: DOMRect) => void;
   onEdit: () => void; onDoneEdit: () => void; onChange: (t: string) => void; onDelete: () => void;
@@ -1285,6 +1295,17 @@ function BlockView({
               title="Max web lookups (search + fetch) for this prompt"
               className="w-16 flex-none rounded border border-violet-200 bg-white px-2 py-1 text-[12px] text-violet-800 outline-none focus:border-violet-400"
             />
+            <input
+              type="number"
+              min={60}
+              max={900}
+              step={30}
+              value={block.runtimeLimit ?? 210}
+              onChange={(e) => onChangeRuntimeLimit(Number(e.target.value) || 0)}
+              title="Time budget in seconds (60–900). Bounds runtime and may affect the fare."
+              className="w-16 flex-none rounded border border-violet-200 bg-white px-2 py-1 text-[12px] text-violet-800 outline-none focus:border-violet-400"
+            />
+            <span className="flex-none text-[10px] text-violet-400">sec</span>
           </div>
           <div className="mt-1.5 flex items-center gap-2">
             <button

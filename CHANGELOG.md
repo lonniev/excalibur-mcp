@@ -5,6 +5,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.27.0] — 2026-06-30
+
+### Added — author-declared time budget per dynamic block (ad-valorem ready)
+
+- A dynamic block now carries an optional **time budget** (`runtimeLimit`, seconds, clamped 60–900, default 210). The editor exposes it as a numeric input beside the web-lookup budget on each dynamic-block card.
+- `resolve_dynamic_block` gains a top-level `runtime_limit_seconds` parameter. It sets the async job's runtime ceiling **and** is passed as the wheel's new `expected_seconds`, so the claim-check poll cadence trusts it (first poll ≈75% of the budget, then tightens) instead of a steady tick. Because it's a named tool argument, an operator can price it **ad valorem** via a `price_type="percent"` entry keyed to `runtime_limit_seconds` in Pricing Studio — no further code needed.
+- The browser resolve loop now scales its client-side timeout to the declared budget (was a flat 5 min), so a long block can finish in Preview/Run.
+
+### Changed — bump `tollbooth-dpyc[nostr,prefect]==0.59.0`
+
+- Picks up `start_async_job(expected_seconds=...)` and the budget-aware `poll_backoff_seconds`.
+
 ## [0.26.0] — 2026-06-29
 
 ### Changed — adopt the wheel's `dpop_token` rename (lockstep with tollbooth-dpyc 0.57.0)

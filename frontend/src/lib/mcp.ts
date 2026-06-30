@@ -713,7 +713,9 @@ export async function resolveDynamicBlock(args: {
   bans?: string[];
   allowedDomains?: string[];
   maxFetches?: number;
+  runtimeLimitSeconds?: number;
 }): Promise<ResolveDynamicResult> {
+  const budgetSeconds = Math.max(60, Math.min(args.runtimeLimitSeconds ?? 210, 900));
   const start = await callTool<ClaimCheckStart>("resolve_dynamic_block", {
     prompt: args.prompt,
     context: args.context ?? "",
@@ -721,13 +723,16 @@ export async function resolveDynamicBlock(args: {
     bans: JSON.stringify(args.bans ?? []),
     allowed_domains: JSON.stringify(args.allowedDomains ?? []),
     max_fetches: args.maxFetches ?? 5,
+    runtime_limit_seconds: budgetSeconds,
   });
   if (start.success === false || !start.claim_check) {
     return { success: false, error_code: start.error_code, error: start.error, message: start.message };
   }
 
   const claim = start.claim_check;
-  const deadline = Date.now() + RESOLVE_MAX_WAIT_MS;
+  // Give the browser at least the author's budget (+ a poll/result buffer) so a
+  // long block doesn't time out client-side before the job finishes.
+  const deadline = Date.now() + Math.max(RESOLVE_MAX_WAIT_MS, budgetSeconds * 1000 + 60_000);
   let waitMs = POLL_START_MS;
   for (;;) {
     await new Promise((r) => setTimeout(r, waitMs));

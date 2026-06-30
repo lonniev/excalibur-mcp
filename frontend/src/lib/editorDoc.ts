@@ -27,6 +27,9 @@ export interface Block {
   // references); `maxFetches` bounds web lookups (search + fetch).
   domains?: string;
   maxFetches?: number;
+  // Author time budget (seconds) for resolving this block: bounds runtime and
+  // sets the poll cadence; the operator may price it ad valorem. Clamped 60..900.
+  runtimeLimit?: number;
 }
 
 export interface Ban {
@@ -146,6 +149,7 @@ interface StoredBlock {
   fallback?: string;
   domains?: string;
   maxFetches?: number;
+  runtimeLimit?: number;
 }
 
 /// Normalize a stored `doc` that may arrive as a parsed object OR a JSON string
@@ -178,6 +182,7 @@ export function parsePostDoc(doc: unknown, textCache?: string): Block[] {
             fallback: (b as StoredBlock)?.fallback,
             domains: (b as StoredBlock)?.domains,
             maxFetches: (b as StoredBlock)?.maxFetches,
+            runtimeLimit: (b as StoredBlock)?.runtimeLimit,
           },
     );
   } else if (textCache) {
@@ -197,11 +202,12 @@ export function parsePostDoc(doc: unknown, textCache?: string): Block[] {
     ...(b.fallback ? { fallback: b.fallback } : {}),
     ...(b.domains ? { domains: b.domains } : {}),
     ...(b.maxFetches ? { maxFetches: b.maxFetches } : {}),
+    ...(b.runtimeLimit ? { runtimeLimit: b.runtimeLimit } : {}),
   }));
 }
 
 export interface PostDocPayload {
-  blocks: { text: string; flags: StoredFlag[]; dynamic?: boolean; fallback?: string; domains?: string; maxFetches?: number }[];
+  blocks: { text: string; flags: StoredFlag[]; dynamic?: boolean; fallback?: string; domains?: string; maxFetches?: number; runtimeLimit?: number }[];
 }
 
 export function serializeBlocks(blocks: Block[]): PostDocPayload {
@@ -215,6 +221,7 @@ export function serializeBlocks(blocks: Block[]): PostDocPayload {
       ...(b.fallback ? { fallback: b.fallback } : {}),
       ...(b.domains ? { domains: b.domains } : {}),
       ...(b.maxFetches ? { maxFetches: b.maxFetches } : {}),
+      ...(b.runtimeLimit ? { runtimeLimit: b.runtimeLimit } : {}),
     })),
   };
 }
