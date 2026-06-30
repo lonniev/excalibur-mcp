@@ -203,6 +203,7 @@ async def _resolve_post_text(
                     api_key=api_key, prompt=prompt, context=_context_for(i),
                     voice=voice, bans=bans, allowed_domains=_domains(b),
                     max_fetches=clamp_fetches(b.get("maxFetches", 5)),
+                    timeout_seconds=b.get("runtimeLimit"),  # author's budget; None → default
                 )
             except Exception as exc:  # noqa: BLE001 — fall back, report via reason
                 logger.warning("scheduler: dynamic resolve failed for %s: %s", owner, exc)
@@ -278,6 +279,12 @@ async def process_due_posts(runtime: Any) -> dict[str, Any]:
 
     for row in due:
         pid = row["post_id"]
+        # Atomically claim the post (scheduled → sending) before any work, so
+        # overlapping cron ticks can never fire the same post twice. The claim is
+        # the exclusivity gate; the candidate row from list_due carries the same
+        # doc/owner. If another tick already owns it, skip — it'll handle it.
+        if await posts_db.claim_due_post(pid) is None:
+            continue
         owner = row["npub"]
         doc = _as_dict(row.get("doc"))
         dynamic = _dynamic_blocks(doc)

@@ -109,6 +109,15 @@ def test_build_anthropic_request_empty_prompt_raises():
         build_anthropic_request(api_key="k", prompt="   ")
 
 
+def test_build_anthropic_request_timeout_follows_budget_clamped():
+    from excalibur_mcp.resolve import _TIMEOUT, clamp_timeout
+    # Unset → the default; a declared budget drives the LLM timeout; bounds clamp.
+    assert build_anthropic_request(api_key="k", prompt="p")["timeout"] == _TIMEOUT
+    assert build_anthropic_request(api_key="k", prompt="p", timeout_seconds=420)["timeout"] == 420.0
+    assert clamp_timeout(0) == _TIMEOUT and clamp_timeout(None) == _TIMEOUT
+    assert clamp_timeout(5) == 30.0 and clamp_timeout(99999) == 900.0
+
+
 # --- extract_resolved_text: the half that shapes the detached result ----------
 
 def test_extract_resolved_text_happy_path():

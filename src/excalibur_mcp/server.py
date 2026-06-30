@@ -930,6 +930,7 @@ async def resolve_dynamic_block(
             "bans": _parse_str_list(bans),
             "allowed_domains": _parse_str_list(allowed_domains),
             "max_fetches": max_fetches,
+            "runtime_limit_seconds": budget,
         },
         tool_id=tool_id,
         max_runtime_seconds=budget,
@@ -1028,6 +1029,7 @@ async def _resolve_dynamic_runner(
     bans: list | None = None,
     allowed_domains: list | None = None,
     max_fetches: int = 5,
+    runtime_limit_seconds: int = 0,
     **_,
 ) -> dict:
     """Background job runner for ``resolve_dynamic_block`` (in-process path).
@@ -1053,6 +1055,7 @@ async def _resolve_dynamic_runner(
             api_key=key, prompt=prompt, context=context, voice=voice,
             bans=bans or [], allowed_domains=allowed_domains or [],
             max_fetches=clamp_fetches(max_fetches),
+            timeout_seconds=runtime_limit_seconds,
         )
     except httpx.HTTPStatusError as exc:
         msg = ""
@@ -1077,6 +1080,7 @@ async def _resolve_build_closure(
     bans: list | None = None,
     allowed_domains: list | None = None,
     max_fetches: int = 5,
+    runtime_limit_seconds: int = 0,
     **_,
 ) -> dict:
     """Build the sealed-closure job spec for the durable long-runner path.
@@ -1100,7 +1104,7 @@ async def _resolve_build_closure(
         "request": build_anthropic_request(
             api_key=key, prompt=prompt, context=context, voice=voice,
             bans=bans or [], allowed_domains=allowed_domains or [],
-            max_fetches=max_fetches,
+            max_fetches=max_fetches, timeout_seconds=runtime_limit_seconds,
         ),
     }
 

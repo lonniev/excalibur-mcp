@@ -124,7 +124,14 @@ async function withClient<T>(url: string, fn: (call: Call) => Promise<T>): Promi
     const res: any = await client.callTool(
       { name: `${SLUG}_${name}`, arguments: args },
       undefined,
-      { timeout: 60_000 },
+      // process_scheduled_posts resolves due posts' dynamic blocks inline (LLM +
+      // web search), which can run minutes — well past the old 60s. The MCP
+      // claims each post atomically (scheduled→sending) before working it, so a
+      // timeout here can never double-post: an unfinished post stays claimed and
+      // is reclaimed later. 5min covers the default 210s runtime budget; longer
+      // budgets are the durable-executor follow-up. (The quick proof/whoami
+      // calls return immediately regardless of this ceiling.)
+      { timeout: 300_000 },
     );
     if (res?.structuredContent !== undefined) return res.structuredContent;
     const text = (res?.content ?? []).find((b: any) => b.type === "text")?.text;

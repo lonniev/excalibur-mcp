@@ -163,6 +163,14 @@ def _clean(text: str) -> str:
     return t
 
 
+def clamp_timeout(seconds: float | int | None) -> float:
+    """Bound the LLM request timeout to a sane range (the author's runtime budget
+    drives it; default ``_TIMEOUT`` when unset)."""
+    if not seconds or seconds <= 0:
+        return _TIMEOUT
+    return float(max(30, min(int(seconds), 900)))
+
+
 def build_anthropic_request(
     *,
     api_key: str,
@@ -172,6 +180,7 @@ def build_anthropic_request(
     bans: list[str] | None = None,
     allowed_domains: list[str] | None = None,
     max_fetches: int = _MAX_FETCHES_DEFAULT,
+    timeout_seconds: float | int | None = None,
 ) -> dict[str, Any]:
     """Build the fully-formed Anthropic messages request for one dynamic block.
 
@@ -203,7 +212,7 @@ def build_anthropic_request(
             "tools": tools,
             "messages": [{"role": "user", "content": user}],
         },
-        "timeout": _TIMEOUT,
+        "timeout": clamp_timeout(timeout_seconds),
     }
 
 
@@ -230,6 +239,7 @@ async def resolve_block(
     bans: list[str] | None = None,
     allowed_domains: list[str] | None = None,
     max_fetches: int = _MAX_FETCHES_DEFAULT,
+    timeout_seconds: float | int | None = None,
 ) -> str:
     """Resolve one dynamic block to its final, post-ready fragment text.
 
@@ -249,6 +259,7 @@ async def resolve_block(
     req = build_anthropic_request(
         api_key=api_key, prompt=prompt, context=context, voice=voice,
         bans=bans, allowed_domains=allowed_domains, max_fetches=max_fetches,
+        timeout_seconds=timeout_seconds,
     )
     async with httpx.AsyncClient(timeout=req["timeout"]) as client:
         resp = await client.post(
