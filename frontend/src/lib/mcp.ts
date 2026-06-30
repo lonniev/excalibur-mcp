@@ -703,11 +703,13 @@ interface ClaimFetch {
 }
 
 const RESOLVE_MAX_WAIT_MS = 300_000; // give a heavy paginate+fetch+search resolve room
-// Poll with backoff: a little eager at first (a light resolve finishes fast),
-// then settle to a calm ceiling so a long job isn't hammered.
-const POLL_START_MS = 4_000;
-const POLL_CEILING_MS = 15_000;
-const POLL_FACTOR = 1.6;
+// The poll cadence is the BACKEND's call. Every claim-check response carries a
+// `poll_after_seconds` — a budget-aware countdown: a long first wait sized to the
+// author's declared runtime, then tightening as the deadline nears. We follow it
+// verbatim so there is ONE cadence algorithm, owned server-side (no duplicate
+// client backoff to drift out of sync). This fallback applies only if an older
+// server omits the field.
+const DEFAULT_POLL_SECONDS = 5;
 
 /// Resolve a dynamic block's prompt server-side via the **claim-check** pattern:
 /// `resolve_dynamic_block` starts a background job and returns a claim check
@@ -741,7 +743,7 @@ export async function resolveDynamicBlock(args: {
   // Give the browser at least the author's budget (+ a poll/result buffer) so a
   // long block doesn't time out client-side before the job finishes.
   const deadline = Date.now() + Math.max(RESOLVE_MAX_WAIT_MS, budgetSeconds * 1000 + 60_000);
-  let waitMs = POLL_START_MS;
+  let waitMs = (start.poll_after_seconds ?? DEFAULT_POLL_SECONDS) * 1000;
   for (;;) {
     await new Promise((r) => setTimeout(r, waitMs));
     const f = await callTool<ClaimFetch>("fetch_dynamic_block", { claim_check: claim });
@@ -762,7 +764,8 @@ export async function resolveDynamicBlock(args: {
     }
     if (f.status === "expired") return { success: false, message: f.next_steps || f.message || "The resolve claim expired — try again." };
     if (Date.now() > deadline) return { success: false, message: "Timed out waiting for the dynamic block to resolve." };
-    waitMs = Math.min(Math.round(waitMs * POLL_FACTOR), POLL_CEILING_MS);
+    // Honor the backend's next-poll advice (its countdown tightens toward done).
+    waitMs = (f.poll_after_seconds ?? DEFAULT_POLL_SECONDS) * 1000;
   }
 }
 
