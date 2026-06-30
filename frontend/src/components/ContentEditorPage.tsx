@@ -805,21 +805,30 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
       }
       const tweetUrl = r.tweet_url ?? "";
       const docPayload = serializeBlocks(blocks);
-      if (isNew) {
-        const c = await createPost({
-          doc: docPayload, textCache: finalText, status: "sent",
-          clientReqId: createReqId.current, tweetUrl, title: title.trim() || undefined,
-        });
-        if (!c.post_id) setHint("Posted to X (couldn't save a copy).");
-      } else {
-        await updatePost({
-          postId: id!, patch: { doc: docPayload, status: "sent", tweet_url: tweetUrl, title: title.trim() },
-          textCache: finalText, clientReqId: uid(),
-        });
-      }
-      setHint("Posted to X.");
+      // The tweet is live; now record it as Sent. A soft-fail here (the tool's
+      // catch_errors returns {success:false,…} rather than throwing) was
+      // previously swallowed — a new post got only a quiet hint and an existing
+      // post's result was ignored outright — so the row silently stayed a draft
+      // while the UI said "Posted." Surface it loudly and log it instead.
+      const saved = isNew
+        ? await createPost({
+            doc: docPayload, textCache: finalText, status: "sent",
+            clientReqId: createReqId.current, tweetUrl, title: title.trim() || undefined,
+          })
+        : await updatePost({
+            postId: id!, patch: { doc: docPayload, status: "sent", tweet_url: tweetUrl, title: title.trim() },
+            textCache: finalText, clientReqId: uid(),
+          });
+      // Always surface the live tweet, even if recording it as Sent failed.
       setTweetUrl(tweetUrl);
       setPostedUrl(tweetUrl);
+      if (!saved.post_id || saved.success === false || saved.error) {
+        const why = saved.error_code || saved.error || saved.message || "unknown error";
+        debugPush("error", `${isNew ? "create_post" : "update_post"} after send failed: ${why}`);
+        setError(`Posted to X, but couldn't record it as Sent (${why}). The tweet is live — try Save again to record it.`);
+        return;
+      }
+      setHint("Posted to X.");
       baseline.current = sigOf(blocks, publishAt, freq, interval, ceaseAt, title);
       if (id) postCache.current.delete(id); // sent status differs from any cached row
     } catch (e) {

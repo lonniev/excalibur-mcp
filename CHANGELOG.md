@@ -5,6 +5,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.27.1] — 2026-06-30
+
+### Fixed — Post Now no longer silently drops the Sent record (frontend-only)
+
+- `handlePostNow` recorded a post as Sent after a successful tweet via `create_post`/`update_post`, but a soft-fail there (the tool's `catch_errors` returns `{success:false,…}` rather than throwing) was swallowed: a new post got only a quiet hint, and an **existing** post's `updatePost` result was ignored outright. So the tweet went out while the row silently stayed a draft and the UI still said "Posted." (This is what made the recent scheduler/dpop_token breakage so hard to trace from the browser.)
+- Now both branches check the result and, on failure, **surface the `error_code` to the editor's error banner and `debugPush` it** to the debug panel — while still showing the live tweet URL — so an after-send save failure can never again be invisible.
+
 ## [0.27.0] — 2026-06-30
 
 ### Added — author-declared time budget per dynamic block (ad-valorem ready)
