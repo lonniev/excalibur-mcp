@@ -1,0 +1,44 @@
+name: Deploy Scheduler Worker
+
+# The Cloudflare cron worker (scheduler-worker/) fires due scheduled posts via
+# the operator's MCP. It deploys SEPARATELY from the Pages frontend, so it needs
+# its own wrangler deploy — a frontend deploy never touches it.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "scheduler-worker/**"
+      - ".github/workflows/deploy-worker.yml"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: scheduler-worker/package-lock.json
+
+      - name: Install dependencies
+        working-directory: scheduler-worker
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: scheduler-worker
+        run: npm run typecheck
+
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy
+          workingDirectory: scheduler-worker
