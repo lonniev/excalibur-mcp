@@ -78,12 +78,12 @@ async function tick(env: Env): Promise<string> {
     if (state?.phase === "pending") {
       const r = await call("receive_npub_proof", {
         patron_npub: operatorNpub,
-        poison: state.poison,
+        dpop_token: state.poison,
       });
-      if (r?.success && r?.proof_token) {
+      if (r?.success && r?.dpop_token) {
         const expiresAt = now + (Number(r.expires_in_seconds) || 0) * 1000;
-        await env.PROOF_KV.put(KEY, JSON.stringify({ phase: "active", token: r.proof_token, expiresAt }));
-        return fire(call, env, operatorNpub, r.proof_token);
+        await env.PROOF_KV.put(KEY, JSON.stringify({ phase: "active", token: r.dpop_token, expiresAt }));
+        return fire(call, env, operatorNpub, r.dpop_token);
       }
       if (now - state.requestedAt > REREQUEST_AFTER_MS) return request(call, env, operatorNpub);
       return "Awaiting operator reply to the proof DM.";
@@ -96,20 +96,20 @@ async function tick(env: Env): Promise<string> {
 
 async function request(call: Call, env: Env, operatorNpub: string): Promise<string> {
   const r = await call("request_npub_proof", { patron_npub: operatorNpub });
-  if (!r?.proof_token) return `request_npub_proof returned no session phrase: ${JSON.stringify(r)}`;
+  if (!r?.dpop_token) return `request_npub_proof returned no session phrase: ${JSON.stringify(r)}`;
   await env.PROOF_KV.put(
     KEY,
-    JSON.stringify({ phase: "pending", poison: r.proof_token, requestedAt: Date.now() }),
+    JSON.stringify({ phase: "pending", poison: r.dpop_token, requestedAt: Date.now() }),
   );
   return "Sent a proof-request DM to the operator npub — reply from a key-holder (Studio) to authorize the scheduler.";
 }
 
-async function fire(call: Call, env: Env, operatorNpub: string, proof: string): Promise<string> {
-  const r = await call("process_scheduled_posts", { npub: operatorNpub, proof });
+async function fire(call: Call, env: Env, operatorNpub: string, dpopToken: string): Promise<string> {
+  const r = await call("process_scheduled_posts", { npub: operatorNpub, dpop_token: dpopToken });
   // If the token was rejected (expired/revoked), drop it so the next tick
   // re-runs the proof dance rather than wedging on a dead token.
   const code = String(r?.error_code ?? "").toLowerCase();
-  if (r?.success === false && code.includes("proof")) {
+  if (r?.success === false && (code.includes("proof") || code.includes("dpop_token"))) {
     await env.PROOF_KV.delete(KEY);
     return `proof rejected (${code}); cleared — will re-request next tick.`;
   }
