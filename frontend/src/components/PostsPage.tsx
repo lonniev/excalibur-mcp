@@ -22,6 +22,9 @@ const PAGE_SIZE = 25;
 const statusStyle: Record<string, string> = {
   draft: "bg-stone-100 text-stone-600 dark:bg-zinc-800 dark:text-zinc-300",
   scheduled: "bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-400",
+  // Transient: the scheduler has claimed this post and is resolving its dynamic
+  // blocks / posting it right now. Pulses so it reads as in-progress, not idle.
+  sending: "bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-400 animate-pulse",
   // A "needs attention" stop-state: the scheduler paused this post after a
   // non-transient failure (e.g. a lapsed X subscription). Distinct from the
   // grey draft fallback so it reads as actionable, not idle.

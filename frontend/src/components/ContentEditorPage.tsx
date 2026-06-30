@@ -789,6 +789,39 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     setError(null);
     setNeedsXConnect(false);
     try {
+      // Long dynamic blocks (LLM + web search) resolve slowly — don't hold the
+      // editor hostage. If any dynamic block's budget exceeds ~30s, defer to the
+      // scheduler: save the post UNRESOLVED, due in ~10s, and hand control back.
+      // The cron worker resolves the blocks server-side (each with its own
+      // runtime budget, which rides in the saved doc) and posts.
+      const dynamicBudgets = blocks.filter((b) => b.dynamic).map((b) => b.runtimeLimit ?? 210);
+      const maxBudget = dynamicBudgets.length ? Math.max(...dynamicBudgets) : 0;
+      if (maxBudget > 30) {
+        const publishIso = new Date(Date.now() + 10_000).toISOString();
+        const docPayload = serializeBlocks(blocks);
+        const saved = isNew
+          ? await createPost({
+              doc: docPayload, textCache: composed, status: "scheduled",
+              publishAt: publishIso, clientReqId: createReqId.current,
+              title: title.trim() || undefined,
+            })
+          : await updatePost({
+              postId: id!, patch: { doc: docPayload, status: "scheduled", publish_at: publishIso, title: title.trim() },
+              textCache: composed, clientReqId: uid(),
+            });
+        if (!saved.post_id || saved.success === false || saved.error) {
+          const why = saved.error_code || saved.error || saved.message || "unknown error";
+          debugPush("error", `schedule-for-resolve failed: ${why}`);
+          setError(`Couldn't schedule the post (${why}).`);
+          return;
+        }
+        debugPush("info", `Deferred to scheduler (budget ${maxBudget}s) — due ~now+10s`);
+        setHint("Scheduled — its blocks resolve in the background and it posts shortly.");
+        baseline.current = sigOf(blocks, publishAt, freq, interval, ceaseAt, title);
+        if (isNew && saved.post_id) nav(`/post/${saved.post_id}`, { replace: true });
+        return;
+      }
+
       const { text: finalText, error: buildErr } = await buildFinalText();
       if (buildErr) { setError(buildErr); return; }
       if (!finalText.trim()) { setError("Nothing to post after resolving the dynamic blocks."); return; }

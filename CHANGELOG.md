@@ -5,6 +5,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.28.0] — 2026-06-30
+
+### Added — long dynamic-block posts defer to the scheduler; the runtime budget reaches the LLM
+
+- **Post Now hands the editor back for long posts.** In `handlePostNow`, if any dynamic block's runtime budget exceeds ~30s, the post is saved **unresolved** as `scheduled` at `now+10s` instead of resolving synchronously in the browser — so the author gets control back immediately. The cron worker resolves the blocks server-side and posts. (Static / short-budget posts still post inline.)
+- **The author's runtime budget now drives the LLM call.** `resolve_block`/`build_anthropic_request` gain `timeout_seconds`; the scheduler passes each block's `runtimeLimit`, and the claim-check runner + detached closure thread it too. Previously every resolve was capped at a fixed 210s regardless of the declared budget.
+- **Scheduler tick frequency raised to every minute** (`*/10` → `* * * * *`) so a "now+10s" post fires promptly, and the worker's MCP-call timeout raised `60s → 300s` to cover a real resolve.
+
+### Fixed — overlapping cron ticks can no longer double-post
+
+- `process_due_posts` now **atomically claims** each due post (`scheduled → sending`) before doing any work, so two overlapping ticks (far more likely at `*/1`) can never fire the same post twice. A held post is released back to `scheduled`; a `sending` post orphaned by a crashed/timed-out tick is reclaimed after a 20-minute lease (which safely exceeds the longest possible resolve). New `claim_due_post`/`release_claim`; `list_due` includes stale `sending` for reclaim; `mark_attempt` reverts a claimed post. New transient **Sending** status badge in the Posts list.
+
+### Note
+This is the pragmatic half of an on-demand long-running-task design (HTTP/TCP wants seconds; these resolves want wall-time). Budgets beyond what the worker can wait on are covered by the planned durable-executor follow-up; until then such a post's tick may time out and reclaim/retry — never double-post.
+
 ## [0.27.2] — 2026-06-30
 
 ### Changed — the resolve poll loop now follows the backend's cadence (one algorithm)

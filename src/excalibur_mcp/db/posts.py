@@ -302,19 +302,64 @@ async def hard_delete(npub: str, post_id: str) -> bool:
 # -- Scheduler queries (operator-side; not npub-scoped) ----------------------
 
 
+# A 'sending' post (claimed by a tick that is firing it) whose claim is older
+# than this is presumed orphaned — a tick that crashed/timed out mid-resolve —
+# and is eligible for reclaim. Must exceed the longest possible resolve (the max
+# runtime budget, 900s) so a still-running resolve is never reclaimed → no
+# double-post.
+_CLAIM_LEASE = "interval '20 minutes'"
+
+
 async def list_due(now_iso: str, limit: int = 100) -> list[dict[str, Any]]:
-    """Scheduled posts whose publish_at has arrived, oldest first."""
+    """Due posts to consider firing, oldest first: ``scheduled`` ones whose
+    publish_at has arrived, plus ``sending`` ones whose claim lease has expired
+    (orphaned by a crashed/timed-out tick). The atomic ``claim_due_post`` is what
+    actually grants exclusive ownership — this is just the candidate set."""
     lim = max(1, min(500, limit))
     return await fetch(
         f"""
         SELECT {_FULL_COLS} FROM posts
-        WHERE status = 'scheduled' AND publish_at IS NOT NULL
-          AND publish_at <= $1::timestamptz
+        WHERE publish_at IS NOT NULL AND publish_at <= $1::timestamptz
+          AND (status = 'scheduled'
+               OR (status = 'sending'
+                   AND last_attempt_at < $1::timestamptz - {_CLAIM_LEASE}))
         ORDER BY publish_at ASC
         LIMIT $2
         """,
         now_iso,
         lim,
+    )
+
+
+async def claim_due_post(post_id: str) -> dict[str, Any] | None:
+    """Atomically take ownership of a due post for firing — ``scheduled`` →
+    ``sending`` (or reclaim a ``sending`` post whose lease expired). Returns the
+    claimed row, or ``None`` when another concurrent tick already owns it.
+
+    This is what makes overlapping cron ticks safe: only the tick whose UPDATE
+    matches a still-claimable row gets it, so the same post is never fired twice.
+    On a transient hold the caller releases it back to ``scheduled`` (via
+    ``mark_attempt``); on success ``mark_sent`` moves it on."""
+    return await fetchrow(
+        f"""
+        UPDATE posts
+        SET status = 'sending', last_attempt_at = NOW(), updated_at = NOW()
+        WHERE id = $1::uuid
+          AND (status = 'scheduled'
+               OR (status = 'sending' AND last_attempt_at < NOW() - {_CLAIM_LEASE}))
+        RETURNING {_FULL_COLS}
+        """,
+        post_id,
+    )
+
+
+async def release_claim(post_id: str) -> None:
+    """Revert a claimed ('sending') post to 'scheduled' without stamping a reason
+    (used when the caller bails before a real attempt)."""
+    await execute(
+        "UPDATE posts SET status = 'scheduled', updated_at = NOW() "
+        "WHERE id = $1::uuid AND status = 'sending'",
+        post_id,
     )
 
 
@@ -383,13 +428,14 @@ async def mark_attempt(post_id: str, at_iso: str, reason: str) -> None:
 
     Records when and why (the skip/error reason — access/finance/network/content)
     so the post visibly shows it was attempted, and the FE can surface the hold
-    instead of the post silently sitting ``scheduled``. The post keeps its
-    ``scheduled`` status so the next due tick retries it."""
+    instead of the post silently sitting ``scheduled``. Reverts a claimed
+    ('sending') post back to ``scheduled`` so the next due tick retries it."""
     await execute(
         """
         UPDATE posts
         SET last_attempt_at     = $2::timestamptz,
             last_attempt_reason = $3,
+            status              = CASE WHEN status = 'sending' THEN 'scheduled' ELSE status END,
             updated_at          = NOW()
         WHERE id = $1::uuid
         """,

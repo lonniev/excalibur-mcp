@@ -42,6 +42,19 @@ def _stub_mark_paused():
         yield m
 
 
+@pytest.fixture(autouse=True)
+def _stub_claim_due_post():
+    """The loop atomically claims each due post (scheduled → sending) before
+    working it, so overlapping ticks can't double-fire. Default: the claim wins
+    (returns a truthy row) so the loop proceeds; a test overrides to None to
+    simulate a post another concurrent tick already owns."""
+    with patch.object(
+        scheduler.posts_db, "claim_due_post",
+        AsyncMock(side_effect=lambda pid: {"post_id": pid}),
+    ) as m:
+        yield m
+
+
 # -- recurrence math ---------------------------------------------------------
 
 def test_add_months_clamps_end_of_month():
@@ -158,6 +171,25 @@ async def test_one_shot_fire_marks_row_sent_with_url():
     occ.assert_not_called()  # one-shot leaves no separate occurrence
     assert mark.await_args.args[2] == "sent"  # the row itself becomes Sent
     assert mark.await_args.args[4] == url
+
+
+@pytest.mark.asyncio
+async def test_post_claimed_by_another_tick_is_skipped(_stub_claim_due_post):
+    """An overlapping cron tick that LOSES the atomic claim must not fire the
+    post — the claim is what prevents double-posting under a fast (*/1) cron."""
+    _stub_claim_due_post.side_effect = None
+    _stub_claim_due_post.return_value = None  # another tick already owns it
+    rt = _runtime()
+    client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "x", "tweet_url": "u"}))
+    with patch.object(scheduler.posts_db, "list_due",
+                      AsyncMock(return_value=[_due_row(recurrence=None, cease_at=None)])), \
+         patch.object(scheduler.posts_db, "mark_sent", AsyncMock()) as mark, \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        out = await scheduler.process_due_posts(rt)
+    client.post_tweet.assert_not_awaited()  # never posted
+    mark.assert_not_awaited()
+    rt._apply_billing.assert_not_awaited()  # nor billed
+    assert out["posted"] == []
 
 
 @pytest.mark.asyncio
