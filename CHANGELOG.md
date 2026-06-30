@@ -5,6 +5,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.27.2] — 2026-06-30
+
+### Changed — the resolve poll loop now follows the backend's cadence (one algorithm)
+
+- `resolveDynamicBlock` used its own client-side backoff (`4s → ×1.6 → 15s`) and **ignored** the `poll_after_seconds` the backend returns. The backend now has the better, budget-aware algorithm (a long first wait sized to the author's declared runtime, then tightening as the deadline nears), so the FE follows that value **verbatim** — seeded from `start.poll_after_seconds` and updated from each `fetch_dynamic_block`'s `poll_after_seconds`. One cadence, owned server-side; no duplicate client backoff to drift.
+- Dropped `POLL_START_MS`/`POLL_CEILING_MS`/`POLL_FACTOR`; added a `DEFAULT_POLL_SECONDS = 5` fallback used only if an older server omits the field. The overall client deadline (sized to the budget) is unchanged.
+
 ## [0.27.1] — 2026-06-30
 
 ### Fixed — Post Now no longer silently drops the Sent record (frontend-only)
