@@ -547,7 +547,11 @@ export interface CreatePostResult {
   status?: string;
   created_at?: string;
   idempotent?: boolean;
+  // Soft-error fields (the tool's catch_errors returns these instead of a post_id).
+  success?: boolean;
   error?: string;
+  error_code?: string;
+  message?: string;
 }
 
 export interface Recurrence {
@@ -585,7 +589,11 @@ export interface UpdatePostResult {
   status?: string;
   updated_at?: string;
   idempotent?: boolean;
+  // Soft-error fields (the tool's catch_errors returns these instead of a post_id).
+  success?: boolean;
   error?: string;
+  error_code?: string;
+  message?: string;
 }
 
 export async function updatePost(opts: {
