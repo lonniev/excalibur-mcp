@@ -5,6 +5,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.28.2] — 2026-07-01
+
+### Fixed — flag a selection that spans multiple blocks
+
+- Selecting text across 2+ blocks used to be rejected for flagging (the handler required the whole selection to sit inside one block). The selection is now mapped onto every block it covers — the start block's tail, any whole middle blocks, and the end block's head — and the "Flag for AI" chiclet creates a flag in each. Single-block selections are unchanged. Parts that overlap an existing flag are skipped.
+
 ## [0.28.1] — 2026-07-01
 
 ### Changed — bigger, always-visible block action bar (was tiny hover-only icons over the text)

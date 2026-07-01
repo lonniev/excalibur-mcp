@@ -49,7 +49,11 @@ import {
 
 type Kind = "post" | "snippet";
 type Freq = "none" | "daily" | "weekdays" | "weekly" | "monthly";
-interface Sel { blockId: string; start: number; end: number; x: number; y: number }
+// A selection to flag. `parts` is one range per spanned block (length 1 for a
+// single-block selection, 2+ when it crosses block boundaries). x/y position the
+// floating "Flag for AI" chiclet.
+interface SelPart { blockId: string; start: number; end: number }
+interface Sel { parts: SelPart[]; x: number; y: number }
 interface ActiveFlag { blockId: string; flagId: string }
 interface PillPos { blockId: string; flagId: string; x: number; y: number }
 // Cached resolution of a dynamic block, keyed by block id. `promptKey` is the
@@ -305,14 +309,14 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   // selected block, else the whole composed content.
   const focusedBlockText =
     (editingBlock ? blocks.find((b) => b.id === editingBlock)?.text : undefined) ??
-    (sel ? blocks.find((b) => b.id === sel.blockId)?.text : undefined) ??
+    (sel ? blocks.find((b) => b.id === sel.parts[0]?.blockId)?.text : undefined) ??
     composed;
   // The block the "Save the focused block" gesture targets — so saving a dynamic
   // block carries its full settings (dynamic/fallback/domains/maxFetches) into
   // the snippet doc, not just its text.
   const focusedBlock =
     (editingBlock ? blocks.find((b) => b.id === editingBlock) : undefined) ??
-    (sel ? blocks.find((b) => b.id === sel.blockId) : undefined) ??
+    (sel ? blocks.find((b) => b.id === sel.parts[0]?.blockId) : undefined) ??
     (blocks.length === 1 ? blocks[0] : undefined);
   const allFlags = useMemo(
     () => blocks.flatMap((b) => b.flags.map((f) => ({ ...f, blockId: b.id, blockText: b.text }))),
@@ -389,37 +393,64 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   }
 
   // ── selection → flag ──────────────────────────────────────────────────────
-  const onBlockMouseUp = useCallback((blockId: string, el: HTMLElement | null) => {
+  // Reads the live selection and maps its DOM Range onto the block(s) it covers
+  // (each block <p> carries data-block-id). A Range is always document-ordered,
+  // so its start block is the earlier one. Single-block → one part; a selection
+  // that crosses boundaries → one part per spanned block (start block's tail,
+  // whole middle blocks, end block's head). Called on mouse/touch-up from any
+  // block, so it works no matter where the drag ends.
+  const onBlockMouseUp = useCallback((_blockId: string, _el: HTMLElement | null) => {
     const s = window.getSelection();
-    if (!el || !s || s.isCollapsed || !s.rangeCount) { setSel(null); return; }
+    if (!s || s.isCollapsed || !s.rangeCount) { setSel(null); return; }
     const range = s.getRangeAt(0);
-    if (!el.contains(range.startContainer) || !el.contains(range.endContainer)) { setSel(null); return; }
-    let start = charOffset(el, range.startContainer, range.startOffset);
-    let end = charOffset(el, range.endContainer, range.endOffset);
-    if (start > end) [start, end] = [end, start];
-    if (end - start < 1) { setSel(null); return; }
+    const blockOf = (node: Node): HTMLElement | null =>
+      ((node.nodeType === 3 ? node.parentElement : (node as HTMLElement)) ?? null)?.closest<HTMLElement>("[data-block-id]") ?? null;
+    const startEl = blockOf(range.startContainer);
+    const endEl = blockOf(range.endContainer);
+    if (!startEl || !endEl) { setSel(null); return; }
+    const els = Array.from(document.querySelectorAll<HTMLElement>("[data-block-id]"));
+    const iStart = els.indexOf(startEl);
+    const iEnd = els.indexOf(endEl);
+    if (iStart < 0 || iEnd < 0) { setSel(null); return; }
+    const parts: SelPart[] = [];
+    if (iStart === iEnd) {
+      let a = charOffset(startEl, range.startContainer, range.startOffset);
+      let b = charOffset(startEl, range.endContainer, range.endOffset);
+      if (a > b) [a, b] = [b, a];
+      parts.push({ blockId: startEl.dataset.blockId!, start: a, end: b });
+    } else {
+      parts.push({ blockId: startEl.dataset.blockId!, start: charOffset(startEl, range.startContainer, range.startOffset), end: (startEl.textContent ?? "").length });
+      for (let i = iStart + 1; i < iEnd; i++) {
+        parts.push({ blockId: els[i].dataset.blockId!, start: 0, end: (els[i].textContent ?? "").length });
+      }
+      parts.push({ blockId: endEl.dataset.blockId!, start: 0, end: charOffset(endEl, range.endContainer, range.endOffset) });
+    }
+    const clean = parts.filter((p) => p.end - p.start >= 1);
+    if (!clean.length) { setSel(null); return; }
     const rect = range.getBoundingClientRect();
     setClearPill(null);
-    setSel({ blockId, start, end, x: rect.left + rect.width / 2, y: rect.top });
+    setSel({ parts: clean, x: rect.left + rect.width / 2, y: rect.top });
   }, []);
 
   function flagSelection() {
     if (!sel) return;
+    // Pre-generate the flag ids so the setBlocks updater is pure (safe under
+    // StrictMode double-invoke). Skip parts that overlap an existing flag.
+    const parts = sel.parts.map((p) => ({ ...p, flagId: uid() }));
+    let anyOverlap = false, firstMade: ActiveFlag | null = null;
     setBlocks((prev) => {
-      const total = prev.reduce((n, b) => n + b.flags.length, 0);
+      let total = prev.reduce((n, b) => n + b.flags.length, 0);
       return prev.map((b) => {
-        if (b.id !== sel.blockId) return b;
-        const candidate = { start: sel.start, end: sel.end };
-        if (b.flags.some((f) => overlaps(f, candidate))) {
-          setHint("That region overlaps an existing flag.");
-          return b;
-        }
-        const flag: FlagT = { id: uid(), start: sel.start, end: sel.end, note: "", suggestions: [], loading: false, error: "", colorIdx: total };
-        setActiveFlag({ blockId: b.id, flagId: flag.id });
-        setTab("flags");
+        const part = parts.find((p) => p.blockId === b.id);
+        if (!part) return b;
+        if (b.flags.some((f) => overlaps(f, { start: part.start, end: part.end }))) { anyOverlap = true; return b; }
+        firstMade ??= { blockId: b.id, flagId: part.flagId };
+        const flag: FlagT = { id: part.flagId, start: part.start, end: part.end, note: "", suggestions: [], loading: false, error: "", colorIdx: total++ };
         return { ...b, flags: [...b.flags, flag] };
       });
     });
+    if (firstMade) { setActiveFlag(firstMade); setTab("flags"); }
+    if (anyOverlap) setHint(firstMade ? "Skipped part of the selection that overlapped an existing flag." : "That overlaps an existing flag.");
     window.getSelection()?.removeAllRanges();
     setSel(null);
   }
@@ -1482,6 +1513,7 @@ function BlockView({
     <div className={`group relative flex flex-col gap-1 rounded-md ${overIndex === idx ? "ring-1 ring-amber-300" : ""}`} draggable {...dragHandlers}>
       <p
         ref={ref}
+        data-block-id={block.id}
         onMouseUp={() => onMouseUp(block.id, ref.current)}
         onTouchEnd={() => onMouseUp(block.id, ref.current)}
         className="cursor-text select-text whitespace-pre-wrap break-words text-[15px] leading-normal text-zinc-900"
