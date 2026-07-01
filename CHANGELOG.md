@@ -5,6 +5,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.29.1] — 2026-07-01
+
+### Fixed — flagging a selection is no longer a one-shot
+
+- The "Flag for AI" affordance used to vanish on the first stray tap or scroll (the chiclet was pinned to the live browser selection, and a scroll listener plus every empty tap cleared it). Now the selection is CAPTURED and PERSISTS: flag it via a stable bar fixed to the bottom of the screen (shows a preview of what you selected, with a Cancel ×). Scroll, miss a tap, or take your time — it stays until you flag it, dismiss it, make a new selection, or start editing a block.
+
 ## [0.29.0] — 2026-07-01
 
 ### Changed — a cross-block flag is ONE region / ONE LLM context
