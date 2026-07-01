@@ -5,6 +5,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.29.0] — 2026-07-01
+
+### Changed — a cross-block flag is ONE region / ONE LLM context
+
+- Flagging a selection that spans multiple blocks now creates a single region (parts share a `regionId`) instead of independent per-block flags. Refine sends the joined span as one region with the WHOLE post as context (previously only the block's text), and returns one set of suggestions. Applying a suggestion replaces the entire span as one piece, collapsing the spanned blocks into the revised passage (start head + revision + end tail; middle blocks drop). Blocks are an editing convenience — the reader sees one post. The Flags tab shows one row per region ("spans N blocks"); each spanned block still highlights its part.
+- Even single-block refines now use the whole composed post as context, not just the one block.
+
+### Fixed — Flag chiclet no longer hides under Safari's selection popup
+
+- The "Flag for AI" chiclet now appears BELOW the selection (Safari puts its own callout above), so the two no longer stack.
+
 ## [0.28.2] — 2026-07-01
 
 ### Fixed — flag a selection that spans multiple blocks
