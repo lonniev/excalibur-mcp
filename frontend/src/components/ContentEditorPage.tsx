@@ -424,6 +424,28 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     setSel(null);
   }
 
+  /// Flag the WHOLE block for AI review (the toolbar Flag button) — same as
+  /// selecting all its text. No selection needed, so it works on touch.
+  function flagBlock(blockId: string) {
+    setBlocks((prev) => {
+      const total = prev.reduce((n, b) => n + b.flags.length, 0);
+      return prev.map((b) => {
+        if (b.id !== blockId) return b;
+        const end = b.text.length;
+        if (end === 0) { setHint("Nothing to flag — this block is empty."); return b; }
+        const candidate = { start: 0, end };
+        if (b.flags.some((f) => overlaps(f, candidate))) {
+          setHint("That overlaps an existing flag — clear it first.");
+          return b;
+        }
+        const flag: FlagT = { id: uid(), start: 0, end, note: "", suggestions: [], loading: false, error: "", colorIdx: total };
+        setActiveFlag({ blockId: b.id, flagId: flag.id });
+        setTab("flags");
+        return { ...b, flags: [...b.flags, flag] };
+      });
+    });
+  }
+
   function removeFlag(blockId: string, flagId: string) {
     setBlocks((prev) => prev.map((b) => (b.id === blockId ? { ...b, flags: b.flags.filter((f) => f.id !== flagId) } : b)));
     setActiveFlag((a) => (a && a.flagId === flagId ? null : a));
@@ -1110,6 +1132,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
                         onEdit={() => setEditingBlock(b.id)}
                         onDoneEdit={() => setEditingBlock(null)}
                         onChange={(t) => setBlockText(b.id, t)}
+                        onFlagBlock={() => flagBlock(b.id)}
                         onDelete={() => deleteBlock(b.id)}
                         onMoveUp={() => moveBlock(idx, -1)}
                         onMoveDown={() => moveBlock(idx, 1)}
@@ -1244,7 +1267,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
 function BlockView({
   block, idx, preview, editing, activeFlagId, overIndex, resolved, onResolve,
   onToggleDynamic, onChangeFallback, onChangeDomains, onChangeMaxFetches, onChangeRuntimeLimit,
-  onMouseUp, onFlagClick, onEdit, onDoneEdit, onChange, onDelete, onMoveUp, onMoveDown, canDelete, dragHandlers,
+  onMouseUp, onFlagClick, onEdit, onDoneEdit, onChange, onFlagBlock, onDelete, onMoveUp, onMoveDown, canDelete, dragHandlers,
 }: {
   block: Block; idx: number; preview: boolean; editing: boolean; activeFlagId: string | null; overIndex: number | null;
   resolved?: ResolvedState; onResolve: () => void;
@@ -1253,7 +1276,7 @@ function BlockView({
   onChangeRuntimeLimit: (n: number) => void;
   onMouseUp: (blockId: string, el: HTMLElement | null) => void;
   onFlagClick: (flagId: string, rect: DOMRect) => void;
-  onEdit: () => void; onDoneEdit: () => void; onChange: (t: string) => void; onDelete: () => void;
+  onEdit: () => void; onDoneEdit: () => void; onChange: (t: string) => void; onFlagBlock: () => void; onDelete: () => void;
   onMoveUp: () => void; onMoveDown: () => void; canDelete: boolean;
   dragHandlers: HTMLAttributes<HTMLDivElement>;
 }) {
@@ -1349,16 +1372,19 @@ function BlockView({
             />
             <span className="flex-none text-[10px] text-violet-400">sec</span>
           </div>
-          <div className="mt-1.5 flex items-center gap-2">
+          <div className="mt-1.5 flex flex-wrap items-center gap-2">
             <button
               onClick={onResolve}
               disabled={resolved?.loading || !block.text.trim()}
-              className="flex items-center gap-1 rounded bg-violet-500 px-2 py-1 text-[11px] font-medium text-white hover:bg-violet-400 disabled:opacity-40"
+              className="flex items-center gap-1 rounded-md bg-violet-500 px-3 py-2 text-[12px] font-medium text-white hover:bg-violet-400 disabled:opacity-40"
             >
-              {resolved?.loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+              {resolved?.loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
               {resolved?.loading ? "Running…" : "Run"}
             </button>
             <span className="font-mono text-[10px] text-violet-400">preview the result here</span>
+            <span className="flex-1" />
+            <button onClick={onToggleDynamic} title="Turn this back into a plain text block" className="flex items-center gap-1.5 rounded-md px-2.5 py-2 text-[13px] font-medium text-violet-500 hover:bg-violet-100 transition-colors"><Wand2 className="h-4 w-4" /> Make static</button>
+            {canDelete && <button onClick={onDelete} title="Delete block" className="flex items-center gap-1.5 rounded-md px-2.5 py-2 text-[13px] font-medium text-zinc-500 hover:bg-rose-50 hover:text-rose-600 transition-colors"><Trash2 className="h-4 w-4" /> Delete</button>}
           </div>
           {result && (
             <p className="mt-1.5 rounded bg-white p-1.5 text-[13px] leading-snug text-zinc-900 ring-1 ring-emerald-200">
@@ -1366,9 +1392,6 @@ function BlockView({
             </p>
           )}
           {resolved?.error && <p className="mt-1.5 text-[11px] text-rose-500">{resolved.error}</p>}
-        </div>
-        <div className="absolute right-1 top-1 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-          {canDelete && <button onClick={onDelete} title="Delete block" className="rounded bg-white p-1 text-zinc-400 shadow hover:text-rose-500"><Trash2 className="h-3.5 w-3.5" /></button>}
         </div>
       </div>
     );
@@ -1452,18 +1475,16 @@ function BlockView({
       </div>
     );
   }
+  // Touch-sized toolbar buttons — a labelled action and an icon-only variant.
+  const tBtn = "flex items-center gap-1.5 rounded-md px-2.5 py-2 text-[13px] font-medium text-zinc-500 hover:bg-zinc-100 active:bg-zinc-200 transition-colors";
+  const tIcon = "flex items-center justify-center rounded-md p-2 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 transition-colors";
   return (
-    <div className={`group relative -ml-7 flex items-start gap-1 rounded-md pl-7 ${overIndex === idx ? "ring-1 ring-amber-300" : ""}`} draggable {...dragHandlers}>
-      <div className="absolute left-0 top-0 flex flex-col items-center opacity-0 transition-opacity group-hover:opacity-100">
-        <GripVertical className="h-4 w-4 cursor-grab text-zinc-300" />
-        <button onClick={onMoveUp} className="text-zinc-300 hover:text-amber-500"><ChevronUp className="h-3.5 w-3.5" /></button>
-        <button onClick={onMoveDown} className="text-zinc-300 hover:text-amber-500"><ChevronDown className="h-3.5 w-3.5" /></button>
-      </div>
+    <div className={`group relative flex flex-col gap-1 rounded-md ${overIndex === idx ? "ring-1 ring-amber-300" : ""}`} draggable {...dragHandlers}>
       <p
         ref={ref}
         onMouseUp={() => onMouseUp(block.id, ref.current)}
         onTouchEnd={() => onMouseUp(block.id, ref.current)}
-        className="flex-1 cursor-text select-text whitespace-pre-wrap break-words text-[15px] leading-normal text-zinc-900"
+        className="cursor-text select-text whitespace-pre-wrap break-words text-[15px] leading-normal text-zinc-900"
       >
         {segs.map((s, i) => {
           if (!s.flag) return <span key={i}>{s.text}</span>;
@@ -1477,10 +1498,16 @@ function BlockView({
           );
         })}
       </p>
-      <div className="absolute right-1 top-1 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-        <button onClick={onToggleDynamic} title="Make dynamic — turn this block's text into a prompt that runs at post time" className="rounded bg-white p-1 text-zinc-400 shadow hover:text-violet-500"><Wand2 className="h-3.5 w-3.5" /></button>
-        <button onClick={onEdit} title="Edit text" className="rounded bg-white p-1 text-zinc-400 shadow hover:text-amber-500"><Pencil className="h-3.5 w-3.5" /></button>
-        {canDelete && <button onClick={onDelete} title="Delete block" className="rounded bg-white p-1 text-zinc-400 shadow hover:text-rose-500"><Trash2 className="h-3.5 w-3.5" /></button>}
+      {/* Always-visible action bar BELOW the text — never covers it; touch-sized targets. */}
+      <div className="flex flex-wrap items-center gap-0.5 border-t border-zinc-100 pt-1">
+        <button onClick={onEdit} title="Edit text" className={tBtn}><Pencil className="h-4 w-4" /> Edit</button>
+        <button onClick={onToggleDynamic} title="Make dynamic — turn this block's text into a prompt that runs at post time" className={`${tBtn} hover:text-violet-600`}><Wand2 className="h-4 w-4" /> Dynamic</button>
+        <button onClick={onFlagBlock} title="Flag this whole block for AI review" className={`${tBtn} hover:text-amber-600`}><Flag className="h-4 w-4" /> Flag</button>
+        {canDelete && <button onClick={onDelete} title="Delete block" className={`${tBtn} hover:text-rose-600`}><Trash2 className="h-4 w-4" /> Delete</button>}
+        <span className="flex-1" />
+        <button onClick={onMoveUp} title="Move up" className={tIcon}><ChevronUp className="h-5 w-5" /></button>
+        <button onClick={onMoveDown} title="Move down" className={tIcon}><ChevronDown className="h-5 w-5" /></button>
+        <span className="cursor-grab p-2 text-zinc-300" title="Drag to reorder"><GripVertical className="h-4 w-4" /></span>
       </div>
     </div>
   );
