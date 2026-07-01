@@ -11,6 +11,10 @@ export interface Flag {
   loading: boolean;
   error: string;
   colorIdx: number;
+  // When set, this flag is one part of a region that spans multiple blocks.
+  // All parts of the same region share this id and are refined/applied as ONE
+  // context (the reader sees a single post; blocks are just editing units).
+  regionId?: string;
 }
 
 export interface Block {
@@ -128,8 +132,8 @@ export function hasDynamic(blocks: Block[]): boolean {
   return blocks.some((b) => b.dynamic);
 }
 
-function freshFlag(start: number, end: number, colorIdx: number, note = ""): Flag {
-  return { id: uid(), start, end, note, suggestions: [], loading: false, error: "", colorIdx };
+function freshFlag(start: number, end: number, colorIdx: number, note = "", regionId?: string): Flag {
+  return { id: uid(), start, end, note, suggestions: [], loading: false, error: "", colorIdx, ...(regionId ? { regionId } : {}) };
 }
 
 // ── persistence ──────────────────────────────────────────────────────────
@@ -141,6 +145,7 @@ interface StoredFlag {
   end: number;
   note?: string;
   colorIdx?: number;
+  regionId?: string;
 }
 interface StoredBlock {
   text: string;
@@ -197,7 +202,7 @@ export function parsePostDoc(doc: unknown, textCache?: string): Block[] {
       ? []
       : (b.flags ?? [])
           .filter((f) => typeof f.start === "number" && typeof f.end === "number" && f.end > f.start)
-          .map((f) => freshFlag(f.start, f.end, f.colorIdx ?? 0, f.note ?? "")),
+          .map((f) => freshFlag(f.start, f.end, f.colorIdx ?? 0, f.note ?? "", f.regionId)),
     ...(b.dynamic ? { dynamic: true } : {}),
     ...(b.fallback ? { fallback: b.fallback } : {}),
     ...(b.domains ? { domains: b.domains } : {}),
@@ -216,7 +221,7 @@ export function serializeBlocks(blocks: Block[]): PostDocPayload {
       text: b.text,
       flags: b.dynamic
         ? []
-        : b.flags.map((f) => ({ start: f.start, end: f.end, note: f.note, colorIdx: f.colorIdx })),
+        : b.flags.map((f) => ({ start: f.start, end: f.end, note: f.note, colorIdx: f.colorIdx, ...(f.regionId ? { regionId: f.regionId } : {}) })),
       ...(b.dynamic ? { dynamic: true } : {}),
       ...(b.fallback ? { fallback: b.fallback } : {}),
       ...(b.domains ? { domains: b.domains } : {}),

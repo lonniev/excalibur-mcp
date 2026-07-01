@@ -53,7 +53,10 @@ type Freq = "none" | "daily" | "weekdays" | "weekly" | "monthly";
 // single-block selection, 2+ when it crosses block boundaries). x/y position the
 // floating "Flag for AI" chiclet.
 interface SelPart { blockId: string; start: number; end: number }
-interface Sel { parts: SelPart[]; x: number; y: number }
+// x = horizontal centre; y = selection top; by = selection bottom. The chiclet
+// sits BELOW the selection (at `by`) so it clears Safari's own callout, which
+// prefers the space above the selection.
+interface Sel { parts: SelPart[]; x: number; y: number; by: number }
 interface ActiveFlag { blockId: string; flagId: string }
 interface PillPos { blockId: string; flagId: string; x: number; y: number }
 // Cached resolution of a dynamic block, keyed by block id. `promptKey` is the
@@ -318,10 +321,31 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     (editingBlock ? blocks.find((b) => b.id === editingBlock) : undefined) ??
     (sel ? blocks.find((b) => b.id === sel.parts[0]?.blockId) : undefined) ??
     (blocks.length === 1 ? blocks[0] : undefined);
-  const allFlags = useMemo(
-    () => blocks.flatMap((b) => b.flags.map((f) => ({ ...f, blockId: b.id, blockText: b.text }))),
-    [blocks],
-  );
+  // One row per flag — but a multi-block region (shared regionId) collapses to a
+  // SINGLE row (the earliest part is the primary; regionText is the joined span,
+  // regionParts lists every block range). Highlighting still uses each block's
+  // own flags, so all parts stay coloured in the tweet.
+  const allFlags = useMemo<FlagWithBlock[]>(() => {
+    const raw = blocks.flatMap((b, bi) => b.flags.map((f) => ({ ...f, blockId: b.id, blockText: b.text, bi })));
+    const regions = new Map<string, typeof raw>();
+    const out: FlagWithBlock[] = [];
+    for (const f of raw) {
+      if (!f.regionId) { out.push(f); continue; }
+      const arr = regions.get(f.regionId) ?? [];
+      arr.push(f);
+      regions.set(f.regionId, arr);
+    }
+    for (const arr of regions.values()) {
+      arr.sort((a, b) => a.bi - b.bi || a.start - b.start);
+      const primary = arr[0];
+      out.push({
+        ...primary,
+        regionText: arr.map((p) => p.blockText.slice(p.start, p.end)).join("\n\n"),
+        regionParts: arr.map((p) => ({ blockId: p.blockId, start: p.start, end: p.end })),
+      });
+    }
+    return out.sort((a, b) => (a.bi ?? 0) - (b.bi ?? 0) || a.start - b.start);
+  }, [blocks]);
 
   // Has the live document diverged from what we loaded? (Drives the swipe guard.)
   const dirty = useMemo(
@@ -429,13 +453,16 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     if (!clean.length) { setSel(null); return; }
     const rect = range.getBoundingClientRect();
     setClearPill(null);
-    setSel({ parts: clean, x: rect.left + rect.width / 2, y: rect.top });
+    setSel({ parts: clean, x: rect.left + rect.width / 2, y: rect.top, by: rect.bottom });
   }, []);
 
   function flagSelection() {
     if (!sel) return;
     // Pre-generate the flag ids so the setBlocks updater is pure (safe under
     // StrictMode double-invoke). Skip parts that overlap an existing flag.
+    // A selection crossing block boundaries becomes ONE region (shared
+    // regionId) so it refines as a single LLM context, not per-block.
+    const regionId = sel.parts.length > 1 ? uid() : undefined;
     const parts = sel.parts.map((p) => ({ ...p, flagId: uid() }));
     let anyOverlap = false, firstMade: ActiveFlag | null = null;
     setBlocks((prev) => {
@@ -445,7 +472,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
         if (!part) return b;
         if (b.flags.some((f) => overlaps(f, { start: part.start, end: part.end }))) { anyOverlap = true; return b; }
         firstMade ??= { blockId: b.id, flagId: part.flagId };
-        const flag: FlagT = { id: part.flagId, start: part.start, end: part.end, note: "", suggestions: [], loading: false, error: "", colorIdx: total++ };
+        const flag: FlagT = { id: part.flagId, start: part.start, end: part.end, note: "", suggestions: [], loading: false, error: "", colorIdx: total++, ...(regionId ? { regionId } : {}) };
         return { ...b, flags: [...b.flags, flag] };
       });
     });
@@ -477,8 +504,15 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     });
   }
 
-  function removeFlag(blockId: string, flagId: string) {
-    setBlocks((prev) => prev.map((b) => (b.id === blockId ? { ...b, flags: b.flags.filter((f) => f.id !== flagId) } : b)));
+  function removeFlag(_blockId: string, flagId: string) {
+    setBlocks((prev) => {
+      // Clearing any part of a region clears the whole region.
+      const rid = prev.flatMap((b) => b.flags).find((f) => f.id === flagId)?.regionId;
+      return prev.map((b) => ({
+        ...b,
+        flags: b.flags.filter((f) => (rid ? f.regionId !== rid : f.id !== flagId)),
+      }));
+    });
     setActiveFlag((a) => (a && a.flagId === flagId ? null : a));
     setClearPill((p) => (p && p.flagId === flagId ? null : p));
   }
@@ -490,15 +524,24 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
 
   // ── refine (server-side: MCP calls Claude with the operator's vaulted key) ──
   async function refine(blockId: string, flag: FlagT) {
-    const block = blocks.find((b) => b.id === blockId);
-    if (!block) return;
-    const region = block.text.slice(flag.start, flag.end);
+    // The region is ONE context: for a multi-block flag, join every part (in
+    // block order) with the paragraph break the reader sees; otherwise this
+    // block's slice. Either way the model gets the whole post as `fullText` —
+    // blocks are an editing convenience, the reader sees the composed post.
+    const bi = new Map(blocks.map((b, i) => [b.id, i] as const));
+    const parts = flag.regionId
+      ? blocks
+          .flatMap((b) => b.flags.filter((f) => f.regionId === flag.regionId).map((f) => ({ block: b, start: f.start, end: f.end })))
+          .sort((a, c) => (bi.get(a.block.id)! - bi.get(c.block.id)!) || (a.start - c.start))
+      : (() => { const b = blocks.find((x) => x.id === blockId); return b ? [{ block: b, start: flag.start, end: flag.end }] : []; })();
+    if (!parts.length) return;
+    const region = parts.map((p) => p.block.text.slice(p.start, p.end)).join("\n\n");
     const activeBans = bans.filter((b) => b.on).map((b) => b.text);
     updateFlag(blockId, flag.id, { loading: true, error: "", suggestions: [] });
     try {
       const r = await refinePostRegion({
         region,
-        fullText: block.text,
+        fullText: composed,
         instruction: flag.note,
         voice,
         bans: activeBans,
@@ -520,17 +563,46 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   }
 
   function applySuggestion(blockId: string, flag: FlagT, text: string) {
-    setBlocks((prev) => prev.map((b) => {
-      if (b.id !== blockId) return b;
-      const newText = b.text.slice(0, flag.start) + text + b.text.slice(flag.end);
-      const delta = text.length - (flag.end - flag.start);
-      const flags = b.flags
-        .filter((f) => f.id !== flag.id)
-        .map((f) => (f.start >= flag.end ? { ...f, start: f.start + delta, end: f.end + delta } : f));
-      return { ...b, text: newText, flags };
-    }));
+    if (!flag.regionId) {
+      // Single block: replace the flagged slice in place, shift later flags.
+      setBlocks((prev) => prev.map((b) => {
+        if (b.id !== blockId) return b;
+        const newText = b.text.slice(0, flag.start) + text + b.text.slice(flag.end);
+        const delta = text.length - (flag.end - flag.start);
+        const flags = b.flags
+          .filter((f) => f.id !== flag.id)
+          .map((f) => (f.start >= flag.end ? { ...f, start: f.start + delta, end: f.end + delta } : f));
+        return { ...b, text: newText, flags };
+      }));
+      setActiveFlag((a) => (a && a.flagId === flag.id ? null : a));
+      setHint("Region updated.");
+      return;
+    }
+    // Multi-block region: the revision replaces the WHOLE span as one piece.
+    // Collapse the spanned blocks into one — start block's head + revision + end
+    // block's tail — dropping the middle blocks (blocks are editing units; the
+    // reader sees one revised passage). Region flags drop; flags entirely before
+    // or after the span survive with adjusted offsets.
+    const rid = flag.regionId;
+    setBlocks((prev) => {
+      const idx = prev
+        .flatMap((b, i) => b.flags.filter((f) => f.regionId === rid).map((f) => ({ i, start: f.start, end: f.end })))
+        .sort((a, c) => a.i - c.i || a.start - c.start);
+      if (!idx.length) return prev;
+      const first = idx[0], last = idx[idx.length - 1];
+      const startBlock = prev[first.i], endBlock = prev[last.i];
+      const head = startBlock.text.slice(0, first.start);
+      const tail = endBlock.text.slice(last.end);
+      const tailDelta = (head.length + text.length) - last.end;
+      const keepStart = startBlock.flags.filter((f) => f.regionId !== rid && f.end <= first.start);
+      const keepEnd = endBlock.flags
+        .filter((f) => f.regionId !== rid && f.start >= last.end)
+        .map((f) => ({ ...f, start: f.start + tailDelta, end: f.end + tailDelta }));
+      const merged = { ...startBlock, text: head + text + tail, flags: [...keepStart, ...keepEnd] };
+      return [...prev.slice(0, first.i), merged, ...prev.slice(last.i + 1)];
+    });
     setActiveFlag((a) => (a && a.flagId === flag.id ? null : a));
-    setHint("Region updated.");
+    setHint("Region updated across blocks.");
   }
 
   // ── blocks: edit / reorder / add / delete ────────────────────────────────
@@ -964,7 +1036,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
       {sel && !preview && (
         <button
           onClick={flagSelection}
-          style={{ position: "fixed", left: sel.x, top: sel.y - 44, transform: "translateX(-50%)", zIndex: 50 }}
+          style={{ position: "fixed", left: sel.x, top: sel.by + 10, transform: "translateX(-50%)", zIndex: 50 }}
           className="flex items-center gap-1.5 rounded-full bg-amber-400 px-3 py-1.5 text-sm font-medium text-zinc-950 shadow-xl ring-1 ring-amber-300 hover:bg-amber-300 transition-colors"
         >
           <Flag className="h-3.5 w-3.5" /> Flag for AI
@@ -1545,7 +1617,15 @@ function BlockView({
   );
 }
 
-type FlagWithBlock = FlagT & { blockId: string; blockText: string };
+type FlagWithBlock = FlagT & {
+  blockId: string;
+  blockText: string;
+  bi?: number;
+  // Present on a multi-block region's primary row: the joined selected text and
+  // every block range the region covers.
+  regionText?: string;
+  regionParts?: { blockId: string; start: number; end: number }[];
+};
 
 // ── flags tab ─────────────────────────────────────────────────────────────
 function FlagsTab({
@@ -1570,14 +1650,20 @@ function FlagsTab({
     <div className="space-y-3">
       {allFlags.map((f) => {
         const isActive = active?.flagId === f.id;
-        const region = f.blockText.slice(f.start, f.end);
+        const region = f.regionText ?? f.blockText.slice(f.start, f.end);
+        const spanCount = f.regionParts?.length ?? 1;
         const c = paletteOf(f.colorIdx || 0);
         return (
           <div key={f.id} className={`rounded-lg border p-3 transition-colors ${isActive ? "border-amber-400 bg-zinc-900" : "border-zinc-800 bg-zinc-900"}`} onClick={() => setActive({ blockId: f.blockId, flagId: f.id })}>
             <div className="mb-2 flex items-start justify-between gap-2">
-              <div className="flex min-w-0 items-start gap-2">
-                <span className={`mt-1 h-2.5 w-2.5 flex-none rounded-full ${c.dot}`} />
-                <p className={`rounded ${c.mark} px-1.5 py-0.5 text-[13px] text-zinc-900`}>"{region}"</p>
+              <div className="flex min-w-0 flex-col items-start gap-1">
+                <div className="flex min-w-0 items-start gap-2">
+                  <span className={`mt-1 h-2.5 w-2.5 flex-none rounded-full ${c.dot}`} />
+                  <p className={`whitespace-pre-wrap rounded ${c.mark} px-1.5 py-0.5 text-[13px] text-zinc-900`}>"{region}"</p>
+                </div>
+                {spanCount > 1 && (
+                  <span className="ml-4 font-mono text-[10px] uppercase tracking-wider text-zinc-500">one region · spans {spanCount} blocks</span>
+                )}
               </div>
               <button onClick={(e) => { e.stopPropagation(); onRemove(f.blockId, f.id); }} title="Clear flag" className="flex flex-none items-center gap-1 rounded text-zinc-500 hover:text-rose-400"><Trash2 className="h-4 w-4" /></button>
             </div>
