@@ -5,6 +5,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.28.1] — 2026-07-01
+
+### Changed — bigger, always-visible block action bar (was tiny hover-only icons over the text)
+
+- The per-block actions (Edit, Make Dynamic, Flag, Delete, move) were tiny (14px) icons in a hover-only overlay positioned ON the block text — hard to hit (especially on touch, where there is no hover) and they obscured the words. Replaced with an always-visible action bar BELOW each block: touch-sized labelled buttons that never cover the text. Dynamic-block cards get the same treatment (visible Run / Make static / Delete row). Cross-block text selection is unchanged.
+- Added a per-block "Flag" button (flags the whole block for AI review) so flagging no longer requires a precise text selection — the floating select-to-flag pill still works for phrases.
+
 ## [0.28.0] — 2026-06-30
 
 ### Added — long dynamic-block posts defer to the scheduler; the runtime budget reaches the LLM
