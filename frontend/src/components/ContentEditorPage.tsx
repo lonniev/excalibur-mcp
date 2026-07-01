@@ -6,7 +6,7 @@ import {
   Sparkles, Flag, GripVertical, Pencil, Trash2, Plus, Calendar, Repeat,
   Octagon, Check, ChevronUp, ChevronDown, Eye, EyeOff,
   Wand2, Loader2, Swords, Save, Bold, Italic, Code, Smile, Star, Minus,
-  CopyPlus,
+  CopyPlus, X,
 } from "lucide-react";
 import { useSession } from "../App";
 import Avatar from "./Avatar";
@@ -53,10 +53,11 @@ type Freq = "none" | "daily" | "weekdays" | "weekly" | "monthly";
 // single-block selection, 2+ when it crosses block boundaries). x/y position the
 // floating "Flag for AI" chiclet.
 interface SelPart { blockId: string; start: number; end: number }
-// x = horizontal centre; y = selection top; by = selection bottom. The chiclet
-// sits BELOW the selection (at `by`) so it clears Safari's own callout, which
-// prefers the space above the selection.
-interface Sel { parts: SelPart[]; x: number; y: number; by: number }
+// A captured, PERSISTENT flag selection — one range per spanned block. It
+// survives scrolls and stray taps (the flag bar is fixed to the viewport, not
+// anchored to the selection), so it's not a one-shot; it clears only when
+// flagged, dismissed, or replaced by a new selection.
+interface Sel { parts: SelPart[] }
 interface ActiveFlag { blockId: string; flagId: string }
 interface PillPos { blockId: string; flagId: string; x: number; y: number }
 // Cached resolution of a dynamic block, keyed by block id. `promptKey` is the
@@ -301,7 +302,10 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   }, [hint]);
 
   useEffect(() => {
-    const clear = () => { setSel(null); setClearPill(null); };
+    // Only the anchored "clear flag" pill is scroll-fragile; the pending flag
+    // selection persists (its bar is fixed, not anchored to the selection), so
+    // a stray scroll no longer throws away what you were about to flag.
+    const clear = () => setClearPill(null);
     window.addEventListener("scroll", clear, true);
     return () => window.removeEventListener("scroll", clear, true);
   }, []);
@@ -425,17 +429,17 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   // block, so it works no matter where the drag ends.
   const onBlockMouseUp = useCallback((_blockId: string, _el: HTMLElement | null) => {
     const s = window.getSelection();
-    if (!s || s.isCollapsed || !s.rangeCount) { setSel(null); return; }
+    if (!s || s.isCollapsed || !s.rangeCount) { return; } // keep any pending selection; only a new valid one replaces it
     const range = s.getRangeAt(0);
     const blockOf = (node: Node): HTMLElement | null =>
       ((node.nodeType === 3 ? node.parentElement : (node as HTMLElement)) ?? null)?.closest<HTMLElement>("[data-block-id]") ?? null;
     const startEl = blockOf(range.startContainer);
     const endEl = blockOf(range.endContainer);
-    if (!startEl || !endEl) { setSel(null); return; }
+    if (!startEl || !endEl) { return; } // keep any pending selection; only a new valid one replaces it
     const els = Array.from(document.querySelectorAll<HTMLElement>("[data-block-id]"));
     const iStart = els.indexOf(startEl);
     const iEnd = els.indexOf(endEl);
-    if (iStart < 0 || iEnd < 0) { setSel(null); return; }
+    if (iStart < 0 || iEnd < 0) { return; } // keep any pending selection; only a new valid one replaces it
     const parts: SelPart[] = [];
     if (iStart === iEnd) {
       let a = charOffset(startEl, range.startContainer, range.startOffset);
@@ -450,10 +454,9 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
       parts.push({ blockId: endEl.dataset.blockId!, start: 0, end: charOffset(endEl, range.endContainer, range.endOffset) });
     }
     const clean = parts.filter((p) => p.end - p.start >= 1);
-    if (!clean.length) { setSel(null); return; }
-    const rect = range.getBoundingClientRect();
+    if (!clean.length) { return; } // keep any pending selection; only a new valid one replaces it
     setClearPill(null);
-    setSel({ parts: clean, x: rect.left + rect.width / 2, y: rect.top, by: rect.bottom });
+    setSel({ parts: clean });
   }, []);
 
   function flagSelection() {
@@ -1033,15 +1036,36 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
       {peekUrl !== null && (
         <TweetPreviewModal url={peekUrl} text={composed} onClose={() => setPeekUrl(null)} />
       )}
-      {sel && !preview && (
-        <button
-          onClick={flagSelection}
-          style={{ position: "fixed", left: sel.x, top: sel.by + 10, transform: "translateX(-50%)", zIndex: 50 }}
-          className="flex items-center gap-1.5 rounded-full bg-amber-400 px-3 py-1.5 text-sm font-medium text-zinc-950 shadow-xl ring-1 ring-amber-300 hover:bg-amber-300 transition-colors"
-        >
-          <Flag className="h-3.5 w-3.5" /> Flag for AI
-        </button>
-      )}
+      {sel && !preview && (() => {
+        // A STABLE, dismissible bar pinned to the bottom of the viewport — not a
+        // fleeting chiclet at the selection. The captured selection persists, so
+        // you can scroll, miss a tap, or take your time and still flag it.
+        const previewText = sel.parts
+          .map((p) => blocks.find((b) => b.id === p.blockId)?.text.slice(p.start, p.end) ?? "")
+          .join(" … ")
+          .replace(/\s+/g, " ")
+          .trim();
+        const shown = previewText.length > 60 ? previewText.slice(0, 57) + "…" : previewText;
+        return (
+          <div
+            style={{ position: "fixed", left: "50%", bottom: "max(1rem, env(safe-area-inset-bottom))", transform: "translateX(-50%)", zIndex: 50 }}
+            className="flex max-w-[92vw] items-center gap-1 rounded-full bg-amber-400 py-1.5 pl-4 pr-1.5 shadow-2xl ring-1 ring-amber-300"
+          >
+            <button onClick={flagSelection} className="flex min-w-0 items-center gap-2 text-sm font-semibold text-zinc-950">
+              <Flag className="h-4 w-4 flex-none" />
+              <span className="flex-none">Flag {sel.parts.length > 1 ? `${sel.parts.length} blocks` : "selection"}</span>
+              {shown && <span className="min-w-0 truncate font-normal text-zinc-800/80">— "{shown}"</span>}
+            </button>
+            <button
+              onClick={() => setSel(null)}
+              title="Cancel — don't flag this"
+              className="flex h-7 w-7 flex-none items-center justify-center rounded-full text-zinc-800 hover:bg-amber-300"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        );
+      })()}
       {clearPill && !preview && (
         <button
           onClick={() => removeFlag(clearPill.blockId, clearPill.flagId)}
@@ -1232,7 +1256,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
                           setSel(null);
                           setClearPill(rect ? { blockId: b.id, flagId, x: rect.left + rect.width / 2, y: rect.top } : null);
                         }}
-                        onEdit={() => setEditingBlock(b.id)}
+                        onEdit={() => { setEditingBlock(b.id); setSel(null); }}
                         onDoneEdit={() => setEditingBlock(null)}
                         onChange={(t) => setBlockText(b.id, t)}
                         onFlagBlock={() => flagBlock(b.id)}
