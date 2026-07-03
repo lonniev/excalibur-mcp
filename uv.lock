@@ -680,7 +680,7 @@ wheels = [
 
 [[package]]
 name = "excalibur-mcp"
-version = "0.28.0"
+version = "0.29.1"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
@@ -718,7 +718,7 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.1.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.3.0" },
-    { name = "tollbooth-dpyc", extras = ["nostr", "prefect"], specifier = "==0.59.0" },
+    { name = "tollbooth-dpyc", extras = ["nostr", "prefect"], specifier = "==0.59.1" },
 ]
 provides-extras = ["dev"]
 
@@ -2594,16 +2594,16 @@ sdist = { url = "https://files.pythonhosted.org/packages/bb/89/6df40b0c5fd9a1c30
 
 [[package]]
 name = "tollbooth-dpyc"
-version = "0.59.0"
+version = "0.59.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cryptography" },
     { name = "httpx" },
     { name = "pynostr" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5f/b4/8363bcab264ea02f3945297a6779aec56bb2897c23feadbc52cd038f2ec0/tollbooth_dpyc-0.59.0.tar.gz", hash = "sha256:1bfc5cbb8d1f03c451b9dd263122497b6917d861aa024a022e915d30dfd6f02f", size = 2547044, upload-time = "2026-06-30T16:05:18.906Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/28/c7/06291f2ff96110f25b29de680bae5404eb71056c7b788811f47badb228a7/tollbooth_dpyc-0.59.1.tar.gz", hash = "sha256:b9032ff6010255fde8f0a3a96e53a685bad29ffb6427f24a0ed18c3e71582c08", size = 2547631, upload-time = "2026-07-03T05:13:29.577Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9d/c4/2334f20f3b3dc30b7c3e4e0181d97d22d2532765d1351477a5da97a9403c/tollbooth_dpyc-0.59.0-py3-none-any.whl", hash = "sha256:025f76af88a96be2777eb9cae3a17929d79627f6506d8a080d65061ea59f5070", size = 347463, upload-time = "2026-06-30T16:05:16.707Z" },
+    { url = "https://files.pythonhosted.org/packages/14/d5/778c4734ff3204410977621ce0d4d43b927f01d75debf6034bd4d3308304/tollbooth_dpyc-0.59.1-py3-none-any.whl", hash = "sha256:4407552085f2555e9c1cf71581db212e304c89394b064fc8c895fdb4a4debaad", size = 347470, upload-time = "2026-07-03T05:13:27.754Z" },
 ]
 
 [package.optional-dependencies]
