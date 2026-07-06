@@ -743,7 +743,13 @@ export async function resolveDynamicBlock(args: {
   // Give the browser at least the author's budget (+ a poll/result buffer) so a
   // long block doesn't time out client-side before the job finishes.
   const deadline = Date.now() + Math.max(RESOLVE_MAX_WAIT_MS, budgetSeconds * 1000 + 60_000);
-  let waitMs = (start.poll_after_seconds ?? DEFAULT_POLL_SECONDS) * 1000;
+  // Probe EARLY on the first poll. The backend's budget-sized first wait (~75% of
+  // the author's runtime) is right for a job that runs the full budget — but a job
+  // that fails fast (e.g. the operator's AI provider is unfunded, surfaced only
+  // once the job starts) would otherwise sit "resolving…" for that whole first
+  // wait before the error shows. One quick probe surfaces early failures in
+  // seconds; after it we honor the backend's countdown verbatim for a live job.
+  let waitMs = Math.min((start.poll_after_seconds ?? DEFAULT_POLL_SECONDS) * 1000, 8_000);
   for (;;) {
     await new Promise((r) => setTimeout(r, waitMs));
     const f = await callTool<ClaimFetch>("fetch_dynamic_block", { claim_check: claim });
