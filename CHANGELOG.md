@@ -5,6 +5,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.29.2] — 2026-07-06
+
+### Added — fast-fail + operator alert when the AI provider is unfunded
+
+- Previewing or scheduling a post with a dynamic block no longer waits ~90 seconds to fall back when the operator's Anthropic account is out of credits. `resolve_dynamic_block` now runs a cheap synchronous probe first (a 1-token call — a 400 "credit balance too low" bills nothing) and, on a definitive provider-down result (unfunded or auth), returns "aborted — fee refunded" in ~1 second **with the reason**, instead of handing back a claim check that fails only on a later poll. Transient blips (429/5xx) still fall through to the real attempt.
+- When that fast-fail trips, the operator gets a self-DM (operator npub → operator npub, surfaced in Pricing Studio): *"⚡ eXcalibur can't resolve dynamic post blocks — your Anthropic account is out of credits. Add credit at console.anthropic.com."* Best-effort and non-blocking (relay I/O runs off the response path).
+
 ## [0.29.1] — 2026-07-01
 
 ### Fixed — flagging a selection is no longer a one-shot

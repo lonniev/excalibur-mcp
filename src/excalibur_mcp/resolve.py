@@ -230,6 +230,42 @@ def extract_resolved_text(raw_json: dict[str, Any]) -> str:
     return text
 
 
+async def preflight_anthropic(
+    api_key: str, timeout_seconds: float = 12.0,
+) -> tuple[int, Any] | None:
+    """Cheap synchronous funding/auth probe, run before deferring a resolve to a job.
+
+    Fires a minimal 1-token generation. Returns ``None`` when the account is
+    healthy (HTTP 200); otherwise ``(status_code, body_json_or_None)`` so the
+    caller can curate the situation. A 400 "credit balance too low" bills nothing,
+    so this is a free way to fail fast when the operator's Anthropic account is
+    unfunded, instead of handing back a claim check that the patron polls for ~90s
+    before it fails. Propagates transport errors (timeout / connection) so the
+    caller can fall through to the real attempt rather than block on a probe.
+    """
+    async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+        resp = await client.post(
+            _ENDPOINT,
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": _MODEL,
+                "max_tokens": 1,
+                "messages": [{"role": "user", "content": "ping"}],
+            },
+        )
+    if resp.status_code == 200:
+        return None
+    try:
+        body: Any = resp.json()
+    except Exception:  # noqa: BLE001 — a non-JSON error body still carries a status
+        body = None
+    return (resp.status_code, body)
+
+
 async def resolve_block(
     *,
     api_key: str,
