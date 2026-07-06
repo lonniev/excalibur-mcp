@@ -173,3 +173,46 @@ async def test_resolve_block_recomposes_build_and_extract():
 async def test_resolve_block_empty_prompt_raises():
     with pytest.raises(ValueError):
         await resolve_block(api_key="k", prompt="   ")
+
+
+class _ProbeResp:
+    def __init__(self, status, body=None):
+        self.status_code = status
+        self._body = body
+
+    def json(self):
+        if self._body is None:
+            raise ValueError("no body")
+        return self._body
+
+
+@pytest.mark.asyncio
+async def test_preflight_anthropic_healthy_returns_none():
+    async def fake_post(self, url, **kwargs):
+        assert kwargs["json"]["max_tokens"] == 1  # cheap 1-token probe
+        return _ProbeResp(200)
+
+    with patch.object(resolve.httpx.AsyncClient, "post", fake_post):
+        assert await resolve.preflight_anthropic("k") is None
+
+
+@pytest.mark.asyncio
+async def test_preflight_anthropic_unfunded_returns_status_and_body():
+    body = {"error": {"message": "Your credit balance is too low to run this request."}}
+
+    async def fake_post(self, url, **kwargs):
+        return _ProbeResp(400, body)
+
+    with patch.object(resolve.httpx.AsyncClient, "post", fake_post):
+        probe = await resolve.preflight_anthropic("k")
+    assert probe == (400, body)
+
+
+@pytest.mark.asyncio
+async def test_preflight_anthropic_nonjson_error_body_still_yields_status():
+    async def fake_post(self, url, **kwargs):
+        return _ProbeResp(401)  # .json() raises → body is None, status preserved
+
+    with patch.object(resolve.httpx.AsyncClient, "post", fake_post):
+        probe = await resolve.preflight_anthropic("k")
+    assert probe == (401, None)

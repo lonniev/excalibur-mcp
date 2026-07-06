@@ -913,6 +913,39 @@ async def resolve_dynamic_block(
             ),
         }
 
+    # Fast-fail on a definitively-down AI provider (almost always an unfunded
+    # Anthropic account). The funding 400 is instant upstream, but the async job
+    # only runs when polled — so without this the patron waits ~90s to learn the
+    # provider is out of funds. A cheap synchronous probe returns "aborted, fee
+    # refunded" in ~1s instead, and DMs the operator to "feed me". A 400 "credit
+    # balance too low" bills nothing. Transient blips (429/5xx) fall through to
+    # the real attempt; a probe transport error never blocks it.
+    try:
+        from excalibur_mcp.resolve import preflight_anthropic
+
+        probe = await preflight_anthropic(key)
+    except Exception:  # noqa: BLE001 — the probe is an optimization, not a gate
+        probe = None
+    if probe is not None:
+        status, body = probe
+        situation = _resolve_failure_situation(status, _anthropic_error_message(body))
+        if not situation.transient:
+            await runtime.rollback_debit(tool_id, npub)
+            await _alert_operator_provider_down(situation)
+            return {
+                "success": False,
+                "status": "error",
+                "error_code": situation.error_code,
+                "message": (
+                    f"{situation.message} {situation.next_steps}".strip()
+                    if situation.next_steps
+                    else situation.message
+                ),
+                "next_steps": situation.next_steps,
+                "transient": situation.transient,
+                "refunded": True,
+            }
+
     # Author's declared time budget bounds both the runtime ceiling and the poll
     # cadence (passed as expected_seconds so the first poll waits ~75% of it).
     budget = max(60, min(int(runtime_limit_seconds or 210), 900))
@@ -1019,6 +1052,54 @@ def _empty_result_situation() -> AsyncJobSituation:
         next_steps="Try rewording the block's prompt, then resolve again.",
         transient=True,
     )
+
+
+async def _alert_operator_provider_down(situation: AsyncJobSituation) -> None:
+    """DM the operator (from the operator npub) that dynamic-block resolution is
+    down because the AI provider rejected the call — almost always an unfunded
+    Anthropic account. A self-DM Pricing Studio surfaces, so the human running the
+    operator sees "feed me" without watching logs.
+
+    Best-effort: relay I/O runs on a daemon thread so the patron's fast-fail
+    response is never delayed, and any failure is swallowed. Only definitive
+    (non-transient) provider-down situations reach here — a transient blip is not
+    a funding problem.
+    """
+    try:
+        operator_npub = runtime.operator_npub()
+        courier = await runtime.courier()
+        exchange = getattr(courier, "_exchange", None)
+    except Exception:  # noqa: BLE001 — a courtesy alert never breaks the caller
+        return
+    if not operator_npub or exchange is None:
+        return
+
+    if situation.error_code == "operator_llm_unfunded":
+        body = (
+            "⚡ eXcalibur can't resolve dynamic post blocks\n\n"
+            "Your Anthropic account is out of credits, so every dynamic block is "
+            "falling back to its static text. Add credit at console.anthropic.com "
+            "and resolution resumes automatically — no redeploy needed.\n\n"
+            "A patron just hit this previewing or scheduling a post. No fare was charged."
+        )
+    else:
+        body = (
+            "⚡ eXcalibur can't resolve dynamic post blocks\n\n"
+            "Your Anthropic API access was rejected (auth / misconfiguration), so "
+            "dynamic blocks can't resolve. Check the operator's Anthropic key, then "
+            "dynamic posts resume.\n\n"
+            "A patron just hit this previewing or scheduling a post. No fare was charged."
+        )
+
+    def _run() -> None:
+        try:
+            exchange.send_dm(operator_npub, body)
+        except Exception:  # noqa: BLE001 — courtesy DM, non-blocking
+            logger.debug("operator provider-down DM failed (courtesy)", exc_info=True)
+
+    import threading
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 async def _resolve_dynamic_runner(
