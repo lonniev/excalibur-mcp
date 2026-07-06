@@ -46,6 +46,9 @@ import {
   parsePostDoc, segmentize, serializeBlocks, uid,
   type Ban, type Block, type Flag as FlagT,
 } from "../lib/editorDoc";
+import {
+  clearDraft, draftIsUnsaved, readDraft, saveError, writeDraft, type LocalDraft,
+} from "../lib/postDraft";
 
 type Kind = "post" | "snippet";
 type Freq = "none" | "daily" | "weekdays" | "weekly" | "monthly";
@@ -121,6 +124,10 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   const [loading, setLoading] = useState(!isNew);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A device-local autosave that is newer than the server's copy — surfaced as a
+  // "restore unsaved edits" banner so a blocked save / reload / crash never
+  // silently loses the author's work (posts only; snippets save elsewhere).
+  const [pendingDraft, setPendingDraft] = useState<LocalDraft | null>(null);
   const [needsXConnect, setNeedsXConnect] = useState(false);
   const [postedUrl, setPostedUrl] = useState<string | null>(null);
   // The tweet URL of a post that has already gone out — hydrated on load and on
@@ -181,6 +188,12 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
       const init: Block[] = [{ id: uid(), text: "", flags: [] }];
       setBlocks(init);
       baseline.current = sigOf(init, "", "none", 1, "", "");
+      // A leftover autosave for a never-saved compose means the last attempt to
+      // create it didn't land — offer it back rather than starting blank.
+      if (!isSnippet) {
+        const d = readDraft("new");
+        if (draftIsUnsaved(d, null)) setPendingDraft(d);
+      }
       setLoading(false);
       return;
     }
@@ -208,6 +221,8 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     const hit = postCache.current.get(id!);
     if (hit) {
       applyPostRow(hit);
+      const d = readDraft(id!);
+      setPendingDraft(draftIsUnsaved(d, hit.updated_at) ? d : null);
       finishLoad();
       return () => { live = false; };
     }
@@ -219,6 +234,8 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
         if (row.error) { setError(row.error); finishLoad(); return; }
         postCache.current.set(id!, row);
         applyPostRow(row);
+        const d = readDraft(id!);
+        setPendingDraft(draftIsUnsaved(d, row.updated_at) ? d : null);
         finishLoad();
       })
       .catch((e) => { if (live) { setError((e as Error).message); finishLoad(); } });
@@ -357,6 +374,19 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
       && sigOf(blocks, publishAt, freq, interval, ceaseAt, title) !== baseline.current,
     [blocks, publishAt, freq, interval, ceaseAt, title, sigOf],
   );
+
+  // Mirror the working post to device-local storage as the author edits — but
+  // only once it diverges from the loaded copy (`dirty`), so a fresh load never
+  // clobbers a genuinely-unsaved draft before the restore banner can offer it.
+  // Debounced; posts only; a confirmed save clears the draft (see persist()).
+  useEffect(() => {
+    if (isSnippet || loading || !dirty) return;
+    const key = id ?? "new";
+    const t = window.setTimeout(() => {
+      writeDraft(key, { doc: serializeBlocks(blocks), title, publishAt, freq, interval, ceaseAt });
+    }, 800);
+    return () => window.clearTimeout(t);
+  }, [isSnippet, loading, dirty, id, blocks, title, publishAt, freq, interval, ceaseAt]);
   const curIndex = useMemo(
     () => (isNew ? -1 : neighbors.findIndex((p) => p.post_id === id)),
     [neighbors, id, isNew],
@@ -753,6 +783,24 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preview, blocks]);
 
+  // Apply an autosaved draft the load offered back. The loaded server copy stays
+  // as the dirty baseline, so the restored work reads as clearly unsaved.
+  const restoreDraft = useCallback((d: LocalDraft) => {
+    setBlocks(parsePostDoc(d.doc));
+    setTitle(d.title ?? "");
+    setPublishAt(d.publishAt ?? "");
+    setFreq((d.freq as Freq) ?? "none");
+    setIntervalN(d.interval && d.interval > 0 ? d.interval : 1);
+    setCeaseAt(d.ceaseAt ?? "");
+    setPendingDraft(null);
+    setHint("Restored your unsaved edits — Save when ready.");
+  }, []);
+
+  const discardDraft = useCallback(() => {
+    clearDraft(id ?? "new");
+    setPendingDraft(null);
+  }, [id]);
+
   // ── persistence ───────────────────────────────────────────────────────────
   async function persist(scheduled: boolean) {
     if (!composed.trim()) { setError("Write something first."); return; }
@@ -765,6 +813,9 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     const recurrence: Recurrence | undefined =
       scheduled && freq !== "none" ? { freq, interval: Math.max(1, Number(interval) || 1) } : undefined;
     const ceaseIso = ceaseAt ? new Date(ceaseAt).toISOString() : undefined;
+    // A schedule time already in the past won't miss — it fires on the next
+    // scheduler tick. Say so, so the post isn't perceived as "not scheduled".
+    const pastTime = !!publishIso && new Date(publishIso).getTime() < Date.now();
     try {
       if (isNew) {
         const r = await createPost({
@@ -772,8 +823,13 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
           publishAt: publishIso, recurrence, ceaseAt: ceaseIso, clientReqId: createReqId.current,
           title: title.trim() || undefined,
         });
-        if (r.error) setError(r.error);
-        else if (r.post_id) nav(`/post/${r.post_id}`, { replace: true });
+        // Treat a soft failure / unconfirmed response as failure: surface it and
+        // KEEP the author's work (still autosaved, still dirty) — never navigate
+        // away on an unconfirmed create.
+        const fail = saveError(r);
+        if (fail) { setError(fail); return; }
+        clearDraft("new");
+        if (r.post_id) nav(`/post/${r.post_id}`, { replace: true });
       } else {
         // Always send title (even blank) so clearing it persists as NULL.
         const patch: Record<string, unknown> = { doc: docPayload, status, title: title.trim() };
@@ -781,12 +837,14 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
         if (recurrence) patch.recurrence = recurrence;
         if (ceaseIso) patch.cease_at = ceaseIso;
         const r = await updatePost({ postId: id!, patch, textCache: composed, clientReqId: uid() });
-        if (r.error) setError(r.error);
-        else {
-          setHint(scheduled ? "Scheduled." : "Saved.");
-          baseline.current = sigOf(blocks, publishAt, freq, interval, ceaseAt, title);
-          postCache.current.delete(id!); // saved content differs from any cached row
-        }
+        const fail = saveError(r);
+        // On a blocked/unconfirmed save, DON'T clear the dirty baseline or the
+        // cache — the edit stays put, swipe-guarded and retryable, never lost.
+        if (fail) { setError(fail); return; }
+        setHint(scheduled ? (pastTime ? "Scheduled — its time has passed, so it posts on the next scheduler run." : "Scheduled.") : "Saved.");
+        baseline.current = sigOf(blocks, publishAt, freq, interval, ceaseAt, title);
+        clearDraft(id!);
+        postCache.current.delete(id!); // saved content differs from any cached row
       }
     } catch (e) {
       setError((e as Error).message);
@@ -946,6 +1004,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
         debugPush("info", `Deferred to scheduler (budget ${maxBudget}s) — due ~now+10s`);
         setHint("Scheduled — its blocks resolve in the background and it posts shortly.");
         baseline.current = sigOf(blocks, publishAt, freq, interval, ceaseAt, title);
+        clearDraft(id ?? "new");
         if (isNew && saved.post_id) nav(`/post/${saved.post_id}`, { replace: true });
         return;
       }
@@ -991,6 +1050,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
       }
       setHint("Posted to X.");
       baseline.current = sigOf(blocks, publishAt, freq, interval, ceaseAt, title);
+      clearDraft(id ?? "new");
       if (id) postCache.current.delete(id); // sent status differs from any cached row
     } catch (e) {
       setError((e as Error).message);
@@ -1163,6 +1223,28 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
           </button>
         </div>
       </header>
+
+      {/* Unsaved-edits banner: a device-local autosave newer than the server copy
+          means a save never landed — offer the work back instead of losing it. */}
+      {pendingDraft && !isSnippet && (
+        <div className="flex flex-wrap items-center gap-3 border-b border-amber-500/30 bg-amber-500/10 px-5 py-2.5 text-sm text-amber-200">
+          <span className="min-w-0 flex-1">
+            You have unsaved edits from {new Date(pendingDraft.savedAt).toLocaleString()} that never finished saving.
+          </span>
+          <button
+            onClick={() => restoreDraft(pendingDraft)}
+            className="rounded-md bg-amber-400 px-3 py-1 text-xs font-medium text-zinc-950 hover:bg-amber-300"
+          >
+            Restore
+          </button>
+          <button
+            onClick={discardDraft}
+            className="rounded-md border border-amber-500/40 px-3 py-1 text-xs text-amber-200 hover:border-amber-400"
+          >
+            Discard
+          </button>
+        </div>
+      )}
 
       {/* Posted-to-X banner: a Sent post always shows its actual X link; clicking
           peeks at the tweet in a modal (no jumping out of the site). */}
