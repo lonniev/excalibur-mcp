@@ -1495,21 +1495,38 @@ function BlockView({
   const segs = useMemo(() => segmentize(block.text, block.flags), [block.text, block.flags]);
 
   if (preview) {
-    // A dynamic block shows its resolved (dry-run) text — loading/fallback while
-    // it resolves or if it failed. The live post resolves fresh at fire time.
+    // A dynamic block shows its resolved (dry-run) text. While it resolves we show
+    // a spinner WITH the author's time budget, so the wait isn't a mystery. If it
+    // FAILS we still show the fallback text — but now with a visible reason, so a
+    // silent fallback never masquerades as a successful resolve. The live post
+    // resolves fresh at fire time.
     if (block.dynamic) {
       if (resolved?.loading) {
         return (
           <p className="flex items-center gap-1.5 text-[15px] italic leading-normal text-zinc-400">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" /> resolving…
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> resolving… (up to {block.runtimeLimit ?? 210}s)
           </p>
         );
       }
+      const failed = !!resolved?.error;
       const shown = resolved?.text || block.fallback || "";
       return (
-        <p className="whitespace-pre-wrap break-words text-[15px] leading-normal text-zinc-900">
-          {shown || <span className="italic text-zinc-400">(dynamic block — no preview yet)</span>}
-        </p>
+        <>
+          {shown ? (
+            <p className="whitespace-pre-wrap break-words text-[15px] leading-normal text-zinc-900">{shown}</p>
+          ) : !failed ? (
+            <p className="text-[15px] italic leading-normal text-zinc-400">(dynamic block — no preview yet)</p>
+          ) : null}
+          {failed && (
+            <p className="mt-1 flex items-start gap-1.5 text-[12px] leading-snug text-amber-600" title={resolved!.error}>
+              <span aria-hidden className="mt-px flex-none">⚠</span>
+              <span>
+                {shown ? "Showing fallback — the dynamic prompt didn’t resolve: " : "The dynamic prompt didn’t resolve: "}
+                {resolved!.error}
+              </span>
+            </p>
+          )}
+        </>
       );
     }
     return <p className="whitespace-pre-wrap break-words text-[15px] leading-normal text-zinc-900">{block.text}</p>;
