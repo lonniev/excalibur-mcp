@@ -9,8 +9,12 @@ import TweetPreviewModal from "./TweetPreviewModal";
 import { PageControls, SortHeader, TableShell } from "./PagedTable";
 import TableFilter from "./TableFilter";
 import QuoteScroller from "./QuoteScroller";
+import SchedulerHealth from "./SchedulerHealth";
 
-const STATUS_FILTERS = ["", "draft", "scheduled", "paused", "sent", "archived"] as const;
+// `sending` is the transient state the scheduler stamps when it claims a due post
+// to fire it. It's included here so a claimed (or stuck) post is never invisible —
+// a post that leaves `scheduled` but hasn't reached `sent` can always be found.
+const STATUS_FILTERS = ["", "draft", "scheduled", "sending", "paused", "sent", "archived"] as const;
 const DATE_FIELDS = [
   { value: "created", label: "Created" },
   { value: "updated", label: "Updated" },
@@ -77,6 +81,7 @@ export default function PostsPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [reposting, setReposting] = useState<string | null>(null);
   const [resuming, setResuming] = useState<string | null>(null);
+  const [returningToDraft, setReturningToDraft] = useState<string | null>(null);
   const [duplicating, setDuplicating] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ url: string; text: string } | null>(null);
 
@@ -171,6 +176,30 @@ export default function PostsPage() {
     }
   }
 
+  // Return a post to Draft — the universal rescue for a post that left the table's
+  // active views: a scheduled/paused one you want to pull back, or one the
+  // scheduler claimed (`sending`) and couldn't finish. Draft is excluded from the
+  // scheduler's due set, so this cleanly unschedules it for editing.
+  async function handleReturnToDraft(e: React.MouseEvent, id: string) {
+    e.stopPropagation();
+    e.preventDefault();
+    setError(null);
+    setNotice(null);
+    setReturningToDraft(id);
+    try {
+      const r = await updatePost({ postId: id, patch: { status: "draft" }, clientReqId: uid() });
+      if (r.error) setError(r.error);
+      else {
+        setNotice("Returned to Draft — it won't post until you schedule it again.");
+        await refresh();
+      }
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setReturningToDraft(null);
+    }
+  }
+
   // Duplicate a post: a deep copy of its content AND schedule (publish time,
   // recurrence cadence, cease date) into a fresh draft, then open it in the
   // editor. The copy lands as `draft`, so even with a publish time carried over
@@ -210,8 +239,9 @@ export default function PostsPage() {
       {preview && (
         <TweetPreviewModal url={preview.url} text={preview.text} onClose={() => setPreview(null)} />
       )}
-      <div className="flex items-center mb-4">
+      <div className="flex items-center gap-3 mb-4">
         <h1 className="text-lg font-semibold">Posts</h1>
+        <SchedulerHealth />
         <Link
           to="/new"
           className="ml-auto bg-amber-600 hover:bg-amber-500 text-white text-sm px-4 py-2 rounded-lg transition-colors"
@@ -329,6 +359,14 @@ export default function PostsPage() {
                         ⏸ {attemptLabel(p.last_attempt_reason)}
                       </span>
                     )}
+                    {p.status === "sending" && (
+                      <span
+                        className="mt-1 flex items-center gap-1 text-[11px] text-sky-600 dark:text-sky-400"
+                        title={`The scheduler claimed this post${p.last_attempt_at ? ` at ${fmt(p.last_attempt_at)}` : ""} and is posting it. If it lingers here, use "to draft" to rescue it.`}
+                      >
+                        ⟳ working…
+                      </span>
+                    )}
                   </td>
                   <td className="px-3 py-2.5 align-top max-w-md">
                     {p.title ? (
@@ -370,6 +408,11 @@ export default function PostsPage() {
                       {p.status === "paused" && (
                         <span role="button" onClick={(e) => handleResume(e, p.post_id)} className="hover:text-amber-600 dark:hover:text-amber-400 cursor-pointer" title="Resume: reschedule this post so the next scheduler tick posts it">
                           {resuming === p.post_id ? "…" : "resume"}
+                        </span>
+                      )}
+                      {(p.status === "sending" || p.status === "scheduled" || p.status === "paused") && (
+                        <span role="button" onClick={(e) => handleReturnToDraft(e, p.post_id)} className={action} title="Return to Draft — unschedule this post so you can edit it (rescues a post stuck mid-send)">
+                          {returningToDraft === p.post_id ? "…" : "to draft"}
                         </span>
                       )}
                       {p.status === "sent" && (
