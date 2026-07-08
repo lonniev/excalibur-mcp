@@ -680,7 +680,7 @@ wheels = [
 
 [[package]]
 name = "excalibur-mcp"
-version = "0.29.1"
+version = "0.30.0"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
@@ -718,7 +718,7 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.1.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.3.0" },
-    { name = "tollbooth-dpyc", extras = ["nostr", "prefect"], specifier = "==0.59.1" },
+    { name = "tollbooth-dpyc", extras = ["nostr", "prefect"], specifier = "==0.60.0" },
 ]
 provides-extras = ["dev"]
 
@@ -1537,8 +1537,8 @@ name = "pendulum"
 version = "3.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "python-dateutil", marker = "python_full_version < '3.13'" },
-    { name = "tzdata", marker = "python_full_version < '3.13'" },
+    { name = "python-dateutil" },
+    { name = "tzdata" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/cb/72/9a51afa0a822b09e286c4cb827ed7b00bc818dac7bd11a5f161e493a217d/pendulum-3.2.0.tar.gz", hash = "sha256:e80feda2d10fa3ff8b1526715f7d33dcb7e08494b3088f2c8a3ac92d4a4331ce", size = 86912, upload-time = "2026-01-30T11:22:24.093Z" }
 wheels = [
@@ -2594,16 +2594,16 @@ sdist = { url = "https://files.pythonhosted.org/packages/bb/89/6df40b0c5fd9a1c30
 
 [[package]]
 name = "tollbooth-dpyc"
-version = "0.59.1"
+version = "0.60.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cryptography" },
     { name = "httpx" },
     { name = "pynostr" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/28/c7/06291f2ff96110f25b29de680bae5404eb71056c7b788811f47badb228a7/tollbooth_dpyc-0.59.1.tar.gz", hash = "sha256:b9032ff6010255fde8f0a3a96e53a685bad29ffb6427f24a0ed18c3e71582c08", size = 2547631, upload-time = "2026-07-03T05:13:29.577Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/80/26/5668459b69c692d95e149b1efbaee6abb390c10aed31a558674670f6ed49/tollbooth_dpyc-0.60.0.tar.gz", hash = "sha256:daaf0f43de615916bd46ce601e173a26ca1c930517f9d856660142d7b296c5db", size = 2550926, upload-time = "2026-07-08T14:25:17.575Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/14/d5/778c4734ff3204410977621ce0d4d43b927f01d75debf6034bd4d3308304/tollbooth_dpyc-0.59.1-py3-none-any.whl", hash = "sha256:4407552085f2555e9c1cf71581db212e304c89394b064fc8c895fdb4a4debaad", size = 347470, upload-time = "2026-07-03T05:13:27.754Z" },
+    { url = "https://files.pythonhosted.org/packages/eb/62/7aaafc2f18096873d7fa28137022e9a406c362f28d9f1b9d26dbf5dbde20/tollbooth_dpyc-0.60.0-py3-none-any.whl", hash = "sha256:fbac2a2dbdd3cae0f7d1d3e0d9cdc0cc77a8a452762206015483677f5b76ad5c", size = 349453, upload-time = "2026-07-08T14:25:15.863Z" },
 ]
 
 [package.optional-dependencies]
@@ -2859,8 +2859,8 @@ name = "whenever"
 version = "0.10.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "tzdata", marker = "python_full_version >= '3.13' and sys_platform == 'win32'" },
-    { name = "tzlocal", marker = "python_full_version >= '3.13' and sys_platform != 'darwin' and sys_platform != 'linux'" },
+    { name = "tzdata", marker = "sys_platform == 'win32'" },
+    { name = "tzlocal", marker = "sys_platform != 'darwin' and sys_platform != 'linux'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/fd/13/281bc0bc19f0e2e9559a22137607271d6e684b0f9bcbaf0a95b95a5e9258/whenever-0.10.0.tar.gz", hash = "sha256:a5ef2b5493531de95294080495d4d9bce9691b4b3d681c6952c7a8b3d52d7a04", size = 429588, upload-time = "2026-04-05T18:43:50.199Z" }
 wheels = [
