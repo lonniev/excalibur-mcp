@@ -5,6 +5,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.30.0] — 2026-07-07
+
+### Changed — editing a scheduled post no longer silently unschedules it
+
+- **Save keeps a scheduled post scheduled.** Previously, editing a queued post and pressing "Save draft" wrote the edits to the same row but flipped its status back to `draft` — quietly dropping it out of the scheduler's due query, so it never posted. Now, saving an already-scheduled post preserves `status='scheduled'` and re-sends its publish time / recurrence / cease date, so both the edited content and the queue entry persist. On a scheduled post the button reads **"Save changes"** (with a tooltip saying it stays scheduled); on a plain draft it still reads "Save draft". Success reads *"Saved — still scheduled."*
+
+### Added — an explicit way to cancel a scheduled posting
+
+- The Schedule tab now shows an **"Unschedule (keep as draft)"** button for any scheduled post. It clears the schedule (publish time / recurrence / cease date) and returns the post to a plain draft **while preserving your current content**, so nothing is lost and the post reliably leaves the queue. Reschedule anytime from the same tab. When a post is already scheduled, the primary schedule button reads **"Update schedule"** so its effect is unambiguous.
+
 ## [0.29.2] — 2026-07-06
 
 ### Added — fast-fail + operator alert when the AI provider is unfunded
