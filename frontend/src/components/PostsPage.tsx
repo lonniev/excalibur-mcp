@@ -60,6 +60,54 @@ function attemptLabel(reason: string): string {
   )[reason] ?? reason;
 }
 
+// Material Design action glyphs (Apache-2.0), inlined as `currentColor` paths
+// so each button's hover color flows straight through — one concept, one icon.
+const ICONS = {
+  // content_copy
+  duplicate: "M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z",
+  // play_arrow
+  resume: "M8 5v14l11-7z",
+  // event_busy (calendar with ✕ — "remove from schedule")
+  toDraft: "M9.31 17l2.44-2.44L14.19 17l1.06-1.06-2.44-2.44 2.44-2.44L14.19 10l-2.44 2.44L9.31 10l-1.06 1.06 2.44 2.44-2.44 2.44L9.31 17zM19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11z",
+  // repeat
+  repost: "M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z",
+  // archive
+  archive: "M20.54 5.23l-1.39-1.68C18.88 3.21 18.47 3 18 3H6c-.47 0-.88.21-1.16.55L3.46 5.23C3.17 5.57 3 6.02 3 6.5V19c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6.5c0-.48-.17-.93-.46-1.27zM12 17.5L6.5 12H10v-2h4v2h3.5L12 17.5zM5.12 5l.81-1h12l.94 1H5.12z",
+  // delete
+  delete: "M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z",
+  // visibility (peek at the posted tweet)
+  visibility: "M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z",
+};
+
+/// One row-action icon button. Muted by default; `hover` supplies the accent on
+/// hover. `busy` pulses the glyph and disables the click while in flight (the
+/// old text affordance showed "…" — the pulse reads the same, without a layout
+/// shift). Keeps a `title`/`aria-label` so the action name survives the icon.
+function ActionIcon({
+  path, title, onClick, hover, busy = false,
+}: {
+  path: string;
+  title: string;
+  onClick: (e: React.MouseEvent) => void;
+  hover: string;
+  busy?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={busy}
+      title={title}
+      aria-label={title}
+      className={`p-1 rounded text-stone-400 dark:text-zinc-500 transition-colors disabled:cursor-not-allowed ${hover}`}
+    >
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" className={busy ? "animate-pulse" : ""} aria-hidden>
+        <path d={path} />
+      </svg>
+    </button>
+  );
+}
+
 export default function PostsPage() {
   const nav = useNavigate();
   const [posts, setPosts] = useState<PostSummary[]>([]);
@@ -232,8 +280,6 @@ export default function PostsPage() {
     }
   }
 
-  const action = "hover:text-amber-600 dark:hover:text-amber-400 cursor-pointer";
-
   return (
     <div className="mx-auto w-[90%] max-w-[1600px] px-4 py-6">
       {preview && (
@@ -329,6 +375,7 @@ export default function PostsPage() {
                 <SortHeader label="Post" activeCol={sortCol} dir={sortDir} onSort={onSort} />
                 <SortHeader label="Scheduled" col="scheduled" activeCol={sortCol} dir={sortDir} onSort={onSort} />
                 <SortHeader label="Edited" col="updated" activeCol={sortCol} dir={sortDir} onSort={onSort} />
+                <SortHeader label="Posted" activeCol={sortCol} dir={sortDir} onSort={onSort} />
                 <SortHeader label="" activeCol={sortCol} dir={sortDir} onSort={onSort} className="text-right" />
               </tr>
             </thead>
@@ -377,22 +424,6 @@ export default function PostsPage() {
                     ) : (
                       <p className="truncate text-stone-800 dark:text-zinc-200">{p.excerpt || "(empty draft)"}</p>
                     )}
-                    {p.last_sent_at && (p.tweet_url ? (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); e.preventDefault(); setPreview({ url: p.tweet_url!, text: p.excerpt || "" }); }}
-                        className="mt-0.5 inline-flex items-center gap-1 text-[11px] text-green-600 hover:underline dark:text-green-400"
-                        title={`Peek at the posted tweet (${fmt(p.last_sent_at)})`}
-                      >
-                        ✓ posted {fmt(p.last_sent_at)} 👁
-                      </button>
-                    ) : (
-                      <p
-                        className="mt-0.5 text-[11px] text-green-600 dark:text-green-400"
-                        title={`Posted to X at ${fmt(p.last_sent_at)}`}
-                      >
-                        ✓ posted {fmt(p.last_sent_at)}
-                      </p>
-                    ))}
                   </td>
                   <td className="px-3 py-2.5 align-top text-xs text-stone-400 dark:text-zinc-500 whitespace-nowrap">
                     {p.publish_at ? fmt(p.publish_at) : "—"}
@@ -400,34 +431,78 @@ export default function PostsPage() {
                   <td className="px-3 py-2.5 align-top text-xs text-stone-400 dark:text-zinc-500 whitespace-nowrap">
                     {p.updated_at ? fmt(p.updated_at) : "—"}
                   </td>
-                  <td className="px-3 py-2.5 align-top text-right whitespace-nowrap">
-                    <span className="inline-flex gap-2 text-xs text-stone-400 dark:text-zinc-500">
-                      <span role="button" onClick={(e) => handleDuplicate(e, p.post_id)} className={action} title="Duplicate: open an editable draft copy of this post (unscheduled)">
-                        {duplicating === p.post_id ? "…" : "duplicate"}
-                      </span>
-                      {p.status === "paused" && (
-                        <span role="button" onClick={(e) => handleResume(e, p.post_id)} className="hover:text-amber-600 dark:hover:text-amber-400 cursor-pointer" title="Resume: reschedule this post so the next scheduler tick posts it">
-                          {resuming === p.post_id ? "…" : "resume"}
+                  <td className="px-3 py-2.5 align-top text-xs whitespace-nowrap">
+                    {p.last_sent_at ? (
+                      p.tweet_url ? (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); e.preventDefault(); setPreview({ url: p.tweet_url!, text: p.excerpt || "" }); }}
+                          className="inline-flex items-center gap-1 text-green-600 hover:underline dark:text-green-400"
+                          title={`Peek at the posted tweet (${fmt(p.last_sent_at)})`}
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                            <path d={ICONS.visibility} />
+                          </svg>
+                          {fmt(p.last_sent_at)}
+                        </button>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-green-600 dark:text-green-400" title={`Posted to X at ${fmt(p.last_sent_at)}`}>
+                          ✓ {fmt(p.last_sent_at)}
                         </span>
+                      )
+                    ) : (
+                      <span className="text-stone-400 dark:text-zinc-500">—</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2.5 align-top text-right whitespace-nowrap">
+                    <span className="inline-flex items-center gap-1 justify-end">
+                      <ActionIcon
+                        path={ICONS.duplicate}
+                        title="Duplicate — open an editable draft copy of this post (unscheduled)"
+                        onClick={(e) => handleDuplicate(e, p.post_id)}
+                        busy={duplicating === p.post_id}
+                        hover="hover:text-amber-600 dark:hover:text-amber-400"
+                      />
+                      {p.status === "paused" && (
+                        <ActionIcon
+                          path={ICONS.resume}
+                          title="Resume — reschedule this post so the next scheduler tick posts it"
+                          onClick={(e) => handleResume(e, p.post_id)}
+                          busy={resuming === p.post_id}
+                          hover="hover:text-amber-600 dark:hover:text-amber-400"
+                        />
                       )}
                       {(p.status === "sending" || p.status === "scheduled" || p.status === "paused") && (
-                        <span role="button" onClick={(e) => handleReturnToDraft(e, p.post_id)} className={action} title="Return to Draft — unschedule this post so you can edit it (rescues a post stuck mid-send)">
-                          {returningToDraft === p.post_id ? "…" : "to draft"}
-                        </span>
+                        <ActionIcon
+                          path={ICONS.toDraft}
+                          title="Return to Draft — unschedule this post so you can edit it (rescues a post stuck mid-send)"
+                          onClick={(e) => handleReturnToDraft(e, p.post_id)}
+                          busy={returningToDraft === p.post_id}
+                          hover="hover:text-amber-600 dark:hover:text-amber-400"
+                        />
                       )}
                       {p.status === "sent" && (
-                        <span role="button" onClick={(e) => handleRepost(e, p.post_id)} className="hover:text-green-600 dark:hover:text-green-400 cursor-pointer" title="Repost to X now">
-                          {reposting === p.post_id ? "…" : "repost"}
-                        </span>
+                        <ActionIcon
+                          path={ICONS.repost}
+                          title="Repost to X now"
+                          onClick={(e) => handleRepost(e, p.post_id)}
+                          busy={reposting === p.post_id}
+                          hover="hover:text-green-600 dark:hover:text-green-400"
+                        />
                       )}
                       {p.status !== "archived" && (
-                        <span role="button" onClick={(e) => handleDelete(e, p.post_id, false)} className={action} title="Archive">
-                          archive
-                        </span>
+                        <ActionIcon
+                          path={ICONS.archive}
+                          title="Archive"
+                          onClick={(e) => handleDelete(e, p.post_id, false)}
+                          hover="hover:text-amber-600 dark:hover:text-amber-400"
+                        />
                       )}
-                      <span role="button" onClick={(e) => handleDelete(e, p.post_id, true)} className="hover:text-red-500 dark:hover:text-red-400 cursor-pointer" title="Delete permanently">
-                        delete
-                      </span>
+                      <ActionIcon
+                        path={ICONS.delete}
+                        title="Delete permanently"
+                        onClick={(e) => handleDelete(e, p.post_id, true)}
+                        hover="hover:text-red-500 dark:hover:text-red-400"
+                      />
                     </span>
                   </td>
                 </tr>

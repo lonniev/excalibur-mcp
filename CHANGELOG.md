@@ -5,6 +5,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.32.0] — 2026-07-10
+
+### Changed — Posts table: a dedicated "Posted" column and icon actions
+
+- The green "posted" indicator moved out of the Post cell into its own **Posted** column, alongside Scheduled and Edited. A sent post shows a green **peek** link (👁 + date, opens the tweet preview) when it has a tweet URL, or a **✓ date** otherwise; unsent rows show `—` like the other date columns.
+- The row actions are now **Material Design icons** (inlined `currentColor` SVG paths, so the hover accent and light/dark themes flow through) instead of command words: Duplicate (`content_copy`), Resume (`play_arrow`), Return-to-Draft (`event_busy`), Repost (`repeat`), Archive (`archive`), Delete (`delete`). Each keeps its full tooltip and `aria-label`. Dropping the word labels frees the horizontal room the new Posted column needs; an in-flight action pulses its glyph rather than swapping to "…", so there's no layout shift.
+
 ## [0.31.1] — 2026-07-10
 
 ### Fixed — the expired-sign-in bounce now actually fires
