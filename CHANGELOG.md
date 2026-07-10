@@ -5,6 +5,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.31.0] — 2026-07-10
+
+### Added — an expired sign-in re-presents the login screen instead of stranding you
+
+- When your npub-proof cache lapses while you're working (routine — the cached DM proof only lives ~an hour), the next paid call on the Posts page (or the editor, or the wallet) used to drop the raw *"Your npub-proof cache entry is no longer valid"* text into a red banner and leave you on a page whose data silently wouldn't reload. Now that bounce **re-presents the sign-in screen** with a calm amber note — *"Your sign-in expired — that's routine. Sign in again to pick up where you left off."* — and your npub stays pre-filled, so re-signing is one DM (or an instant nsec/one-tap re-entry) away.
+- The bounce is wired globally: the MCP client fires a proof-expiry signal that the app subscribes to, so it fires no matter which page the lapsed call came from. An in-browser nsec session re-signs each call inline and is left untouched — only a lapsed cached DM proof triggers the re-auth gate.
+- The stale cached proof is also evicted from the "Recent identities" one-tap list on bounce, so the returning-user shortcut can't immediately replay the token the server just rejected.
+
 ## [0.30.1] — 2026-07-09
 
 ### Changed

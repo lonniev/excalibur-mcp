@@ -4,6 +4,7 @@ import {
   getStoredNpub,
   isLoggedIn,
   logOut as mcpLogOut,
+  onProofExpired,
   serviceStatus,
   type ServiceStatus,
 } from "./lib/mcp";
@@ -36,9 +37,29 @@ export default function App() {
   const [loggedIn, setLoggedIn] = useState(isLoggedIn());
   const [npub, setNpub] = useState(getStoredNpub());
   const [status, setStatus] = useState<ServiceStatus | null>(null);
+  // Set when a paid call bounced for an expired proof and we re-presented the
+  // gate. Rendered as a reassuring "this is routine" note above sign-in, not an
+  // error — the user just needs to re-sign, and their npub is still pre-filled.
+  const [reauthNotice, setReauthNotice] = useState("");
 
   useEffect(() => {
     serviceStatus().then(setStatus).catch(() => setStatus(null));
+  }, []);
+
+  // A paid call anywhere (Posts, editor, wallet) can bounce for a lapsed proof.
+  // The mcp layer clears the stale token and fires this; drop back to sign-in so
+  // the user isn't stranded on a page whose data silently won't load. Only bounce
+  // when they can no longer prove ownership — an nsec session re-signs inline, so
+  // isLoggedIn() stays true and we leave it alone.
+  useEffect(() => {
+    return onProofExpired(() => {
+      if (isLoggedIn()) return;
+      setReauthNotice(
+        "Your sign-in expired — that's routine. Sign in again to pick up where you left off.",
+      );
+      setNpub(getStoredNpub());
+      setLoggedIn(false);
+    });
   }, []);
 
   // Seed the avatar from the npub's Nostr kind-0 picture (source of truth).
@@ -47,6 +68,7 @@ export default function App() {
   }, [loggedIn, npub]);
 
   function onLogin() {
+    setReauthNotice("");
     setNpub(getStoredNpub());
     setLoggedIn(true);
   }
@@ -82,7 +104,7 @@ export default function App() {
             <main className="flex-1">
               <Hero />
               <div className="pb-16">
-                <NpubGate onLogin={onLogin} operatorHash={status?.operator_npub_hash} />
+                <NpubGate onLogin={onLogin} operatorHash={status?.operator_npub_hash} notice={reauthNotice} />
               </div>
             </main>
             <Footer status={status} />

@@ -34,9 +34,13 @@ const errBox =
 export default function NpubGate({
   onLogin,
   operatorHash,
+  notice,
 }: {
   onLogin: () => void;
   operatorHash?: string;
+  // A routine re-auth prompt (e.g. the cached proof lapsed while the user was
+  // working). Rendered as a calm amber note, not a red error — nothing broke.
+  notice?: string;
 }) {
   const [value, setValue] = useState(getStoredNpub());
   const [stage, setStage] = useState<Stage>("begin");
@@ -163,6 +167,12 @@ export default function NpubGate({
       <p className="text-sm text-stone-500 dark:text-zinc-400 mb-5">
         Your Nostr npub is your identity. No email, no password, no KYC.
       </p>
+
+      {notice && (
+        <div className="mb-5 rounded-lg p-3 text-xs bg-amber-50 border border-amber-200 text-amber-800 dark:bg-amber-500/10 dark:border-amber-500/30 dark:text-amber-300">
+          {notice}
+        </div>
+      )}
 
       {stage === "begin" && recents.length > 0 && (
         <div className="mb-5">
