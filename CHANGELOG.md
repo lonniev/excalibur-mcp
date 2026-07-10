@@ -5,6 +5,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.30.1] — 2026-07-09
+
+### Changed
+
+- Bump `tollbooth-dpyc` to `==0.62.1` — the security-hardening batch (invoice-owner check on credit settlement, AES-256-GCM credential vault, encrypted self-provisioning ledger, no plaintext audit broadcast).
+
+### Removed
+
+- Deleted the unused `vault.py` (a dead PBKDF2 + Fernet credential vault that mirrored an old pattern). Credentials flow through the SDK's `NeonCredentialVault` / `VaultCipher`; the local reimplementation was never wired in.
+
 ## [0.30.0] — 2026-07-07
 
 ### Changed — editing a scheduled post no longer silently unschedules it
