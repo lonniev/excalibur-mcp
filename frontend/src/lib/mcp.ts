@@ -205,6 +205,33 @@ export class ProofRequiredError extends Error {
   }
 }
 
+// ─── Proof-expiry signal ───────────────────────────────────────────────────
+// A paid call can bounce for an expired proof from anywhere (Posts, editor,
+// wallet). `callTool` clears the stale token synchronously, but the React tree
+// needs to KNOW so it can re-present sign-in — otherwise the user is stranded
+// on a page whose data won't load, staring at a red banner. Any component
+// (App) subscribes; the tool layer fires on every proof bounce.
+
+type ProofExpiredListener = (message: string) => void;
+const proofExpiredListeners = new Set<ProofExpiredListener>();
+
+/// Subscribe to proof-expiry bounces. Returns an unsubscribe fn. App wires this
+/// to drop the user back to the sign-in gate when the cached DM proof lapses.
+export function onProofExpired(cb: ProofExpiredListener): () => void {
+  proofExpiredListeners.add(cb);
+  return () => proofExpiredListeners.delete(cb);
+}
+
+function emitProofExpired(message: string): void {
+  for (const cb of proofExpiredListeners) {
+    try {
+      cb(message);
+    } catch {
+      /* a listener error must not swallow the throw that follows */
+    }
+  }
+}
+
 /// Tools whose wheel signature takes no npub/proof envelope. Pydantic
 /// strict mode rejects unexpected kwargs, so we must NOT inject them here.
 const BOOTSTRAP_TOOLS = new Set([
@@ -303,8 +330,16 @@ async function callTool<T = unknown>(
     const p = payload as Record<string, unknown>;
     const errCode = String(p.error_code ?? "");
     if (p.success === false && (errCode === "PROOF_REQUIRED" || errCode === "PROOF_REFRESH_NEEDED")) {
+      // The cached DM proof_token the server just rejected is the SAME token the
+      // recent-login one-tap would replay — evict it too, or the returning-user
+      // shortcut immediately re-bounces. (nsec sessions don't record a recent
+      // login and re-sign inline, so this only touches DM-login users.)
+      const bouncedNpub = getStoredNpub();
       window.localStorage.removeItem(PROOF_STORAGE_KEY);
-      throw new ProofRequiredError(String(p.error ?? "Sign-in required."));
+      if (bouncedNpub) forgetRecentLogin(bouncedNpub);
+      const msg = String(p.error ?? "Sign-in required.");
+      emitProofExpired(msg);
+      throw new ProofRequiredError(msg);
     }
   }
   return payload as T;
