@@ -328,8 +328,12 @@ async function callTool<T = unknown>(
   // — a non-essential tool must never be able to log the user out of everything.
   if (!opts.bestEffort && payload && typeof payload === "object") {
     const p = payload as Record<string, unknown>;
-    const errCode = String(p.error_code ?? "");
-    if (p.success === false && (errCode === "PROOF_REQUIRED" || errCode === "PROOF_REFRESH_NEEDED")) {
+    // The wheel's ErrorCode values are lowercase snake_case ("proof_required",
+    // "proof_refresh_needed") — normalize before comparing. (A prior uppercase
+    // comparison never matched, so the bounce silently never fired and the raw
+    // "cache entry is no longer valid" text just landed in an inline banner.)
+    const errCode = String(p.error_code ?? "").toLowerCase();
+    if (p.success === false && (errCode === "proof_required" || errCode === "proof_refresh_needed")) {
       // The cached DM proof_token the server just rejected is the SAME token the
       // recent-login one-tap would replay — evict it too, or the returning-user
       // shortcut immediately re-bounces. (nsec sessions don't record a recent
