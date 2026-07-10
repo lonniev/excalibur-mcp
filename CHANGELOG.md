@@ -5,6 +5,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.31.1] — 2026-07-10
+
+### Fixed — the expired-sign-in bounce now actually fires
+
+- The proof-expiry re-auth gate added in 0.31.0 never triggered: the client compared the server's `error_code` against **uppercase** `PROOF_REFRESH_NEEDED` / `PROOF_REQUIRED`, but the wheel emits them **lowercase** (`proof_refresh_needed` / `proof_required`). The comparison never matched, so a lapsed proof on the Posts page (or anywhere) just dropped the raw *"cache entry is no longer valid"* text into an inline banner instead of re-presenting sign-in. The client now normalizes the code case-insensitively, so the bounce fires as intended.
+
+### Changed — the frontend now carries the release version
+
+- The Posts Manager footer showed a frozen `v0.1.0` (the never-bumped `frontend/package.json`) while the service reported the real release version, which was confusing as the UI evolved. The frontend version is now unified with the repo release version, so the footer reflects each shipped build.
+
 ## [0.31.0] — 2026-07-10
 
 ### Added — an expired sign-in re-presents the login screen instead of stranding you
