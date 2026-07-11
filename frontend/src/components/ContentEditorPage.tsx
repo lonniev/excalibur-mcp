@@ -126,6 +126,9 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   // which would drop it from the scheduler's due query. Kept in sync on every
   // confirmed save so successive saves in one session stay correct.
   const [loadedStatus, setLoadedStatus] = useState<string>("draft");
+  // Set when the opened post is a published snapshot → the recurring template it
+  // fired from. Drives the "edit the template instead" banner.
+  const [templateId, setTemplateId] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(!isNew);
   const [saving, setSaving] = useState(false);
@@ -186,6 +189,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     setTitle(ttl);
     setTweetUrl(row.tweet_url ?? null);
     setLoadedStatus(row.status ?? "draft");
+    setTemplateId(row.template_id ?? null);
     baseline.current = sigOf(loaded, pub, fq, iv, cz, ttl);
   }, [sigOf]);
 
@@ -1321,6 +1325,33 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
             title={`Peek at ${tweetUrl}`}
           >
             {tweetUrl} <Eye className="h-3.5 w-3.5 shrink-0" />
+          </button>
+        </div>
+      )}
+
+      {/* A published snapshot points back to its editable recurring template —
+          editing THIS frozen record won't change future postings. */}
+      {!isSnippet && templateId && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-zinc-800 bg-violet-500/10 px-5 py-2 text-sm text-violet-300">
+          <span>↻ This is a published record. To change future postings, edit the recurring template.</span>
+          <button
+            onClick={() => nav(`/post/${templateId}`)}
+            className="ml-auto rounded bg-violet-400 px-2.5 py-1 font-medium text-zinc-950 hover:bg-violet-300"
+          >
+            Edit the template →
+          </button>
+        </div>
+      )}
+
+      {/* A live recurring template links to its published postings history. */}
+      {!isSnippet && !isNew && !templateId && freq !== "none" && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-zinc-800 bg-zinc-900/60 px-5 py-2 text-sm text-zinc-400">
+          <span>↻ This recurring post resolves fresh each time it fires.</span>
+          <button
+            onClick={() => nav(`/?template=${id}`)}
+            className="ml-auto rounded bg-zinc-700 px-2.5 py-1 font-medium text-zinc-100 hover:bg-zinc-600"
+          >
+            View published postings →
           </button>
         </div>
       )}

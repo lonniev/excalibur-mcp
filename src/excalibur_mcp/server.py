@@ -547,6 +547,7 @@ async def list_posts(
     date_from: str = "",
     date_to: str = "",
     date_field: str = "created",
+    template_id: str = "",
     npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "", dpop_token: str = "",
 ) -> dict:
     """List your stored posts, server-side sorted, filtered, and offset-paginated.
@@ -557,8 +558,10 @@ async def list_posts(
     ``asc|desc``. ``search`` is a case-insensitive regular expression matched
     against the post text. ``date_from``/``date_to`` (``YYYY-MM-DD``, end-inclusive)
     bound the ``date_field`` column, one of ``created|updated|scheduled|sent``
-    (default ``created``). ``page`` is 0-indexed; ``page_size`` is 1..100. Returns
-    ``{posts:[…], total, page, page_size}`` reflecting the filtered set."""
+    (default ``created``). ``template_id`` filters to the sent occurrences a recurring
+    template fired. ``page`` is 0-indexed; ``page_size`` is 1..100. Each row carries
+    ``is_recurring``, ``has_dynamic``, and ``template_id`` (set on sent occurrences).
+    Returns ``{posts:[…], total, page, page_size}`` reflecting the filtered set."""
     from excalibur_mcp.tools import posts as posts_tools
 
     return await posts_tools.list_(
@@ -566,6 +569,7 @@ async def list_posts(
         status=status, sort_col=sort_col, sort_dir=sort_dir,
         page=page, page_size=page_size, npub=npub,
         search=search, date_from=date_from, date_to=date_to, date_field=date_field,
+        template_id=template_id,
     )
 
 

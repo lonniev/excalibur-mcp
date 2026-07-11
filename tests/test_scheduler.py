@@ -147,6 +147,8 @@ async def test_recurring_fire_snapshots_occurrence_and_advances(_stub_record_run
     occ.assert_awaited_once()
     assert occ.await_args.kwargs["tweet_url"] == url
     assert occ.await_args.kwargs["npub"] == NPUB
+    # … back-linked to the template it fired from (post_id "p1") …
+    assert occ.await_args.kwargs["template_id"] == "p1"
     # … and the template just advances (status scheduled, url NOT overwritten on it)
     assert mark.await_args.args[2] == "scheduled"
     assert mark.await_args.args[4] is None
@@ -394,6 +396,38 @@ async def test_dynamic_block_passes_author_web_access_to_resolver():
     kwargs = rb.await_args.kwargs
     assert kwargs["allowed_domains"] == ["coindesk.com", "kraken.com"]
     assert kwargs["max_fetches"] == 9
+
+
+@pytest.mark.asyncio
+async def test_dynamic_recurring_snapshots_static_keeps_template_dynamic():
+    """The crux of the two-row model: a RECURRING post with a dynamic block fires
+    to a STATIC snapshot (resolved text, no dynamic flag) that back-links to the
+    template, while the template itself keeps its dynamic doc for the next fire.
+    ``mark_sent`` has no doc/text_cache param, so the template's blocks are
+    structurally untouchable — the recurrence never loses its dynamic prompt."""
+    rt = _dynamic_runtime()
+    url = "https://x.com/i/status/twd"
+    client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "twd", "tweet_url": url}))
+    with patch.object(scheduler.posts_db, "list_due",
+                      AsyncMock(return_value=[_due_row(doc=_DYNAMIC_DOC, publish_at="2026-07-10T12:00:00+00:00")])), \
+         patch.object(scheduler.posts_db, "mark_sent", AsyncMock()) as mark, \
+         patch.object(scheduler.posts_db, "create_sent_occurrence", AsyncMock()) as occ, \
+         patch.object(scheduler, "_owner_voice", AsyncMock(return_value=("", []))), \
+         patch("excalibur_mcp.resolve.resolve_block", AsyncMock(return_value="BTC at $64,000")), \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        out = await scheduler.process_due_posts(rt)
+    assert len(out["posted"]) == 1
+    # the snapshot is STATIC (dynamic block frozen to resolved text, flag dropped) …
+    occ.assert_awaited_once()
+    snap_blocks = occ.await_args.kwargs["doc"]["blocks"]
+    assert not any(b.get("dynamic") for b in snap_blocks)
+    assert occ.await_args.kwargs["text_cache"] == "Markets update.\n\nBTC at $64,000"
+    # … and back-links to the template ("p1")
+    assert occ.await_args.kwargs["template_id"] == "p1"
+    # the template just advances — mark_sent's signature can't carry a doc, so the
+    # template's dynamic blocks are preserved by construction
+    assert mark.await_args.args[2] == "scheduled"
+    assert len(mark.await_args.args) == 5  # (pid, sent_at, status, next_publish, tweet_url) — no doc
 
 
 @pytest.mark.asyncio

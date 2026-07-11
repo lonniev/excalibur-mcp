@@ -166,6 +166,78 @@ async def test_list_posts_offset_sort_and_total():
 
 
 @pytest.mark.asyncio
+async def test_list_posts_surfaces_recurring_dynamic_and_template_id():
+    """Each row carries the FE badges' data: is_recurring, has_dynamic, and the
+    template_id back-link on a sent occurrence."""
+    captured = {}
+
+    async def fake_fetchrow(query, *args):
+        return {"n": 1}
+
+    async def fake_fetch(query, *args):
+        captured["query"] = query
+        return [
+            {"post_id": "occ1", "status": "sent", "excerpt": "e", "publish_at": None,
+             "updated_at": "t", "created_at": "c", "tweet_url": "u", "last_sent_at": None,
+             "last_attempt_at": None, "last_attempt_reason": None,
+             "template_id": "tmpl1", "is_recurring": False, "has_dynamic": False},
+        ]
+
+    with patch.object(posts_db, "fetchrow", fake_fetchrow), \
+         patch.object(posts_db, "fetch", fake_fetch):
+        out = await posts_db.list_posts(NPUB)
+
+    q = captured["query"]
+    assert "(recurrence IS NOT NULL) AS is_recurring" in q
+    assert '''doc->'blocks' @> '[{"dynamic":true}]'::jsonb''' in q
+    assert "template_id::text AS template_id" in q
+    row = out["posts"][0]
+    assert row["template_id"] == "tmpl1"
+    assert row["is_recurring"] is False and row["has_dynamic"] is False
+
+
+@pytest.mark.asyncio
+async def test_list_posts_template_id_filter():
+    """A template_id filter scopes the list to that template's sent occurrences."""
+    captured = {}
+
+    async def fake_fetchrow(query, *args):
+        return {"n": 0}
+
+    async def fake_fetch(query, *args):
+        captured["query"] = query
+        captured["args"] = args
+        return []
+
+    with patch.object(posts_db, "fetchrow", fake_fetchrow), \
+         patch.object(posts_db, "fetch", fake_fetch):
+        await posts_db.list_posts(NPUB, template_id="tmpl-uuid")
+
+    assert "template_id = $2::uuid" in captured["query"]
+    assert captured["args"][1] == "tmpl-uuid"
+
+
+@pytest.mark.asyncio
+async def test_create_sent_occurrence_backlinks_template():
+    """The sent snapshot INSERT carries template_id → its recurring template."""
+    captured = {}
+
+    async def fake_execute(query, *args):
+        captured["query"] = query
+        captured["args"] = args
+        return {}
+
+    with patch.object(posts_db, "execute", fake_execute):
+        await posts_db.create_sent_occurrence(
+            npub=NPUB, doc={"blocks": []}, text_cache="t", tweet_url="u",
+            sent_at="2026-07-10T01:34:53+00:00", template_id="tmpl1",
+            publish_at="2026-07-10T01:33:00+00:00",
+        )
+    assert "template_id" in captured["query"]
+    assert captured["args"][-1] == "tmpl1"
+
+
+@pytest.mark.asyncio
 async def test_list_posts_multi_status_set_membership():
     """A comma-separated status filter (the FE's include chiclets) matches any of
     the listed statuses via a single ``status = ANY(...)`` predicate."""

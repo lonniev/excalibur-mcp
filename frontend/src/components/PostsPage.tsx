@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   createPost, deletePost, getPost, listPosts, postTweet, updatePost,
   type PostSummary, type Recurrence, type SortDir,
@@ -114,6 +114,10 @@ function ActionIcon({
 
 export default function PostsPage() {
   const nav = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  // When set (?template=<id>), the list is scoped to one template's published
+  // occurrences — the "View published postings" view from the editor.
+  const templateFilter = searchParams.get("template");
   const [posts, setPosts] = useState<PostSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
@@ -159,6 +163,7 @@ export default function PostsPage() {
       const r = await listPosts({
         status, sortCol, sortDir, page, pageSize: PAGE_SIZE,
         search, dateFrom, dateTo, dateField,
+        templateId: templateFilter ?? undefined,
       });
       if (r.error) setError(r.error);
       setPosts(r.posts ?? []);
@@ -169,7 +174,7 @@ export default function PostsPage() {
       setHasLoaded(true);
       setLoading(false);
     }
-  }, [selected, sortCol, sortDir, page, search, dateFrom, dateTo, dateField]);
+  }, [selected, sortCol, sortDir, page, search, dateFrom, dateTo, dateField, templateFilter]);
 
   useEffect(() => {
     refresh();
@@ -329,6 +334,24 @@ export default function PostsPage() {
         </Link>
       </div>
 
+      {templateFilter && (
+        <div className="mb-4 flex items-center gap-2 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-800 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-300">
+          <span>↻ Showing published postings from one recurring template.</span>
+          <Link
+            to={`/post/${templateFilter}`}
+            className="underline underline-offset-2 hover:no-underline"
+          >
+            Open the template →
+          </Link>
+          <button
+            onClick={() => { setSearchParams({}); setPage(0); }}
+            className="ml-auto rounded-md px-2 py-0.5 text-violet-700 hover:bg-violet-100 dark:text-violet-300 dark:hover:bg-violet-500/20"
+          >
+            Clear ✕
+          </button>
+        </div>
+      )}
+
       <div className="flex flex-wrap gap-1.5 mb-4 text-xs">
         <button
           onClick={toggleAll}
@@ -470,6 +493,36 @@ export default function PostsPage() {
                       </>
                     ) : (
                       <p className="truncate text-stone-800 dark:text-zinc-200">{p.excerpt || "(empty draft)"}</p>
+                    )}
+                    {(p.is_recurring || p.has_dynamic || p.template_id) && (
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                        {p.is_recurring && (
+                          <span
+                            className="inline-flex items-center gap-0.5 text-[11px] px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300"
+                            title="Recurring — this template reposts on its cadence, resolving fresh each time."
+                          >
+                            ↻ recurring
+                          </span>
+                        )}
+                        {p.has_dynamic && (
+                          <span
+                            className="inline-flex items-center gap-0.5 text-[11px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
+                            title="Dynamic — carries a live prompt-driven block that resolves at post time (not frozen text)."
+                          >
+                            ⚡ dynamic
+                          </span>
+                        )}
+                        {p.template_id && (
+                          <Link
+                            to={`/post/${p.template_id}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="inline-flex items-center gap-0.5 text-[11px] px-1.5 py-0.5 rounded-full bg-stone-100 text-stone-600 hover:underline dark:bg-zinc-800 dark:text-zinc-300"
+                            title="This is a published record. Open the recurring template it fired from."
+                          >
+                            ↗ from series
+                          </Link>
+                        )}
+                      </div>
                     )}
                   </td>
                   <td className="px-3 py-2.5 align-top text-xs text-stone-400 dark:text-zinc-500 whitespace-nowrap">
