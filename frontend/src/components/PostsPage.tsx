@@ -112,6 +112,29 @@ function ActionIcon({
   );
 }
 
+/// The include/exclude control on a filter chiclet — a real checkbox glyph so the
+/// toggle state reads at a glance, not by color alone: a filled+checked box when
+/// the status is INCLUDED in the result set, an empty outlined box when EXCLUDED.
+/// Decorative (the button carries the accessible state via aria-pressed).
+function ChicletBox({ on }: { on: boolean }) {
+  return (
+    <span
+      aria-hidden
+      className={`inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] border transition-colors ${
+        on
+          ? "bg-amber-500 border-amber-500 text-white dark:bg-amber-400 dark:border-amber-400 dark:text-zinc-900"
+          : "border-stone-400 dark:border-zinc-600"
+      }`}
+    >
+      {on && (
+        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M20 6 9 17l-5-5" />
+        </svg>
+      )}
+    </span>
+  );
+}
+
 export default function PostsPage() {
   const nav = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -356,12 +379,15 @@ export default function PostsPage() {
         <button
           onClick={toggleAll}
           disabled={loading}
-          className={`px-2.5 py-1 rounded-lg capitalize border transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+          aria-pressed={allSelected}
+          title={allSelected ? "All statuses shown — click to clear" : "Show all statuses"}
+          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg capitalize border transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
             allSelected
               ? "bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-500/15 dark:text-amber-400 dark:border-amber-500/30"
               : "text-stone-500 border-transparent hover:bg-stone-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
           }`}
         >
+          <ChicletBox on={allSelected} />
           all
         </button>
         {POST_STATUSES.map((s) => {
@@ -373,12 +399,13 @@ export default function PostsPage() {
               disabled={loading}
               aria-pressed={on}
               title={on ? `Showing ${s} posts — click to hide` : `Hiding ${s} posts — click to show`}
-              className={`px-2.5 py-1 rounded-lg capitalize border transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg capitalize border transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                 on
                   ? "bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-500/15 dark:text-amber-400 dark:border-amber-500/30"
-                  : "text-stone-400 border-dashed border-stone-300 line-through hover:bg-stone-100 hover:no-underline dark:text-zinc-500 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                  : "text-stone-400 border-dashed border-stone-300 hover:bg-stone-100 dark:text-zinc-500 dark:border-zinc-700 dark:hover:bg-zinc-800"
               }`}
             >
+              <ChicletBox on={on} />
               {s}
             </button>
           );
