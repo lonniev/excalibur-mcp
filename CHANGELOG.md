@@ -5,6 +5,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.34.1] — 2026-07-11
+
+### Changed — SDK 0.62.2 pin + forward-compatible shape callback signature
+
+- Pinned `tollbooth-dpyc[nostr,prefect]==0.62.2`.
+- `_resolve_shape_result` now accepts the second `params` argument the wheel threads through as of tollbooth-dpyc 0.62.2 (`shape_result(raw, params)`). Resolving a dynamic block is stateless, so `params` is ignored — but the signature must be in place before the SDK pin bumps, or the live detached (long-runner) path would break on the two-argument call. Defaulted (`params=None`), so the same code also ran unchanged on the prior 0.62.1 pin.
+
 ## [0.34.0] — 2026-07-10
 
 ### Added — published postings now link back to their recurring template

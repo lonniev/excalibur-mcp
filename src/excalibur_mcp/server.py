@@ -1195,7 +1195,7 @@ async def _resolve_build_closure(
     }
 
 
-def _resolve_shape_result(raw: dict | None) -> dict:
+def _resolve_shape_result(raw: dict | None, params: dict | None = None) -> dict:
     """Shape the detached flow's raw result into the stored job result.
 
     ``raw`` is the generic flow's return for ANY status —
@@ -1204,6 +1204,9 @@ def _resolve_shape_result(raw: dict | None) -> dict:
     curate the upstream error into a frontend-facing ``AsyncJobSituation`` — the
     raw status/body stay operator-side (Prefect logs); the patron sees only the
     machine ``error_code`` + safe copy. Symmetric with the in-process runner.
+
+    ``params`` (the job's persisted kwargs) is threaded in by the wheel for
+    stateful jobs; resolving a dynamic block is stateless, so it's ignored here.
     """
     from excalibur_mcp.resolve import extract_resolved_text
 
