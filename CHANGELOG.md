@@ -5,6 +5,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.33.0] — 2026-07-10
+
+### Changed — Posts status filter is now a set of toggle chiclets
+
+- The Posts page status filter changed from single-select tabs to a **select/reject chain of toggle chiclets**. Each status chiclet (Draft, Scheduled, Sending, Paused, Sent, Archived) toggles independently: **on** (filled) includes posts of that status, **off** (dashed, struck-through) excludes them. The **All** chiclet selects the whole set, or clears it when everything is already on. The default is all-selected — identical to the old unfiltered view.
+- The selected set drives **server-side** filtering: the frontend sends the chosen statuses to `list_posts`, which matches them as set membership (`status = ANY(...)`) inside the same `WHERE` that feeds `COUNT`, `ORDER BY`, and the `LIMIT`/`OFFSET` page slice. So the total and every page reflect the filtered set — no client-side hiding of already-fetched rows. An empty selection short-circuits to the empty state without a round trip.
+- The empty-state call-to-action now reads **"Compose a new post →"** (was "Compose your first post") in every no-results view, and shows "No posts match this filter." whenever a filter — including a partial chiclet selection — is active.
+
 ## [0.32.0] — 2026-07-10
 
 ### Changed — Posts table: a dedicated "Posted" column and icon actions

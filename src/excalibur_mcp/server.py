@@ -551,7 +551,8 @@ async def list_posts(
 ) -> dict:
     """List your stored posts, server-side sorted, filtered, and offset-paginated.
 
-    Optional ``status`` filter. ``sort_col`` is one of
+    Optional ``status`` filter — a single status or a comma-separated set
+    (e.g. ``draft,scheduled``), matched as set membership. ``sort_col`` is one of
     ``created|updated|status|scheduled`` (default ``created``); ``sort_dir`` is
     ``asc|desc``. ``search`` is a case-insensitive regular expression matched
     against the post text. ``date_from``/``date_to`` (``YYYY-MM-DD``, end-inclusive)
