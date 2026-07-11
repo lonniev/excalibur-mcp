@@ -5,6 +5,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.34.0] — 2026-07-10
+
+### Added — published postings now link back to their recurring template
+
+- A recurring post that carries a **dynamic block** fires as two rows: an immutable `sent` **snapshot** (the resolved static text that actually went to X) and the surviving `scheduled` **template** (which keeps its dynamic prompt and re-resolves on the next fire). This is correct and by design — nothing is lost — but the two rows shared a title and were indistinguishable, so a snapshot read as "the post lost its dynamic block." They're now visibly connected.
+- Each sent occurrence stores a **`template_id`** back-link to the template it fired from (`create_sent_occurrence` threads it through; new `posts.template_id UUID` column, added idempotently). The scheduler sets it on every recurring fire.
+- The **Posts list** gained two per-row chips and a link: **↻ recurring** (the live template reposts on its cadence), **⚡ dynamic** (carries a live prompt-driven block — distinguishes a template from a frozen snapshot), and **↗ from series** on a snapshot (opens the recurring template it fired from). `list_posts` now returns `is_recurring`, `has_dynamic`, and `template_id` per row, and accepts a `template_id` filter.
+- The **editor** shows a banner in both directions: opening a published snapshot offers **"Edit the template →"** (so you don't edit a frozen record expecting future effect), and opening a live recurring template offers **"View published postings →"** (a `?template=<id>` filtered list of everything it has fired). `get_post` now returns `template_id`.
+- **Caveat:** the back-link is forward-only. Occurrences fired before this release have no stored `template_id`, so they show no "from series" link; new postings do. The recurring/dynamic chips apply retroactively (derived from existing data).
+
 ## [0.33.0] — 2026-07-10
 
 ### Changed — Posts status filter is now a set of toggle chiclets

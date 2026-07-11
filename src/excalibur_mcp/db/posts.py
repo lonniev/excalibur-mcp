@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 _FULL_COLS = (
     "id::text AS post_id, npub, status, title, doc, text_cache, "
     "publish_at, recurrence, cease_at, last_sent_at, tweet_url, "
-    "last_attempt_at, last_attempt_reason, "
+    "last_attempt_at, last_attempt_reason, template_id::text AS template_id, "
     "created_at, updated_at"
 )
 
@@ -152,6 +152,7 @@ async def list_posts(
     date_from: str | None = None,
     date_to: str | None = None,
     date_field: str = "created",
+    template_id: str | None = None,
 ) -> dict[str, Any]:
     """Server-side sorted, offset-paginated, optionally filtered list for the owner.
 
@@ -191,6 +192,10 @@ async def list_posts(
     if date_to:
         params.append(date_to)
         where += f" AND {date_col} < (${len(params)}::date + interval '1 day')"
+    if template_id:
+        # "Occurrences of this template" — the sent snapshots a recurring post fired.
+        params.append(template_id)
+        where += f" AND template_id = ${len(params)}::uuid"
 
     total_row = await fetchrow(
         f"SELECT COUNT(*) AS n FROM posts WHERE {where}", *params
@@ -206,7 +211,10 @@ async def list_posts(
         f"""
         SELECT id::text AS post_id, status, title, left(text_cache, 120) AS excerpt,
                publish_at, updated_at, created_at, tweet_url, last_sent_at,
-               last_attempt_at, last_attempt_reason
+               last_attempt_at, last_attempt_reason,
+               template_id::text AS template_id,
+               (recurrence IS NOT NULL) AS is_recurring,
+               COALESCE(doc->'blocks' @> '[{{"dynamic":true}}]'::jsonb, false) AS has_dynamic
         FROM posts
         WHERE {where}
         ORDER BY {sort_expr} {row_dir}, created_at DESC
@@ -227,6 +235,9 @@ async def list_posts(
             "last_sent_at": str(r["last_sent_at"]) if r.get("last_sent_at") else None,
             "last_attempt_at": str(r["last_attempt_at"]) if r.get("last_attempt_at") else None,
             "last_attempt_reason": r.get("last_attempt_reason") or None,
+            "template_id": r.get("template_id") or None,
+            "is_recurring": bool(r.get("is_recurring")),
+            "has_dynamic": bool(r.get("has_dynamic")),
         }
         for r in rows
     ]
@@ -405,6 +416,7 @@ async def create_sent_occurrence(
     text_cache: str | None,
     tweet_url: str | None,
     sent_at: str,
+    template_id: str,
     publish_at: str | None = None,
 ) -> None:
     """Record one fired occurrence of a recurring post as its own immutable Sent
@@ -413,12 +425,14 @@ async def create_sent_occurrence(
     A recurring post reschedules itself in place, so without this each posting
     would be invisible — collapsed into the template that just advances its date,
     with only the latest ``tweet_url`` retained. This leaves a permanent, viewable
-    Sent record per posting instead."""
+    Sent record per posting instead. ``template_id`` back-links the snapshot to the
+    recurring template it fired from, so the FE can connect a publication to the
+    (still-dynamic) post that produced it."""
     await execute(
         """
         INSERT INTO posts
-            (npub, status, doc, text_cache, publish_at, last_sent_at, tweet_url)
-        VALUES ($1, 'sent', $2::jsonb, $3, $4::timestamptz, $5::timestamptz, $6)
+            (npub, status, doc, text_cache, publish_at, last_sent_at, tweet_url, template_id)
+        VALUES ($1, 'sent', $2::jsonb, $3, $4::timestamptz, $5::timestamptz, $6, $7::uuid)
         """,
         npub,
         json.dumps(doc),
@@ -426,6 +440,7 @@ async def create_sent_occurrence(
         publish_at,
         sent_at,
         tweet_url or None,
+        template_id,
     )
 
 

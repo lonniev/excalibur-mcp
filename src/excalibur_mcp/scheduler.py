@@ -393,7 +393,7 @@ async def process_due_posts(runtime: Any) -> dict[str, Any]:
             # rendered doc, so history shows exactly what went out, not the prompt.
             await posts_db.create_sent_occurrence(
                 npub=owner, doc=occurrence_doc, text_cache=text,
-                tweet_url=tweet_url, sent_at=sent_at.isoformat(),
+                tweet_url=tweet_url, sent_at=sent_at.isoformat(), template_id=pid,
                 publish_at=str(row.get("publish_at")) if row.get("publish_at") else None,
             )
             await posts_db.mark_sent(

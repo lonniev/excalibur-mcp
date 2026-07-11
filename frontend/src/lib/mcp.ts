@@ -518,6 +518,13 @@ export interface PostSummary {
   // and when. The post stays scheduled and retries on the next due tick.
   last_attempt_at?: string | null;
   last_attempt_reason?: string | null;
+  // True when the post carries a recurrence cadence (the live recurring template).
+  is_recurring?: boolean;
+  // True when the post's doc holds at least one dynamic (prompt-driven) block —
+  // distinguishes a live template from a frozen static snapshot.
+  has_dynamic?: boolean;
+  // Set on a sent occurrence → the id of the recurring template it fired from.
+  template_id?: string | null;
 }
 
 export type SortDir = "asc" | "desc";
@@ -541,7 +548,7 @@ export interface ListFilterOpts {
 }
 
 export async function listPosts(
-  opts: { status?: string; sortCol?: string; sortDir?: SortDir; page?: number; pageSize?: number } & ListFilterOpts = {},
+  opts: { status?: string; sortCol?: string; sortDir?: SortDir; page?: number; pageSize?: number; templateId?: string } & ListFilterOpts = {},
 ): Promise<ListPostsResult> {
   const args: Record<string, unknown> = {
     sort_col: opts.sortCol ?? "created",
@@ -554,6 +561,7 @@ export async function listPosts(
   if (opts.dateFrom) args.date_from = opts.dateFrom;
   if (opts.dateTo) args.date_to = opts.dateTo;
   if (opts.dateField) args.date_field = opts.dateField;
+  if (opts.templateId) args.template_id = opts.templateId;
   return callTool<ListPostsResult>("list_posts", args);
 }
 
@@ -572,6 +580,8 @@ export interface PostRow {
   tweet_url?: string | null;
   last_attempt_at?: string | null;
   last_attempt_reason?: string | null;
+  // Set on a sent occurrence → the id of the recurring template it fired from.
+  template_id?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
   error?: string;
