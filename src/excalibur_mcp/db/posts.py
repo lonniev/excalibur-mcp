@@ -174,8 +174,14 @@ async def list_posts(
     params: list[Any] = [npub]
     where = "npub = $1"
     if status:
-        params.append(status)
-        where += f" AND status = ${len(params)}"
+        # Accept a single status or a comma-separated set (the FE's toggle-chiclet
+        # include filter). An empty selection never reaches here — the FE renders
+        # the empty state without querying. `status = ANY(...)` collapses to plain
+        # equality for the single-status case.
+        statuses = [s.strip() for s in status.split(",") if s.strip()]
+        if statuses:
+            params.append(statuses)
+            where += f" AND status = ANY(${len(params)}::text[])"
     if search:
         params.append(search)
         where += f" AND text_cache ~* ${len(params)}"

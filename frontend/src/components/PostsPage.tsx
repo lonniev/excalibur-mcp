@@ -11,10 +11,14 @@ import TableFilter from "./TableFilter";
 import QuoteScroller from "./QuoteScroller";
 import SchedulerHealth from "./SchedulerHealth";
 
-// `sending` is the transient state the scheduler stamps when it claims a due post
-// to fire it. It's included here so a claimed (or stuck) post is never invisible —
-// a post that leaves `scheduled` but hasn't reached `sent` can always be found.
-const STATUS_FILTERS = ["", "draft", "scheduled", "sending", "paused", "sent", "archived"] as const;
+// The status toggle-chiclets. Each is an independent include filter: toggled ON
+// means "show posts with this status", OFF means "exclude them" — together they
+// form a select/reject chain. `sending` is the transient state the scheduler
+// stamps when it claims a due post to fire it; it's a chiclet so a claimed (or
+// stuck) post is never invisible. The "All" chiclet (rendered separately) selects
+// or clears the whole set. Default is everything selected — equivalent to the old
+// unfiltered view.
+const POST_STATUSES = ["draft", "scheduled", "sending", "paused", "sent", "archived"] as const;
 const DATE_FIELDS = [
   { value: "created", label: "Created" },
   { value: "updated", label: "Updated" },
@@ -113,7 +117,8 @@ export default function PostsPage() {
   const [posts, setPosts] = useState<PostSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
-  const [filter, setFilter] = useState("");
+  // The set of statuses to include. Starts fully selected (== the old "all" tab).
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(POST_STATUSES));
   const [sortCol, setSortCol] = useState("created");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [search, setSearch] = useState("");
@@ -134,11 +139,25 @@ export default function PostsPage() {
   const [preview, setPreview] = useState<{ url: string; text: string } | null>(null);
 
   const refresh = useCallback(async () => {
+    // An empty include-set matches nothing by definition — render the empty state
+    // without troubling the backend (whose bare `status` means "all", not "none").
+    if (selected.size === 0) {
+      setPosts([]);
+      setTotal(0);
+      setHasLoaded(true);
+      setError(null);
+      return;
+    }
+    // Full set == unfiltered; a strict subset is sent comma-joined for `status IN`.
+    const status =
+      selected.size === POST_STATUSES.length
+        ? undefined
+        : POST_STATUSES.filter((s) => selected.has(s)).join(",");
     setLoading(true);
     setError(null);
     try {
       const r = await listPosts({
-        status: filter || undefined, sortCol, sortDir, page, pageSize: PAGE_SIZE,
+        status, sortCol, sortDir, page, pageSize: PAGE_SIZE,
         search, dateFrom, dateTo, dateField,
       });
       if (r.error) setError(r.error);
@@ -150,7 +169,7 @@ export default function PostsPage() {
       setHasLoaded(true);
       setLoading(false);
     }
-  }, [filter, sortCol, sortDir, page, search, dateFrom, dateTo, dateField]);
+  }, [selected, sortCol, sortDir, page, search, dateFrom, dateTo, dateField]);
 
   useEffect(() => {
     refresh();
@@ -162,8 +181,22 @@ export default function PostsPage() {
     setPage(0);
   }
 
-  function onFilter(s: string) {
-    setFilter(s);
+  // Toggle a single status in/out of the include-set.
+  function toggleStatus(s: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(s)) next.delete(s);
+      else next.add(s);
+      return next;
+    });
+    setPage(0);
+  }
+
+  // "All" is a convenience: when everything is already selected it clears the set
+  // (reject-all); otherwise it selects the whole set.
+  const allSelected = selected.size === POST_STATUSES.length;
+  function toggleAll() {
+    setSelected(allSelected ? new Set() : new Set(POST_STATUSES));
     setPage(0);
   }
 
@@ -296,21 +329,37 @@ export default function PostsPage() {
         </Link>
       </div>
 
-      <div className="flex gap-1.5 mb-4 text-xs">
-        {STATUS_FILTERS.map((s) => (
-          <button
-            key={s || "all"}
-            onClick={() => onFilter(s)}
-            disabled={loading}
-            className={`px-2.5 py-1 rounded-lg capitalize transition-colors disabled:cursor-not-allowed ${
-              filter === s
-                ? "bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-400"
-                : "text-stone-500 hover:bg-stone-100 dark:text-zinc-400 dark:hover:bg-zinc-800 disabled:hover:bg-transparent disabled:opacity-50"
-            }`}
-          >
-            {s || "all"}
-          </button>
-        ))}
+      <div className="flex flex-wrap gap-1.5 mb-4 text-xs">
+        <button
+          onClick={toggleAll}
+          disabled={loading}
+          className={`px-2.5 py-1 rounded-lg capitalize border transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+            allSelected
+              ? "bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-500/15 dark:text-amber-400 dark:border-amber-500/30"
+              : "text-stone-500 border-transparent hover:bg-stone-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
+          }`}
+        >
+          all
+        </button>
+        {POST_STATUSES.map((s) => {
+          const on = selected.has(s);
+          return (
+            <button
+              key={s}
+              onClick={() => toggleStatus(s)}
+              disabled={loading}
+              aria-pressed={on}
+              title={on ? `Showing ${s} posts — click to hide` : `Hiding ${s} posts — click to show`}
+              className={`px-2.5 py-1 rounded-lg capitalize border transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                on
+                  ? "bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-500/15 dark:text-amber-400 dark:border-amber-500/30"
+                  : "text-stone-400 border-dashed border-stone-300 line-through hover:bg-stone-100 hover:no-underline dark:text-zinc-500 dark:border-zinc-700 dark:hover:bg-zinc-800"
+              }`}
+            >
+              {s}
+            </button>
+          );
+        })}
         <button
           onClick={refresh}
           disabled={loading}
@@ -354,18 +403,16 @@ export default function PostsPage() {
         // human click-spams the tabs while the MCP cold-starts.
         <QuoteScroller heading="Loading your posts…" className="py-16" />
       ) : posts.length === 0 ? (
-        (search || dateFrom || dateTo) ? (
-          <div className="text-center py-12">
-            <p className="text-sm text-stone-400 dark:text-zinc-500">No posts match this filter.</p>
-          </div>
-        ) : (
-          <div className="text-center py-12">
-            <p className="text-sm text-stone-400 dark:text-zinc-500 mb-3">No posts yet.</p>
-            <Link to="/new" className="text-sm text-amber-600 dark:text-amber-400 hover:underline">
-              Compose your first post →
-            </Link>
-          </div>
-        )
+        <div className="text-center py-12">
+          <p className="text-sm text-stone-400 dark:text-zinc-500 mb-3">
+            {search || dateFrom || dateTo || !allSelected
+              ? "No posts match this filter."
+              : "No posts yet."}
+          </p>
+          <Link to="/new" className="text-sm text-amber-600 dark:text-amber-400 hover:underline">
+            Compose a new post →
+          </Link>
+        </div>
       ) : (
         <>
           <TableShell>

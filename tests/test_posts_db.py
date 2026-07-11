@@ -150,7 +150,9 @@ async def test_list_posts_offset_sort_and_total():
     assert "ORDER BY updated_at ASC, created_at DESC" in q
     assert "LIMIT $3 OFFSET $4" in q
     assert captured["args"][0] == NPUB
-    assert captured["args"][1] == "draft"
+    # `status` is matched as set membership; a single status becomes a 1-element list.
+    assert "status = ANY($2::text[])" in q
+    assert captured["args"][1] == ["draft"]
     assert captured["args"][2] == 5  # page_size
     assert captured["args"][3] == 10  # page 2 * size 5
     assert "last_sent_at" in q
@@ -161,6 +163,32 @@ async def test_list_posts_offset_sort_and_total():
     assert out["posts"][0]["last_sent_at"] == "2026-06-21T14:39:00+00:00"
     assert out["posts"][0]["last_attempt_reason"] == "insufficient_balance"
     assert out["posts"][0]["last_attempt_at"] == "2026-06-21T20:00:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_list_posts_multi_status_set_membership():
+    """A comma-separated status filter (the FE's include chiclets) matches any of
+    the listed statuses via a single ``status = ANY(...)`` predicate."""
+    captured = {}
+
+    async def fake_fetchrow(query, *args):
+        captured["count_query"] = query
+        return {"n": 3}
+
+    async def fake_fetch(query, *args):
+        captured["query"] = query
+        captured["args"] = args
+        return []
+
+    with patch.object(posts_db, "fetchrow", fake_fetchrow), \
+         patch.object(posts_db, "fetch", fake_fetch):
+        await posts_db.list_posts(NPUB, status="draft, scheduled ,paused")
+
+    assert "status = ANY($2::text[])" in captured["query"]
+    # Whitespace around each comma-separated status is trimmed.
+    assert captured["args"][1] == ["draft", "scheduled", "paused"]
+    # A single ANY predicate, not one per status.
+    assert captured["query"].count("status = ANY") == 1
 
 
 @pytest.mark.asyncio
