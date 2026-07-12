@@ -5,6 +5,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.34.3] — 2026-07-12
+
+### Changed — SDK 0.62.4 (durable-jobs observability + missing-extra safety net)
+
+- Pinned `tollbooth-dpyc[nostr,prefect]==0.62.4`. The SDK now degrades gracefully when the `[prefect]` extra is absent (loud warning + in-process fallback instead of crashing the first drill) and reports `detached_executor_resolved` / `detached_executor_error` in `service_status.durable_jobs`. eXcalibur already ships the `[prefect]` extra, so this is purely the new diagnostics for the sibling long-runner consumer. No excalibur code change.
+
 ## [0.34.2] — 2026-07-11
 
 ### Fixed — durable long-runner activates reliably on cold containers
