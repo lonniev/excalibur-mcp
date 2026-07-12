@@ -5,6 +5,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.34.2] — 2026-07-11
+
+### Fixed — durable long-runner activates reliably on cold containers
+
+- Pinned `tollbooth-dpyc[nostr,prefect]==0.62.3`. The SDK's `_ensure_async_executor` cached a *transient* creds-load failure (a cold vault on a container's first job), permanently pinning that container to in-process execution despite the long-runner creds being present — every dynamic-block resolve on it would then risk the in-process hard-cap. 0.62.3 retries the probe on a transient failure. No excalibur code change.
+
 ## [0.34.1] — 2026-07-11
 
 ### Changed — SDK 0.62.2 pin + forward-compatible shape callback signature
