@@ -501,7 +501,21 @@ async def create_post(
     """Store a new post (draft or scheduled). Returns its ``post_id``.
 
     Args:
-        doc: The editable Doc (blocks + flags + voice + bans + schedule).
+        doc: The editable Doc — a JSON object whose consumed key is ``blocks``,
+            a list of block objects. A minimal static post is one block:
+            ``{"blocks": [{"text": "gm. stack sats.", "flags": []}]}``. Blocks
+            are joined with a blank line between them to form ``text_cache``.
+            Each block:
+              - ``text`` (str): the block's copy (for a dynamic block, a prompt).
+              - ``flags`` (list): editor highlight regions, each
+                ``{"start": int, "end": int, "note": str, "colorIdx": int}``
+                (char offsets into ``text``) — pass ``[]`` when there are none.
+              - ``dynamic`` (bool, optional): when true ``text`` is a prompt the
+                server resolves with Claude at post time; ``fallback`` (str) is
+                posted if it fails, and ``domains``/``maxFetches``/``runtimeLimit``
+                bound its web access.
+            Voice/bans live in your separate Voice profile and the schedule in
+            ``publish_at``/``recurrence``/``cease_at`` — neither belongs in ``doc``.
         text_cache: Composed text (blocks joined) for scheduler + list excerpts.
         publish_at: ISO-8601 first/next publish time; required when status='scheduled'.
         recurrence: ``{"freq": "daily|weekly|monthly", "interval": n}`` or null.

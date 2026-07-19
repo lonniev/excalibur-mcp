@@ -237,3 +237,19 @@ async def test_soft_delete_ok():
         out = await posts_tools.delete(rt, TOOL, post_id=PID, hard=False, npub=NPUB)
     assert out == {"post_id": PID, "status": "archived"}
     rt.rollback_debit.assert_not_awaited()
+
+
+# -- doc schema is documented inline (issue #235) ----------------------------
+
+def test_create_post_docstring_documents_block_schema():
+    """A patron with no prior post must learn the ``doc`` shape from the
+    docstring alone — never by spending a paid get_post to reverse-engineer it.
+    The doc param must document that ``blocks`` is a list of ``{text, flags}``
+    and carry a worked example."""
+    from excalibur_mcp import server
+
+    doc = server.create_post.__doc__ or ""
+    assert '"text"' in doc, "block schema (text field) is not documented"
+    assert '"flags"' in doc, "block schema (flags field) is not documented"
+    # A concrete, copy-pasteable example of the blocks list.
+    assert '"blocks"' in doc and "[{" in doc, "no worked doc example"
