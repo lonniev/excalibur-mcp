@@ -5,7 +5,9 @@
 // It also surfaces the Cloudflare cron Worker's traffic, which is otherwise
 // invisible here: "Scheduler ↻" pulls recent process_scheduled_posts ticks
 // (operator-only) and merges each run — with its per-post skip/error reasons —
-// into this same log. Auto re-polls every 60s while the panel is open.
+// into this same log. With "auto" on it re-polls every 5 min while the panel is
+// open AND the tab is visible — a hidden tab stops polling so it never keeps the
+// Neon compute awake in the background.
 
 import { useEffect, useRef, useState } from "react";
 import { clearDebug, debugPush, useDebugLog, type DebugEntry } from "../lib/debugLog";
@@ -83,7 +85,7 @@ export default function DebugPanel() {
           // Genuinely empty: the scheduler has never logged a run.
           debugPush(
             "info",
-            "The scheduler hasn't run yet. It checks for due posts on its own about every 10 minutes — nothing will show here until its first run.",
+            "The scheduler hasn't run yet. It checks for due posts on its own about every half hour — nothing will show here until its first run.",
           );
         } else {
           // Ticks exist; this refresh just found nothing newer. Tell the human
@@ -97,7 +99,7 @@ export default function DebugPanel() {
           }
           debugPush(
             "info",
-            `Up to date — no new scheduler runs since you last checked. It last ran at ${lastWhen} and checks again on its own about every 10 minutes.`,
+            `Up to date — no new scheduler runs since you last checked. It last ran at ${lastWhen} and checks again on its own about every half hour.`,
           );
         }
       }
@@ -109,12 +111,39 @@ export default function DebugPanel() {
     }
   }
 
-  // Auto re-poll every 60s while the panel is open and auto is on.
+  // Auto re-poll every 5 min while the panel is open, auto is on, AND the tab is
+  // visible. A hidden tab stops polling so it never keeps the Neon compute awake
+  // in the background; it catches up immediately when the tab becomes visible.
   useEffect(() => {
     if (!open || !auto) return;
-    void loadScheduler(true);
-    const id = window.setInterval(() => void loadScheduler(true), 60_000);
-    return () => window.clearInterval(id);
+    let id: number | null = null;
+    const stop = () => {
+      if (id !== null) {
+        window.clearInterval(id);
+        id = null;
+      }
+    };
+    const start = () => {
+      if (id !== null) return;
+      id = window.setInterval(() => void loadScheduler(true), 5 * 60_000);
+    };
+    const onVisibility = () => {
+      if (document.hidden) {
+        stop();
+      } else {
+        void loadScheduler(true);
+        start();
+      }
+    };
+    if (!document.hidden) {
+      void loadScheduler(true);
+      start();
+    }
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      stop();
+    };
   }, [open, auto]);
 
   function handleClear(): void {

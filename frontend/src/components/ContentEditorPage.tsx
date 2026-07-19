@@ -2132,6 +2132,10 @@ function ScheduleTab({
       <div>
         <label className="mb-1.5 flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-widest text-zinc-500"><Calendar className="h-3.5 w-3.5" /> Publish at</label>
         <input type="datetime-local" value={publishAt} onChange={(e) => setPublishAt(e.target.value)} className={field} />
+        <p className="mt-1.5 text-xs text-zinc-500">
+          The scheduler sweeps for due posts on the hour and the half hour, so a post goes out at the
+          next :00 or :30 after its publish time. Need it out this instant? Use <span className="text-amber-400">Post now</span>.
+        </p>
       </div>
       <div>
         <label className="mb-1.5 flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-widest text-zinc-500"><Repeat className="h-3.5 w-3.5" /> Republish</label>
