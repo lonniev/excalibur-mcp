@@ -11,9 +11,12 @@ name = "excalibur-scheduler"
 main = "src/index.ts"
 compatibility_date = "2026-06-19"
 
-# Every 10 minutes. ~5-min cron granularity is fine for social posting.
+# Every 30 minutes (on the hour and the half hour). Social posting doesn't need
+# minute precision, and a wider cadence lets the Neon compute scale to zero
+# between ticks instead of being pinned awake 24/7 — patrons who need immediacy
+# use "Post Now" in the UI rather than waiting for a tick.
 [triggers]
-crons = ["* * * * *"]
+crons = ["*/30 * * * *"]
 
 [vars]
 # Public, not secret. The worker self-discovers the operator npub from this MCP.

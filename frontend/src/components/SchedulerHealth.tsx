@@ -7,11 +7,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getSchedulerLog } from "../lib/mcp";
 
-// The cron fires ~every 10 min. A gap past ~15 min means the last tick is overdue
-// (quiet); past ~45 min (three missed ticks) it reads as stalled, not idle.
-const FRESH_MS = 15 * 60 * 1000;
-const STALE_MS = 45 * 60 * 1000;
-const POLL_MS = 60 * 1000;
+// The cron fires ~every 30 min (on the half hour). A gap past ~40 min means the
+// last tick is overdue (quiet); past ~100 min (three missed ticks) it reads as
+// stalled, not idle.
+const FRESH_MS = 40 * 60 * 1000;
+const STALE_MS = 100 * 60 * 1000;
+// Poll cadence for the status dot. The scheduler only ticks every 30 min, so a
+// 5-min poll surfaces a stall promptly without pinning the Neon compute awake.
+// We also pause entirely while the tab is hidden (see the effect below).
+const POLL_MS = 5 * 60 * 1000;
 
 type Health = "loading" | "healthy" | "quiet" | "stalled" | "unknown";
 
@@ -57,10 +61,35 @@ export default function SchedulerHealth() {
   }, []);
 
   useEffect(() => {
-    void refresh();
-    timer.current = window.setInterval(() => void refresh(), POLL_MS);
+    const stop = () => {
+      if (timer.current) {
+        window.clearInterval(timer.current);
+        timer.current = null;
+      }
+    };
+    // Only poll while the tab is visible. A backgrounded tab neither needs a
+    // fresh dot nor should it keep waking the Neon compute every few minutes.
+    const start = () => {
+      if (timer.current) return;
+      timer.current = window.setInterval(() => void refresh(), POLL_MS);
+    };
+    const onVisibility = () => {
+      if (document.hidden) {
+        stop();
+      } else {
+        void refresh(); // catch up immediately on return
+        start();
+      }
+    };
+
+    if (!document.hidden) {
+      void refresh();
+      start();
+    }
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
-      if (timer.current) window.clearInterval(timer.current);
+      document.removeEventListener("visibilitychange", onVisibility);
+      stop();
     };
   }, [refresh]);
 
@@ -84,7 +113,7 @@ export default function SchedulerHealth() {
       ? "Couldn't read scheduler status — your sign-in proof may have lapsed. Click to retry."
       : lastRun
         ? `Scheduler last ran ${relative(lastRun)}${held ? ` · ${held} of your posts were held that tick` : ""}. Click to refresh.`
-        : "The scheduler hasn't logged a run yet — it checks for due posts about every 10 minutes.";
+        : "The scheduler hasn't logged a run yet — it checks for due posts about every half hour.";
 
   return (
     <button

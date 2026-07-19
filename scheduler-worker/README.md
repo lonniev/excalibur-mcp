@@ -4,8 +4,10 @@ A Cloudflare Worker cron that fires eXcalibur's due scheduled posts.
 
 ## What it does
 
-Every ~10 minutes the Worker calls the operator-only
-`excalibur_process_scheduled_posts` MCP tool. The MCP does everything else:
+Every 30 minutes (on the hour and the half hour) the Worker calls the
+operator-only `excalibur_process_scheduled_posts` MCP tool. The wider cadence
+lets the Neon compute scale to zero between ticks instead of being pinned awake;
+patrons who need immediacy use "Post now" in the UI. The MCP does everything else:
 selects `scheduled` posts past their `publish_at`, bills each post's owner for
 `post_tweet` (tranche-expiry guard intact), posts to X, stamps `last_sent_at`,
 and reschedules from `recurrence` or retires the post past `cease_at`.
