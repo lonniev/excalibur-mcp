@@ -98,7 +98,10 @@ export default function NpubGate({
     setBusy(true);
     setError("");
     try {
-      const r = await requestNpubProof(trimmed);
+      // Name THIS page as the Device-Grant verification venue (RFC 8628): the
+      // DM will tell the human the phrase below was shown here, so a phrase
+      // that doesn't match this tab is not to be trusted.
+      const r = await requestNpubProof(trimmed, window.location.origin);
       if (r.error) {
         setError(r.error);
         return;
@@ -267,13 +270,22 @@ export default function NpubGate({
                   <span className="font-mono text-amber-700 dark:text-amber-400">🔒 {operatorHash}</span>
                 </div>
               )}
-              {pendingProof && (
-                <div>
-                  Session phrase in the DM:{" "}
-                  <span className="font-mono text-amber-700 dark:text-amber-400">{pendingProof}</span>
-                </div>
-              )}
             </div>
+            {pendingProof && (
+              <div className="rounded-lg p-3 text-xs bg-white dark:bg-zinc-950 border border-amber-300 dark:border-amber-500/40 space-y-2">
+                <div className="uppercase tracking-wider text-[10px] text-stone-400 dark:text-zinc-500">
+                  Confirmation code
+                </div>
+                <div className="font-mono text-base text-amber-700 dark:text-amber-400 select-all">
+                  {pendingProof}
+                </div>
+                <div className="text-stone-500 dark:text-zinc-400 leading-relaxed">
+                  This same code appears in the DM. <b>Approve the DM only if the
+                  code there matches the one shown here.</b> If they differ — or the
+                  DM points you somewhere other than this site — do not reply.
+                </div>
+              </div>
+            )}
             <button onClick={() => void finish()} disabled={busy} className={primary}>
               {stage === "checking" || busy ? "Checking…" : "I've replied — verify"}
             </button>

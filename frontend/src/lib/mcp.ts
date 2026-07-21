@@ -387,8 +387,21 @@ export interface NpubProofResult {
 
 /// Step 1 of DM login. Sends a Secure Courier challenge DM to the npub.
 /// The user replies in their own Nostr client. Free.
-export async function requestNpubProof(patronNpub: string): Promise<NpubProofResult> {
-  return callTool<NpubProofResult>("request_npub_proof", { patron_npub: patronNpub });
+///
+/// `verifyAt` is the OAuth2 Device-Grant `verification_uri` (RFC 8628): the
+/// place where THIS app displays the session phrase. The DM names it so the
+/// human can cross-check — "the code in this DM was shown to you at <verifyAt>;
+/// approve only if it matches." Trust rests on that two-surface match, so we
+/// pass this app's own URL: an impostor firing the same tool from elsewhere
+/// cannot make the human's open eXcalibur tab show the attacker's code.
+export async function requestNpubProof(
+  patronNpub: string,
+  verifyAt?: string,
+): Promise<NpubProofResult> {
+  return callTool<NpubProofResult>("request_npub_proof", {
+    patron_npub: patronNpub,
+    ...(verifyAt ? { verify_at: verifyAt } : {}),
+  });
 }
 
 /// Step 2 of DM login. Destructively drains DMs looking for the signed
