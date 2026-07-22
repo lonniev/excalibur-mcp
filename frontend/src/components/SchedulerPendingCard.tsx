@@ -14,7 +14,13 @@
 // reply lives there, not in this browser.
 
 import { useCallback, useEffect, useState } from "react";
-import { getSchedulerPending, runSchedulerCheckNow, type SchedulerPending } from "../lib/mcp";
+import {
+  getSchedulerPending,
+  getSchedulerStatus,
+  getStoredNpub,
+  runSchedulerCheckNow,
+  type SchedulerPending,
+} from "../lib/mcp";
 
 const POLL_MS = 5 * 60 * 1000;
 
@@ -34,6 +40,17 @@ export default function SchedulerPendingCard() {
   const [poked, setPoked] = useState(false);
 
   const refresh = useCallback(async () => {
+    // Only the operator may read the pending phrase (scheduler_pending is
+    // operator-gated). A patron viewing this tab is NOT the operator — calling
+    // it would just log a misleading "proof cache invalid" error every poll. So
+    // check identity first via the free scheduler_status (which returns the
+    // operator npub) and skip the operator-only call for everyone else.
+    const status = await getSchedulerStatus();
+    const operator = status?.operator_npub;
+    if (!operator || getStoredNpub() !== operator) {
+      setState(null);
+      return;
+    }
     setState(await getSchedulerPending());
   }, []);
 
