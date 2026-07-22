@@ -33,6 +33,13 @@ jobs:
         run: npm run build
         env:
           VITE_MCP_URL: /mcp
+          # Public URL of the scheduled-post cron Worker (scheduler-worker).
+          # Vite inlines this at build time; it enables the owner-private
+          # "your scheduler is waiting for your OK" card (Device-Grant second
+          # surface). Set repo variable VITE_SCHEDULER_URL to the Worker URL
+          # (e.g. https://excalibur-scheduler.<account>.workers.dev). Left
+          # empty, the card simply stays hidden — a safe default.
+          VITE_SCHEDULER_URL: ${{ vars.VITE_SCHEDULER_URL }}
 
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v4

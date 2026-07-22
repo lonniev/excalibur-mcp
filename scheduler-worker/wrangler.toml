@@ -22,6 +22,11 @@ crons = ["*/30 * * * *"]
 # Public, not secret. The worker self-discovers the operator npub from this MCP.
 MCP_URL = "https://excalibur-mcp.fastmcp.app/mcp"
 
+# Public FE origin — the Device-Grant `verify_at` venue named in the proof DM,
+# and the CORS origin allowed to read GET /pending. The operator opens this FE
+# to see (owner-private) the same phrase the DM shows and match the two.
+FE_URL = "https://excalibur-app.pages.dev"
+
 # KV caches the protocol-issued, short-lived proof token (+ in-flight poison) —
 # the same role localStorage plays for the FE. Create the namespace and paste
 # its id here:
