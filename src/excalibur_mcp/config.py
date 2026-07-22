@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     seed_balance_sats: int = 0
     dpyc_registry_cache_ttl_seconds: int = 300
 
+    # Public URL of the scheduled-post cron Worker (scheduler-worker). The
+    # operator-gated `scheduler_pending` tool reads the Worker's owner-private
+    # pending state from here, authenticating AS the operator (no shared secret).
+    scheduler_worker_url: str = "https://excalibur-scheduler.lonniev.workers.dev"
+
     # ── Constraint Engine (opt-in) ───────────────────────────────────
     constraints_enabled: bool = False
     constraints_config: str | None = None

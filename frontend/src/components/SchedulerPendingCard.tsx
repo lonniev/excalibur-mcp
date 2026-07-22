@@ -8,12 +8,13 @@
 // here doesn't appear in any DM, the operator should NOT approve.
 //
 // Hidden unless the scheduler is actually pending AND the viewer is the
-// operator (fetchSchedulerPending returns null otherwise). Approval itself
-// happens in Pricing Studio — the operator nsec that signs the reply lives
-// there, not in this browser.
+// operator (getSchedulerPending returns null otherwise — the MCP gates it to
+// the operator npub). A plain npub login suffices; the browser signs nothing.
+// Approval itself happens in Pricing Studio — the operator nsec that signs the
+// reply lives there, not in this browser.
 
 import { useCallback, useEffect, useState } from "react";
-import { fetchSchedulerPending, type SchedulerPending } from "../lib/schedulerPending";
+import { getSchedulerPending, type SchedulerPending } from "../lib/mcp";
 
 const POLL_MS = 5 * 60 * 1000;
 
@@ -31,7 +32,7 @@ export default function SchedulerPendingCard() {
   const [state, setState] = useState<SchedulerPending | null>(null);
 
   const refresh = useCallback(async () => {
-    setState(await fetchSchedulerPending());
+    setState(await getSchedulerPending());
   }, []);
 
   useEffect(() => {

@@ -67,73 +67,64 @@ export default {
     ctx.waitUntil(tick(env).then((m) => console.log(`excalibur scheduler: ${m}`)));
   },
   // Two GET routes:
-  //   /pending → owner-private view of what the scheduler is waiting on (the
-  //              Device-Grant second surface; auth'd, code-only, never a token).
+  //   /pending → what the scheduler is waiting on. Gated to the operator npub
+  //              (the request is addressed to that npub). Read server-side by
+  //              the operator MCP, which signs AS the operator — the browser
+  //              never calls this directly, so there is no CORS to manage.
   //   anything else → manual tick trigger for testing.
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
-    if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors(env) });
     if (url.pathname === "/pending") return pendingView(req, env);
     return new Response(await tick(env), { status: 200 });
   },
 };
 
-// CORS so the FE (a different origin than this worker) can read /pending. We
-// echo the configured FE origin rather than "*" — this view is owner-private.
-function cors(env: Env): Record<string, string> {
-  return {
-    "Access-Control-Allow-Origin": env.FE_URL || "*",
-    "Access-Control-Allow-Methods": "GET, OPTIONS",
-    "Access-Control-Allow-Headers": "content-type",
-    Vary: "Origin",
-  };
-}
-
-function json(env: Env, body: unknown, status = 200): Response {
+function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "content-type": "application/json", ...cors(env) },
+    headers: { "content-type": "application/json" },
   });
 }
 
 // GET /pending?proof=<url-encoded kind-27235 event JSON>. Returns the pending
-// challenge phrase ONLY to a caller who signs as the operator npub. The active
-// bearer token is NEVER surfaced — leaking it would hand over the scheduler's
-// session; the pending phrase is the same string already DM'd to the operator.
+// challenge phrase ONLY to a caller proving they are the operator npub. The MCP
+// satisfies this by signing with the operator key it already holds — no shared
+// secret, just the identity the request is addressed to. The active bearer
+// token is NEVER surfaced; the pending phrase is the string already DM'd.
 async function pendingView(req: Request, env: Env): Promise<Response> {
   const proofRaw = new URL(req.url).searchParams.get("proof");
-  if (!proofRaw) return json(env, { error: "proof_required" }, 401);
+  if (!proofRaw) return json({ error: "proof_required" }, 401);
 
   return withClient(env.MCP_URL, async (call) => {
     const whoami = await call("list_canonical_identities");
     const operatorNpub = String(whoami?.operator_npub ?? "");
     if (!operatorNpub.startsWith("npub1")) {
-      return json(env, { error: "operator_npub_unresolved" }, 502);
+      return json({ error: "operator_npub_unresolved" }, 502);
     }
     if (!verifyPendingProof(proofRaw, operatorNpub)) {
       // Same 403 whether the signature is bad or the signer simply isn't the
       // operator — a non-operator learns nothing about the scheduler's state.
-      return json(env, { error: "not_operator" }, 403);
+      return json({ error: "not_operator" }, 403);
     }
 
     const raw = await env.PROOF_KV.get(KEY);
     const state: ProofState | null = raw ? (JSON.parse(raw) as ProofState) : null;
     if (state?.phase === "pending") {
-      return json(env, {
+      return json({
         phase: "pending",
         code: state.poison, // the phrase the operator matches against the DM
         reason: state.reason,
         requestedAt: state.requestedAt,
       });
     }
-    if (state?.phase === "active") return json(env, { phase: "active", expiresAt: state.expiresAt });
-    return json(env, { phase: "idle" });
-  }).catch((e) => json(env, { error: `pending_view_failed: ${(e as Error).message}` }, 502));
+    if (state?.phase === "active") return json({ phase: "active", expiresAt: state.expiresAt });
+    return json({ phase: "idle" });
+  }).catch((e) => json({ error: `pending_view_failed: ${(e as Error).message}` }, 502));
 }
 
-// Verify a client-signed kind-27235 event authorizes reading the pending view:
-// valid Schnorr signature, our `u`-tag, fresh, and signed by the operator npub.
-// Keyless — signature verification needs no secret on the worker.
+// Verify a kind-27235 event authorizes reading the pending view: valid Schnorr
+// signature, our `u`-tag, fresh, and signed by the operator npub. Keyless —
+// signature verification needs no secret on the worker.
 function verifyPendingProof(proofRaw: string, operatorNpub: string): boolean {
   try {
     const ev = JSON.parse(proofRaw);

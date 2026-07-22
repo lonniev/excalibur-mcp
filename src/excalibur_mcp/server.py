@@ -144,6 +144,13 @@ _DOMAIN_TOOLS = [
     # the per-post outcomes for THEIR OWN posts (owner-scoped server-side).
     ToolIdentity(tool_id=capability_uuid("get_scheduler_log"), capability="get_scheduler_log",
                  category="free", intent="Read recent scheduler-tick outcomes for your posts"),
+    # What is the cron Worker waiting on? When its authorization lapses the Worker
+    # DMs the operator a challenge phrase and parks. `restricted` gates this read
+    # to the operator npub (the request is addressed to that npub — only its owner
+    # may see it), no bill. The MCP reads the phrase from the Worker AS the
+    # operator, so the human never signs anything in the browser.
+    ToolIdentity(tool_id=capability_uuid("scheduler_pending"), capability="scheduler_pending",
+                 category="restricted", intent="Operator: what the scheduler is waiting on"),
 ]
 
 TOOL_REGISTRY: dict[str, ToolIdentity] = {ti.tool_id: ti for ti in _DOMAIN_TOOLS}
@@ -1293,6 +1300,45 @@ async def get_scheduler_log(
     runs = await scheduler_runs.list_runs(limit)
     scoped = scheduler_runs.scope_runs(runs, npub, operator)
     return {"runs": scoped, "scope": "operator" if npub == operator else "owner"}
+
+
+@tool
+@runtime.paid_tool(capability_uuid("scheduler_pending"), catch_errors=True)
+async def scheduler_pending(
+    npub: Annotated[str, Field(description="The OPERATOR's npub (npub1...); this tool is operator-only.")] = "",
+    dpop_token: str = "",
+) -> dict:
+    """What is the scheduled-post cron Worker waiting on? (operator-only).
+
+    When the Worker's authorization lapses it DMs the operator a challenge
+    phrase and parks. This returns that pending phrase so the operator can match
+    it against the DM before approving in Studio — the Device-Grant second
+    surface for a headless actor. The phrase lives only in the Worker's KV (an
+    impostor can't inject it); we read it AS the operator (a kind-27235 signed
+    with the operator key), so the human never signs anything in the browser.
+
+    ``restricted``: gated to the operator npub, free. Never returns the active
+    session token. Returns ``{phase, code, reason, requestedAt}`` — ``phase`` is
+    ``pending`` / ``active`` / ``idle``, or ``unavailable`` if the Worker can't
+    be reached.
+    """
+    import httpx
+    from tollbooth.identity_proof import create_proof
+
+    # Sign as the operator with the Worker's expected u-tag. Not a real tool
+    # name — a sentinel the Worker checks literally, so this proof can't be
+    # replayed against any billable MCP tool.
+    proof = create_proof(runtime._get_nsec(), "excalibur_scheduler_pending")
+    url = f"{get_settings().scheduler_worker_url.rstrip('/')}/pending"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(url, params={"proof": proof})
+        if resp.status_code != 200:
+            return {"phase": "unavailable", "status": resp.status_code}
+        return resp.json()
+    except (httpx.HTTPError, ValueError):
+        # Worker unreachable or non-JSON — a calm "unavailable", never an alarm.
+        return {"phase": "unavailable"}
 
 
 # ---------------------------------------------------------------------------
