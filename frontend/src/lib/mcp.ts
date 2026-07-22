@@ -1080,6 +1080,24 @@ export async function getSchedulerLog(limit = 25): Promise<SchedulerRun[]> {
   return r.runs ?? [];
 }
 
+/// What the cron Worker is waiting on (the Device-Grant second surface). When
+/// the Worker's authorization lapses it DMs the operator a challenge phrase and
+/// parks; this returns that phrase so the operator can match it against the DM.
+/// Operator-gated: the MCP reads it from the Worker AS the operator, so the
+/// browser signs nothing — a plain npub login is enough. Returns null when
+/// there's nothing to show or the caller isn't the operator (card stays hidden).
+export type SchedulerPending =
+  | { phase: "pending"; code: string; reason: string; requestedAt: number }
+  | { phase: "active" | "idle" | "unavailable" };
+
+export async function getSchedulerPending(): Promise<SchedulerPending | null> {
+  try {
+    return await callTool<SchedulerPending>("scheduler_pending", {}, { bestEffort: true });
+  } catch {
+    return null; // not the operator / proof lapsed / warming up → hide the card
+  }
+}
+
 // ─── Connected X account (for personalizing the editor preview) ────────────
 
 export interface XProfile {
