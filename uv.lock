@@ -718,7 +718,7 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.1.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.3.0" },
-    { name = "tollbooth-dpyc", extras = ["nostr", "prefect"], specifier = "==0.68.0" },
+    { name = "tollbooth-dpyc", extras = ["nostr", "prefect"], specifier = "==0.69.0" },
 ]
 provides-extras = ["dev"]
 
@@ -2594,16 +2594,16 @@ sdist = { url = "https://files.pythonhosted.org/packages/bb/89/6df40b0c5fd9a1c30
 
 [[package]]
 name = "tollbooth-dpyc"
-version = "0.68.0"
+version = "0.69.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cryptography" },
     { name = "httpx" },
     { name = "pynostr" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/bd/82/841f44c6069c8ac35cebb88dcc35a15817a448d66139d9550e3d3175a172/tollbooth_dpyc-0.68.0.tar.gz", hash = "sha256:57d51122817f910627c111f407f9559ef83ef8aa7588c42dd008d5b6f4e56d09", size = 2631422, upload-time = "2026-07-21T22:14:11.003Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/66/6e/d186eca0699714132491ae068a75ff111f12a31d4087234c6565d3d8f0f3/tollbooth_dpyc-0.69.0.tar.gz", hash = "sha256:a9a6c827f2bc95089ad78088867f664c311249a04abd6bdcb73717a0b6aa7665", size = 2632073, upload-time = "2026-07-22T16:47:47.312Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/69/08/d489b97dd0662ac0e085e2e0343821bdf80a8e114f67bc8e12908ca0e26d/tollbooth_dpyc-0.68.0-py3-none-any.whl", hash = "sha256:45638e703ca9476f6d2c831643c9924d37c9376518c660125faebacbc44d5e7a", size = 382553, upload-time = "2026-07-21T22:14:08.721Z" },
+    { url = "https://files.pythonhosted.org/packages/12/50/aaf3155b0ad216dc1ed0d05bbd49ede0aec8ab74e7f12bba14914afbbd6a/tollbooth_dpyc-0.69.0-py3-none-any.whl", hash = "sha256:dc55e70c4efc9ac97c9d2c3941da626749e140d155818350d9f4c78380f84466", size = 382848, upload-time = "2026-07-22T16:47:45.489Z" },
 ]
 
 [package.optional-dependencies]

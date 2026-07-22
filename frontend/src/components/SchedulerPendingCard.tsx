@@ -14,7 +14,7 @@
 // reply lives there, not in this browser.
 
 import { useCallback, useEffect, useState } from "react";
-import { getSchedulerPending, type SchedulerPending } from "../lib/mcp";
+import { getSchedulerPending, runSchedulerCheckNow, type SchedulerPending } from "../lib/mcp";
 
 const POLL_MS = 5 * 60 * 1000;
 
@@ -30,10 +30,27 @@ function relative(ms: number): string {
 
 export default function SchedulerPendingCard() {
   const [state, setState] = useState<SchedulerPending | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [poked, setPoked] = useState(false);
 
   const refresh = useCallback(async () => {
     setState(await getSchedulerPending());
   }, []);
+
+  // "I've approved — check now": poke the scheduler to run a tick immediately so
+  // it claims the reply instead of waiting for the next cron. The Worker runs
+  // the tick in the background; give it a moment, then refresh — if it completed,
+  // the phase flips and this card disappears.
+  const checkNow = useCallback(async () => {
+    setBusy(true);
+    setPoked(false);
+    await runSchedulerCheckNow();
+    window.setTimeout(() => {
+      void refresh();
+      setBusy(false);
+      setPoked(true);
+    }, 4000);
+  }, [refresh]);
 
   useEffect(() => {
     let timer: number | null = null;
@@ -89,6 +106,20 @@ export default function SchedulerPendingCard() {
         proof DM whose phrase matches this one. If you can't find a DM with this exact phrase,
         don't approve it.
       </p>
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <button
+          onClick={() => void checkNow()}
+          disabled={busy}
+          className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-amber-500 disabled:opacity-60"
+        >
+          {busy ? "Checking…" : "I've approved — check now"}
+        </button>
+        {poked && !busy && (
+          <span className="text-xs text-amber-700 dark:text-amber-300/80">
+            Still waiting — give your reply a moment to land, then check again.
+          </span>
+        )}
+      </div>
     </div>
   );
 }
