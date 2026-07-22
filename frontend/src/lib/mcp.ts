@@ -1098,6 +1098,33 @@ export async function getSchedulerPending(): Promise<SchedulerPending | null> {
   }
 }
 
+/// The scheduler's configuration + status (cadence, version, renewal window,
+/// current authorization phase) plus the operator npub it acts for. Free +
+/// proof-gated; global config, so any proven patron sees it. No challenge
+/// phrase (that's getSchedulerPending, operator-only). Null on failure.
+export interface SchedulerStatus {
+  operator_npub?: string;
+  version?: string;
+  cadence?: string;
+  renewsBeforeExpiryHours?: number;
+  rerequestAfterHours?: number;
+  mcpUrl?: string;
+  verifyAt?: string | null;
+  authorization?:
+    | { phase: "pending"; reason: string; requestedAt: number }
+    | { phase: "active"; expiresAt: number }
+    | { phase: "idle" };
+  worker?: string; // "unavailable" when the Worker couldn't be reached
+}
+
+export async function getSchedulerStatus(): Promise<SchedulerStatus | null> {
+  try {
+    return await callTool<SchedulerStatus>("scheduler_status", {}, { bestEffort: true });
+  } catch {
+    return null;
+  }
+}
+
 // ─── Connected X account (for personalizing the editor preview) ────────────
 
 export interface XProfile {

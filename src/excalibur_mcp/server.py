@@ -151,6 +151,12 @@ _DOMAIN_TOOLS = [
     # operator, so the human never signs anything in the browser.
     ToolIdentity(tool_id=capability_uuid("scheduler_pending"), capability="scheduler_pending",
                  category="restricted", intent="Operator: what the scheduler is waiting on"),
+    # The scheduler's configuration + current status (cadence, phase, renewal
+    # window). `free` + proof-gated: global config, safe for any proven patron —
+    # the pending phrase (operator-only) is scheduler_pending; the per-tick
+    # traffic log is get_scheduler_log.
+    ToolIdentity(tool_id=capability_uuid("scheduler_status"), capability="scheduler_status",
+                 category="free", intent="Read the scheduler's configuration and status"),
 ]
 
 TOOL_REGISTRY: dict[str, ToolIdentity] = {ti.tool_id: ti for ti in _DOMAIN_TOOLS}
@@ -1339,6 +1345,37 @@ async def scheduler_pending(
     except (httpx.HTTPError, ValueError):
         # Worker unreachable or non-JSON — a calm "unavailable", never an alarm.
         return {"phase": "unavailable"}
+
+
+@tool
+@runtime.paid_tool(capability_uuid("scheduler_status"), catch_errors=True)
+async def scheduler_status(
+    npub: Annotated[str, Field(description="Your npub (npub1...).")] = "",
+    dpop_token: str = "",
+) -> dict:
+    """The scheduler's configuration and current status (free; any proven patron).
+
+    Relays the cron Worker's public ``/status`` — cadence, version, renewal
+    window, and current authorization phase (``pending`` / ``active`` / ``idle``,
+    no challenge phrase) — and adds the operator npub it acts for. No secrets:
+    the pending phrase (operator-only) is ``scheduler_pending``; the per-tick
+    traffic log is ``get_scheduler_log``. Returns the merged config, or
+    ``{worker: "unavailable"}`` merged in if the Worker can't be reached.
+    """
+    import httpx
+
+    out: dict = {"operator_npub": runtime.operator_npub()}
+    url = f"{get_settings().scheduler_worker_url.rstrip('/')}/status"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(url)
+        if resp.status_code == 200:
+            out.update(resp.json())
+        else:
+            out["worker"] = "unavailable"
+    except (httpx.HTTPError, ValueError):
+        out["worker"] = "unavailable"
+    return out
 
 
 # ---------------------------------------------------------------------------

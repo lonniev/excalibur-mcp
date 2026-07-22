@@ -67,6 +67,7 @@ export default function Nav() {
       {tab("/", "Posts", true)}
       {tab("/snippets", "Snippets")}
       {tab("/new", "Compose")}
+      {tab("/scheduler", "Scheduler")}
       {tab("/wallet", "Wallet")}
 
       <div className="ml-auto flex items-center gap-3">
