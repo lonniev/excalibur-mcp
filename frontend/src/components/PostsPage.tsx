@@ -10,6 +10,7 @@ import { PageControls, SortHeader, TableShell } from "./PagedTable";
 import TableFilter from "./TableFilter";
 import QuoteScroller from "./QuoteScroller";
 import SchedulerHealth from "./SchedulerHealth";
+import SchedulerPendingCard from "./SchedulerPendingCard";
 
 // The status toggle-chiclets. Each is an independent include filter: toggled ON
 // means "show posts with this status", OFF means "exclude them" — together they
@@ -355,6 +356,10 @@ export default function PostsPage() {
         >
           + Compose
         </Link>
+      </div>
+
+      <div className="mb-4">
+        <SchedulerPendingCard />
       </div>
 
       {templateFilter && (

@@ -11,6 +11,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — scheduler proof requests carry purpose + a Device-Grant second surface
+
+- The scheduled-post cron Worker now sends a human-worded `reason` and a `verify_at` venue on its `request_npub_proof` call (it previously sent neither, so the ~monthly 3am renewal DM was contextless and pointed nowhere). Pricing Studio already renders both — the DM now says what is being asked and where to match the code.
+- New owner-private `GET /pending` on the Worker returns the pending challenge phrase (never the active session token) only to a caller who signs a kind-27235 event as the operator npub. Fed from the Worker's own KV — a store an impostor can't write — so the phrase shown is the legit scheduler's.
+- FE: a `SchedulerPendingCard` on the Posts page shows that phrase, its reason, and the match-gate, so the operator can confirm their own scheduler (not an impostor) before approving in Studio. Hidden unless pending and the viewer signs as the operator. Requires `VITE_SCHEDULER_URL`; the Worker's `FE_URL` var sets the `verify_at` venue and CORS origin.
+
 ## [0.34.3] — 2026-07-12
 
 ### Changed — SDK 0.62.4 (durable-jobs observability + missing-extra safety net)

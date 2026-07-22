@@ -28,10 +28,12 @@
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { nip19, verifyEvent } from "nostr-tools";
 
 export interface Env {
   MCP_URL: string; // public streamable-HTTP endpoint
   PROOF_KV: KVNamespace; // caches the protocol-issued, short-lived proof token
+  FE_URL?: string; // public FE origin — the `verify_at` venue the DM points at
 }
 
 const SLUG = "excalibur";
@@ -39,8 +41,23 @@ const KEY = "proof_state";
 const RENEW_BEFORE_MS = 24 * 60 * 60 * 1000; // re-request a day before expiry
 const REREQUEST_AFTER_MS = 60 * 60 * 1000; // resend the DM if unanswered for 1h
 
+// The human-worded purpose the operator sees in the proof DM (Device-Grant
+// `reason`). Names the actor (this scheduler), the ask (post the queued
+// tweets), and the cadence (renews ~monthly) so a legit 3am renewal reads
+// differently from an unsolicited impostor request.
+const REASON =
+  "eXcalibur's scheduled-post worker is asking to post the tweets you've queued, " +
+  "on your behalf. Approving authorizes it for about 30 days; it renews roughly monthly.";
+
+// The `u`-tag the FE signs (and this worker checks) on the kind-27235 event
+// that gates GET /pending — the same inline-proof shape a paid tool call uses,
+// bound here to the pending-view "capability" rather than a tool name.
+const PENDING_U_TAG = "excalibur_scheduler_pending";
+const PROOF_KIND = 27235;
+const PENDING_PROOF_SKEW_S = 120; // clock-skew tolerance for the read gate
+
 type ProofState =
-  | { phase: "pending"; poison: string; requestedAt: number }
+  | { phase: "pending"; poison: string; requestedAt: number; reason: string }
   | { phase: "active"; token: string; expiresAt: number };
 
 type Call = <R = any>(name: string, args?: Record<string, unknown>) => Promise<R>;
@@ -49,11 +66,89 @@ export default {
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(tick(env).then((m) => console.log(`excalibur scheduler: ${m}`)));
   },
-  // Manual trigger for testing: GET the worker URL to run one tick.
-  async fetch(_req: Request, env: Env): Promise<Response> {
+  // Two GET routes:
+  //   /pending → owner-private view of what the scheduler is waiting on (the
+  //              Device-Grant second surface; auth'd, code-only, never a token).
+  //   anything else → manual tick trigger for testing.
+  async fetch(req: Request, env: Env): Promise<Response> {
+    const url = new URL(req.url);
+    if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors(env) });
+    if (url.pathname === "/pending") return pendingView(req, env);
     return new Response(await tick(env), { status: 200 });
   },
 };
+
+// CORS so the FE (a different origin than this worker) can read /pending. We
+// echo the configured FE origin rather than "*" — this view is owner-private.
+function cors(env: Env): Record<string, string> {
+  return {
+    "Access-Control-Allow-Origin": env.FE_URL || "*",
+    "Access-Control-Allow-Methods": "GET, OPTIONS",
+    "Access-Control-Allow-Headers": "content-type",
+    Vary: "Origin",
+  };
+}
+
+function json(env: Env, body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json", ...cors(env) },
+  });
+}
+
+// GET /pending?proof=<url-encoded kind-27235 event JSON>. Returns the pending
+// challenge phrase ONLY to a caller who signs as the operator npub. The active
+// bearer token is NEVER surfaced — leaking it would hand over the scheduler's
+// session; the pending phrase is the same string already DM'd to the operator.
+async function pendingView(req: Request, env: Env): Promise<Response> {
+  const proofRaw = new URL(req.url).searchParams.get("proof");
+  if (!proofRaw) return json(env, { error: "proof_required" }, 401);
+
+  return withClient(env.MCP_URL, async (call) => {
+    const whoami = await call("list_canonical_identities");
+    const operatorNpub = String(whoami?.operator_npub ?? "");
+    if (!operatorNpub.startsWith("npub1")) {
+      return json(env, { error: "operator_npub_unresolved" }, 502);
+    }
+    if (!verifyPendingProof(proofRaw, operatorNpub)) {
+      // Same 403 whether the signature is bad or the signer simply isn't the
+      // operator — a non-operator learns nothing about the scheduler's state.
+      return json(env, { error: "not_operator" }, 403);
+    }
+
+    const raw = await env.PROOF_KV.get(KEY);
+    const state: ProofState | null = raw ? (JSON.parse(raw) as ProofState) : null;
+    if (state?.phase === "pending") {
+      return json(env, {
+        phase: "pending",
+        code: state.poison, // the phrase the operator matches against the DM
+        reason: state.reason,
+        requestedAt: state.requestedAt,
+      });
+    }
+    if (state?.phase === "active") return json(env, { phase: "active", expiresAt: state.expiresAt });
+    return json(env, { phase: "idle" });
+  }).catch((e) => json(env, { error: `pending_view_failed: ${(e as Error).message}` }, 502));
+}
+
+// Verify a client-signed kind-27235 event authorizes reading the pending view:
+// valid Schnorr signature, our `u`-tag, fresh, and signed by the operator npub.
+// Keyless — signature verification needs no secret on the worker.
+function verifyPendingProof(proofRaw: string, operatorNpub: string): boolean {
+  try {
+    const ev = JSON.parse(proofRaw);
+    if (ev?.kind !== PROOF_KIND) return false;
+    const u = (ev.tags ?? []).find((t: string[]) => t[0] === "u")?.[1];
+    if (u !== PENDING_U_TAG) return false;
+    const age = Math.floor(Date.now() / 1000) - Number(ev.created_at ?? 0);
+    if (!Number.isFinite(age) || Math.abs(age) > PENDING_PROOF_SKEW_S) return false;
+    const decoded = nip19.decode(operatorNpub);
+    if (decoded.type !== "npub" || ev.pubkey !== decoded.data) return false;
+    return verifyEvent(ev);
+  } catch {
+    return false;
+  }
+}
 
 async function tick(env: Env): Promise<string> {
   const raw = await env.PROOF_KV.get(KEY);
@@ -95,11 +190,25 @@ async function tick(env: Env): Promise<string> {
 }
 
 async function request(call: Call, env: Env, operatorNpub: string): Promise<string> {
-  const r = await call("request_npub_proof", { patron_npub: operatorNpub });
+  // Carry a human-worded `reason` (what/why) and a `verify_at` venue (RFC 8628
+  // Device-Grant): the DM tells the operator this same phrase is shown, owner-
+  // private, at the FE — approve ONLY if the two surfaces match. The FE view is
+  // fed from this worker's KV, which an impostor can't write, so an unfamiliar
+  // or unreachable venue fails safe.
+  const r = await call("request_npub_proof", {
+    patron_npub: operatorNpub,
+    reason: REASON,
+    ...(env.FE_URL ? { verify_at: env.FE_URL } : {}),
+  });
   if (!r?.dpop_token) return `request_npub_proof returned no session phrase: ${JSON.stringify(r)}`;
   await env.PROOF_KV.put(
     KEY,
-    JSON.stringify({ phase: "pending", poison: r.dpop_token, requestedAt: Date.now() }),
+    JSON.stringify({
+      phase: "pending",
+      poison: r.dpop_token,
+      requestedAt: Date.now(),
+      reason: REASON,
+    }),
   );
   return "Sent a proof-request DM to the operator npub — reply from a key-holder (Studio) to authorize the scheduler.";
 }
