@@ -397,10 +397,12 @@ export interface NpubProofResult {
 export async function requestNpubProof(
   patronNpub: string,
   verifyAt?: string,
+  reason?: string,
 ): Promise<NpubProofResult> {
   return callTool<NpubProofResult>("request_npub_proof", {
     patron_npub: patronNpub,
     ...(verifyAt ? { verify_at: verifyAt } : {}),
+    ...(reason ? { reason } : {}),
   });
 }
 

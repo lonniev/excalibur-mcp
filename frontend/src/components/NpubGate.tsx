@@ -100,8 +100,13 @@ export default function NpubGate({
     try {
       // Name THIS page as the Device-Grant verification venue (RFC 8628): the
       // DM will tell the human the phrase below was shown here, so a phrase
-      // that doesn't match this tab is not to be trusted.
-      const r = await requestNpubProof(trimmed, window.location.origin);
+      // that doesn't match this tab is not to be trusted. The reason states,
+      // in the human's own terms, why the DM arrived — they started this login.
+      const r = await requestNpubProof(
+        trimmed,
+        window.location.origin,
+        `You requested to log in to eXcalibur (${window.location.host}).`,
+      );
       if (r.error) {
         setError(r.error);
         return;
