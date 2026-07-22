@@ -11,6 +11,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — track tollbooth-dpyc 0.69.1 (clear error for non-operator restricted calls)
+
+- Bumped the pinned SDK to **0.69.1**: `restricted` (operator-only) tools now deny a non-operator with a clear `restricted` error instead of a misleading `proof_refresh_needed`. Complements the FE fix that already stops a patron from calling `scheduler_pending` — now if any non-operator does reach a restricted tool, the operator MCP returns the honest reason. `uv.lock` regenerated.
+
 ### Changed — the scheduler proof saga waits for human responsiveness
 
 - Bumped `tollbooth-dpyc[nostr,prefect]` to **0.69.0**: the Secure Courier freshness window went 15 min → **1 hour**, so a proof challenge stays claimable long enough for a human to notice the DM and reply, and a 30-min tick reliably lands inside the window (15 min structurally missed it).
