@@ -1125,6 +1125,19 @@ export async function getSchedulerStatus(): Promise<SchedulerStatus | null> {
   }
 }
 
+/// Poke the scheduler to run one tick now — claims a pending proof reply
+/// (completing authorization) and fires due posts. Operator-only. Returns true
+/// if the Worker accepted the poke (it runs in the background); re-read status a
+/// few seconds later to see the phase flip.
+export async function runSchedulerCheckNow(): Promise<boolean> {
+  try {
+    const r = await callTool<{ started?: boolean }>("scheduler_check_now", {}, { bestEffort: true });
+    return !!r.started;
+  } catch {
+    return false;
+  }
+}
+
 // ─── Connected X account (for personalizing the editor preview) ────────────
 
 export interface XProfile {

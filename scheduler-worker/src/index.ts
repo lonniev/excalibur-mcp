@@ -72,11 +72,19 @@ export default {
   // GET routes (all read server-side by the operator MCP, so no CORS to manage):
   //   /status  → non-sensitive config + current phase (no code, no token).
   //   /pending → the pending challenge phrase; gated to the operator npub.
-  //   anything else → manual tick trigger for testing.
-  async fetch(req: Request, env: Env): Promise<Response> {
+  //   /tick    → run one tick NOW, in the background; returns immediately so the
+  //              caller (the "Check for approval now" button) isn't held for the
+  //              minutes a post-firing tick can take. The operator MCP gates who
+  //              may call it; the tick itself is the same work the cron does.
+  //   anything else → synchronous manual tick (returns its result; for testing).
+  async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
     if (url.pathname === "/status") return statusView(env);
     if (url.pathname === "/pending") return pendingView(req, env);
+    if (url.pathname === "/tick") {
+      ctx.waitUntil(tick(env).then((m) => console.log(`excalibur scheduler (poke): ${m}`)));
+      return json({ started: true });
+    }
     return new Response(await tick(env), { status: 200 });
   },
 };

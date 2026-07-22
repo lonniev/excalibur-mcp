@@ -11,6 +11,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — the scheduler proof saga waits for human responsiveness
+
+- Bumped `tollbooth-dpyc[nostr,prefect]` to **0.69.0**: the Secure Courier freshness window went 15 min → **1 hour**, so a proof challenge stays claimable long enough for a human to notice the DM and reply, and a 30-min tick reliably lands inside the window (15 min structurally missed it).
+- New operator-only **"I've approved — check now"** button on the pending card: after replying in Studio, one click pokes the scheduler to claim the reply immediately instead of waiting for the next cron tick. Backed by a new operator-gated MCP tool `scheduler_check_now` → the Worker's new background `GET /tick` (returns immediately; the tick runs in `waitUntil`).
+
 ### Added — a Scheduler tab: the cron Worker made legible
 
 - New **Scheduler** tab in the FE surfaces the scheduled-post Worker's configuration, status, pending approval, and per-tick traffic log — so it stops being a black box. It composes three already npub-scoped sources, so the page needs no gate of its own: each tool reveals only what the current proofed npub allows.

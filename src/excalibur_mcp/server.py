@@ -157,6 +157,12 @@ _DOMAIN_TOOLS = [
     # traffic log is get_scheduler_log.
     ToolIdentity(tool_id=capability_uuid("scheduler_status"), capability="scheduler_status",
                  category="free", intent="Read the scheduler's configuration and status"),
+    # Poke the Worker to run one tick now — claims a pending proof reply
+    # (completing authorization) and fires due posts. `restricted` (operator
+    # only), free. Lets the operator complete an approval on demand instead of
+    # waiting for the next cron tick.
+    ToolIdentity(tool_id=capability_uuid("scheduler_check_now"), capability="scheduler_check_now",
+                 category="restricted", intent="Operator: run a scheduler tick now"),
 ]
 
 TOOL_REGISTRY: dict[str, ToolIdentity] = {ti.tool_id: ti for ti in _DOMAIN_TOOLS}
@@ -1376,6 +1382,33 @@ async def scheduler_status(
     except (httpx.HTTPError, ValueError):
         out["worker"] = "unavailable"
     return out
+
+
+@tool
+@runtime.paid_tool(capability_uuid("scheduler_check_now"), catch_errors=True)
+async def scheduler_check_now(
+    npub: Annotated[str, Field(description="The OPERATOR's npub (npub1...); this tool is operator-only.")] = "",
+    dpop_token: str = "",
+) -> dict:
+    """Run one scheduler tick now (operator-only).
+
+    Pokes the Worker's ``/tick`` — the same work the ~30-minute cron does: it
+    claims a pending proof reply (completing your authorization) and fires any
+    due posts. Use it right after approving in Studio so you don't wait for the
+    next tick. The Worker runs the tick in the background and returns
+    immediately; re-read ``scheduler_status`` a few seconds later to see the
+    phase flip. Returns ``{started: true}`` or ``{started: false}`` if the
+    Worker couldn't be reached.
+    """
+    import httpx
+
+    url = f"{get_settings().scheduler_worker_url.rstrip('/')}/tick"
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(url)
+        return {"started": resp.status_code in (200, 202)}
+    except httpx.HTTPError:
+        return {"started": False}
 
 
 # ---------------------------------------------------------------------------
