@@ -11,6 +11,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — a Scheduler tab: the cron Worker made legible
+
+- New **Scheduler** tab in the FE surfaces the scheduled-post Worker's configuration, status, pending approval, and per-tick traffic log — so it stops being a black box. It composes three already npub-scoped sources, so the page needs no gate of its own: each tool reveals only what the current proofed npub allows.
+- New free MCP tool `scheduler_status` relays the Worker's public `GET /status` (cadence, version, renewal window, current authorization phase — never the challenge phrase or token) and adds the operator npub. The Worker gained a public `/status` route.
+- The tab shows: authorization phase (active/pending/idle), last tick + health, the operator it acts for, cadence and renewal policy, the verify venue, the operator-only pending-approval card, and a traffic-log table (from `get_scheduler_log`, owner-scoped).
+
 ### Added — scheduler proof requests carry purpose + a Device-Grant second surface
 
 - The scheduled-post cron Worker now sends a human-worded `reason` and a `verify_at` venue on its `request_npub_proof` call (it previously sent neither, so the ~monthly 3am renewal DM was contextless and pointed nowhere). Pricing Studio already renders both — the DM now says what is being asked and where to match the code.

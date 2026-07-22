@@ -18,6 +18,7 @@ import SnippetsPage from "./components/SnippetsPage";
 import ContentEditorPage from "./components/ContentEditorPage";
 import WalletPage from "./components/WalletPage";
 import ProfilePage from "./components/ProfilePage";
+import SchedulerPage from "./components/SchedulerPage";
 
 interface SessionCtx {
   npub: string;
@@ -93,6 +94,7 @@ export default function App() {
                 <Route path="snippets/new" element={<ContentEditorPage kind="snippet" />} />
                 <Route path="snippet/:snippetId" element={<ContentEditorPage kind="snippet" />} />
                 <Route path="wallet" element={<WalletPage />} />
+                <Route path="scheduler" element={<SchedulerPage />} />
                 <Route path="profile" element={<ProfilePage />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Route>

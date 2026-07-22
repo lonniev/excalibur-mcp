@@ -38,8 +38,11 @@ export interface Env {
 
 const SLUG = "excalibur";
 const KEY = "proof_state";
+const WORKER_VERSION = "0.2.0";
 const RENEW_BEFORE_MS = 24 * 60 * 60 * 1000; // re-request a day before expiry
 const REREQUEST_AFTER_MS = 60 * 60 * 1000; // resend the DM if unanswered for 1h
+// Human description of the cron trigger — mirrors `crons` in wrangler.toml.
+const CADENCE = "every 30 minutes (on the hour and the half hour)";
 
 // The human-worded purpose the operator sees in the proof DM (Device-Grant
 // `reason`). Names the actor (this scheduler), the ask (post the queued
@@ -66,18 +69,40 @@ export default {
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(tick(env).then((m) => console.log(`excalibur scheduler: ${m}`)));
   },
-  // Two GET routes:
-  //   /pending → what the scheduler is waiting on. Gated to the operator npub
-  //              (the request is addressed to that npub). Read server-side by
-  //              the operator MCP, which signs AS the operator — the browser
-  //              never calls this directly, so there is no CORS to manage.
+  // GET routes (all read server-side by the operator MCP, so no CORS to manage):
+  //   /status  → non-sensitive config + current phase (no code, no token).
+  //   /pending → the pending challenge phrase; gated to the operator npub.
   //   anything else → manual tick trigger for testing.
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
+    if (url.pathname === "/status") return statusView(env);
     if (url.pathname === "/pending") return pendingView(req, env);
     return new Response(await tick(env), { status: 200 });
   },
 };
+
+// GET /status — what the scheduler is and what it's doing, minus anything
+// sensitive. Never the challenge phrase (that's /pending, operator-gated) nor
+// the active token. Config is global (not npub-specific), so this needs no gate.
+async function statusView(env: Env): Promise<Response> {
+  const raw = await env.PROOF_KV.get(KEY);
+  const state: ProofState | null = raw ? (JSON.parse(raw) as ProofState) : null;
+  const authorization =
+    state?.phase === "pending"
+      ? { phase: "pending" as const, reason: state.reason, requestedAt: state.requestedAt }
+      : state?.phase === "active"
+        ? { phase: "active" as const, expiresAt: state.expiresAt }
+        : { phase: "idle" as const };
+  return json({
+    version: WORKER_VERSION,
+    cadence: CADENCE,
+    renewsBeforeExpiryHours: RENEW_BEFORE_MS / 3_600_000,
+    rerequestAfterHours: REREQUEST_AFTER_MS / 3_600_000,
+    mcpUrl: env.MCP_URL,
+    verifyAt: env.FE_URL ?? null,
+    authorization,
+  });
+}
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
