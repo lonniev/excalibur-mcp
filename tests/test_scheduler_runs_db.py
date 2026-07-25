@@ -98,3 +98,81 @@ def test_scope_runs_owner_with_no_posts_sees_heartbeat_but_no_global_count():
     assert scoped[0]["run_at"] == "t"  # worker ran (heartbeat)
     # no cross-patron leak: not the global 2, and none of bob's/alice's entries
     assert s["processed"] == 0 and s["posted"] == [] and s["skipped"] == [] and s["errors"] == []
+
+
+# -- open/close pair ---------------------------------------------------------
+#
+# A tick whose request is cut off at the edge writes nothing at the end, so the
+# row is opened BEFORE any work. One still reading `status: started` is a tick
+# that never came back — the difference between a wedged Worker and a dead cron.
+
+@pytest.mark.asyncio
+async def test_begin_run_opens_a_started_row_and_prunes():
+    calls = []
+
+    async def fake_fetchrow(query, *args):
+        calls.append((query, args))
+        return {"id": "abc-123"}
+
+    with patch.object(sr, "fetchrow", fake_fetchrow), \
+         patch.object(sr, "execute", AsyncMock(return_value={})) as ex:
+        run_id = await sr.begin_run()
+
+    assert run_id == "abc-123"
+    insert_q, insert_args = calls[0]
+    assert "INSERT INTO scheduler_runs" in insert_q and "RETURNING id" in insert_q
+    assert json.loads(insert_args[0]) == sr.STARTED
+    # the ring is still capped on open, so a wedged scheduler can't grow it
+    assert "DELETE FROM scheduler_runs" in ex.await_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_begin_run_survives_a_dead_audit_store():
+    """Audit is never a gate: if the ring can't be written, the tick still runs."""
+    with patch.object(sr, "fetchrow", AsyncMock(side_effect=RuntimeError("neon down"))):
+        assert await sr.begin_run() is None
+
+
+@pytest.mark.asyncio
+async def test_complete_run_updates_the_opened_row():
+    summary = {"processed": 1, "posted": [], "skipped": [], "errors": [], "deferred": []}
+    with patch.object(sr, "execute", AsyncMock(return_value={})) as ex:
+        await sr.complete_run("abc-123", summary)
+    q, args = ex.await_args.args[0], ex.await_args.args[1:]
+    assert "UPDATE scheduler_runs" in q
+    assert args[0] == "abc-123"
+    assert json.loads(args[1]) == summary
+
+
+@pytest.mark.asyncio
+async def test_complete_run_appends_when_the_open_failed():
+    """No row to close → the outcome is still recorded, just as a fresh append."""
+    summary = {"processed": 0, "posted": [], "skipped": [], "errors": [], "deferred": []}
+    with patch.object(sr, "execute", AsyncMock(return_value={})) as ex:
+        await sr.complete_run(None, summary)
+    assert "INSERT INTO scheduler_runs" in ex.await_args_list[0].args[0]
+
+
+def test_scope_runs_carries_the_started_marker_to_every_reader():
+    """A cut-off tick has no per-post entries to scope, but every reader must
+    still see it was tried — otherwise it reads as 'the cron never ran'."""
+    runs = [{"run_at": "t", "summary": dict(sr.STARTED)}]
+    scoped = sr.scope_runs(runs, ALICE, OP)
+    assert scoped[0]["summary"]["status"] == "started"
+    assert scoped[0]["summary"]["processed"] == 0
+
+
+def test_scope_runs_counts_deferred_as_the_readers_own_work():
+    runs = [{
+        "run_at": "t",
+        "summary": {
+            "processed": 2, "posted": [], "skipped": [], "errors": [],
+            "deferred": [
+                {"post_id": "a1", "owner": ALICE, "reason": "tick_budget_exhausted"},
+                {"post_id": "b1", "owner": BOB, "reason": "tick_budget_exhausted"},
+            ],
+        },
+    }]
+    s = sr.scope_runs(runs, ALICE, OP)[0]["summary"]
+    assert [d["post_id"] for d in s["deferred"]] == ["a1"]  # bob's is hidden
+    assert s["processed"] == 1  # alice's own held post, not the global 2

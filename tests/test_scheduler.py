@@ -19,11 +19,13 @@ NPUB = "npub1l94pd4qu4eszrl6ek032ftcnsu3tt9a7xvq2zp7eaxeklp6mrpzssmq8pf"
 
 
 @pytest.fixture(autouse=True)
-def _stub_record_run():
-    """Every process_due_posts call records its summary; keep that off Neon and
-    expose the mock so a test can assert the recording contract."""
-    with patch.object(scheduler.scheduler_runs, "record_run", AsyncMock()) as rec:
-        yield rec
+def _stub_run_ring():
+    """Every process_due_posts call OPENS an audit row before any work and closes
+    it with the summary, so a tick cut off mid-flight still leaves a mark. Keep
+    both off Neon and expose the closing mock for the recording contract."""
+    with patch.object(scheduler.scheduler_runs, "begin_run", AsyncMock(return_value="run-1")), \
+         patch.object(scheduler.scheduler_runs, "complete_run", AsyncMock()) as done:
+        yield done
 
 
 @pytest.fixture(autouse=True)
@@ -127,7 +129,7 @@ def _due_row(**over):
 
 
 @pytest.mark.asyncio
-async def test_recurring_fire_snapshots_occurrence_and_advances(_stub_record_run):
+async def test_recurring_fire_snapshots_occurrence_and_advances(_stub_run_ring):
     rt = _runtime()
     # x_client.post_tweet returns {tweet_id, tweet_url} — the summary must read
     # those exact keys (not a bare "id").
@@ -153,8 +155,8 @@ async def test_recurring_fire_snapshots_occurrence_and_advances(_stub_record_run
     assert mark.await_args.args[2] == "scheduled"
     assert mark.await_args.args[4] is None
     rt.rollback_debit.assert_not_awaited()
-    # the tick records its summary for FE visibility
-    _stub_record_run.assert_awaited_once_with(out)
+    # the tick closes the row it opened, with its summary, for FE visibility
+    _stub_run_ring.assert_awaited_once_with("run-1", out)
 
 
 @pytest.mark.asyncio
@@ -195,9 +197,9 @@ async def test_post_claimed_by_another_tick_is_skipped(_stub_claim_due_post):
 
 
 @pytest.mark.asyncio
-async def test_record_run_failure_does_not_break_the_tick(_stub_record_run):
+async def test_record_run_failure_does_not_break_the_tick(_stub_run_ring):
     # Audit is best-effort: a recording failure must not undo posting work.
-    _stub_record_run.side_effect = RuntimeError("neon down")
+    _stub_run_ring.side_effect = RuntimeError("neon down")
     rt = _runtime()
     client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "tw1", "tweet_url": "u"}))
     with patch.object(scheduler.posts_db, "list_due", AsyncMock(return_value=[_due_row()])), \
@@ -440,3 +442,54 @@ async def test_dynamic_insufficient_balance_for_resolve_holds(_stub_mark_attempt
         out = await scheduler.process_due_posts(rt)
     assert out["skipped"][0]["reason"] == "insufficient_balance_resolve"
     client.post_tweet.assert_not_awaited()
+
+
+# -- tick budget -------------------------------------------------------------
+#
+# The edge in front of the MCP cuts a request at roughly 100s. A tick that runs
+# past that dies with nothing recorded and re-wedges on every cron, so the loop
+# works to a deadline and hands the remainder to the next tick.
+
+def test_resolve_timeout_clamps_author_budget_to_the_ceiling():
+    # A 900s block (the interactive maximum) can't take a tick down with it.
+    assert scheduler._resolve_timeout(900, 60.0) == scheduler.RESOLVE_BUDGET_S
+    # An author asking for less than the ceiling keeps their smaller budget.
+    assert scheduler._resolve_timeout(20, 60.0) == 20.0
+    # No stated budget → the scheduler's own ceiling.
+    assert scheduler._resolve_timeout(None, 60.0) == scheduler.RESOLVE_BUDGET_S
+    # Garbage in the doc must not crash a fire.
+    assert scheduler._resolve_timeout("soon", 60.0) == scheduler.RESOLVE_BUDGET_S
+
+
+def test_resolve_timeout_never_exceeds_what_is_left_of_the_tick():
+    # What remains of the tick wins over both the author's ask and the ceiling.
+    assert scheduler._resolve_timeout(900, 12.0) == 12.0
+    assert scheduler._resolve_timeout(5, 12.0) == 5.0
+    # Never zero or negative, even past the deadline.
+    assert scheduler._resolve_timeout(900, -30.0) == 1.0
+
+
+@pytest.mark.asyncio
+async def test_tick_defers_remaining_posts_once_the_budget_is_spent(_stub_claim_due_post):
+    """A slow first post must not drag the rest of the queue past the deadline.
+    The leftovers stay UNCLAIMED so the next tick finds them plainly scheduled."""
+    rt = _runtime()
+    client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "t", "tweet_url": "u"}))
+    rows = [_due_row(post_id=f"p{i}", recurrence=None, cease_at=None) for i in range(3)]
+    # First post burns the whole budget; the clock is read, never really waited.
+    ticks = iter([0.0, 0.0, 1000.0, 1000.0, 1000.0, 1000.0])
+    with patch.object(scheduler.posts_db, "list_due", AsyncMock(return_value=rows)), \
+         patch.object(scheduler.posts_db, "mark_sent", AsyncMock()), \
+         patch.object(scheduler.time, "monotonic", lambda: next(ticks)), \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        out = await scheduler.process_due_posts(rt)
+
+    # The first post still fired — the budget can never starve the head of the queue.
+    assert [p["post_id"] for p in out["posted"]] == ["p0"]
+    # The other two are reported as deferred, with their owner, not silently dropped.
+    assert [d["post_id"] for d in out["deferred"]] == ["p1", "p2"]
+    assert {d["reason"] for d in out["deferred"]} == {"tick_budget_exhausted"}
+    assert all(d["owner"] == NPUB for d in out["deferred"])
+    # …and were never claimed, so they stay `scheduled` for the next tick.
+    assert [c.args[0] for c in _stub_claim_due_post.await_args_list] == ["p0"]
+    assert client.post_tweet.await_count == 1

@@ -1063,6 +1063,11 @@ export interface SchedulerRun {
     posted?: SchedulerOutcome[];
     skipped?: SchedulerOutcome[];
     errors?: SchedulerOutcome[];
+    // Due posts the tick ran out of budget for; the next tick picks them up.
+    deferred?: SchedulerOutcome[];
+    // Present only while a run is open — "started" until the tick closes it.
+    // A row still wearing it long after run_at is a tick that was cut off.
+    status?: string;
   };
 }
 interface SchedulerLogResult {

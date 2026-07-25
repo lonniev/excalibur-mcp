@@ -11,6 +11,33 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a scheduler tick can no longer stall the queue in silence
+
+Diagnosed live on 2026-07-25: the cron kept firing, but every tick from ~19:00 UTC
+died with `error code: 524` after ~130s — the edge in front of the MCP cuts a
+request at roughly 100s, and `process_scheduled_posts` was running past it. The
+throw escaped `ctx.waitUntil` unobserved, so nothing was logged, the proof state
+was left untouched, and no run row was written: a wedged scheduler was
+indistinguishable from a dead cron. The claimed post came back at the next cron
+to overrun again, indefinitely.
+
+- **The tick works to a deadline.** `TICK_BUDGET_S` (75s) bounds the whole run and
+  `RESOLVE_BUDGET_S` (60s) caps a scheduler-fired dynamic resolve, so an author's
+  budget — up to 900s on the interactive path — can no longer take a tick down
+  with it. Posts past the deadline are reported as `deferred` and left
+  **unclaimed** for the next tick; the head of the queue always gets its turn, so
+  the budget can never starve it.
+- **Every tick leaves a mark.** The audit row is opened (`status: started`) before
+  any work and closed with the summary, so a tick cut off mid-flight is visible as
+  exactly that. The health pill reads the new state: `working` while a run is
+  genuinely in flight, `cut off` once an open row goes stale — a fresh heartbeat
+  no longer reads as healthy on its own.
+- **The Worker observes its own failures.** `scheduled()` now catches, so a tick
+  that throws says so. An edge cut-off (`524`/`504`/timeout) is treated as work
+  still in flight rather than a failed attempt: the Worker backs off for the
+  20-minute claim lease (`heldOffUntil` on `/status`) instead of firing into work
+  that may still be running. Worker 0.2.0 → **0.3.0**.
+
 ### Changed — track tollbooth-dpyc 0.69.1 (clear error for non-operator restricted calls)
 
 - Bumped the pinned SDK to **0.69.1**: `restricted` (operator-only) tools now deny a non-operator with a clear `restricted` error instead of a misleading `proof_refresh_needed`. Complements the FE fix that already stops a patron from calling `scheduler_pending` — now if any non-operator does reach a restricted tool, the operator MCP returns the honest reason. `uv.lock` regenerated.

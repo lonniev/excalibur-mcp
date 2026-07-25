@@ -38,7 +38,13 @@ export interface Env {
 
 const SLUG = "excalibur";
 const KEY = "proof_state";
-const WORKER_VERSION = "0.2.0";
+const INFLIGHT_KEY = "inflight_until";
+const WORKER_VERSION = "0.3.0";
+// How long to leave a tick alone after its POST was cut off at the edge. The MCP
+// claims each post for 20 minutes before another tick may reclaim it, so we back
+// off for exactly that: firing again sooner can only collide with work that may
+// still be running on the other side of a connection we already lost.
+const INFLIGHT_COOLDOWN_MS = 20 * 60 * 1000;
 const RENEW_BEFORE_MS = 24 * 60 * 60 * 1000; // re-request a day before expiry
 const REREQUEST_AFTER_MS = 60 * 60 * 1000; // resend the DM if unanswered for 1h
 // Human description of the cron trigger — mirrors `crons` in wrangler.toml.
@@ -67,7 +73,14 @@ type Call = <R = any>(name: string, args?: Record<string, unknown>) => Promise<R
 
 export default {
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(tick(env).then((m) => console.log(`excalibur scheduler: ${m}`)));
+    // A rejection here used to escape into waitUntil unobserved: no log, no KV
+    // change, no run row — a wedged scheduler was indistinguishable from a dead
+    // cron. Whatever happens, the tick now says so.
+    ctx.waitUntil(
+      tick(env)
+        .then((m) => console.log(`excalibur scheduler: ${m}`))
+        .catch((e) => console.error(`excalibur scheduler: tick failed — ${(e as Error).message}`)),
+    );
   },
   // GET routes (all read server-side by the operator MCP, so no CORS to manage):
   //   /status  → non-sensitive config + current phase (no code, no token).
@@ -101,6 +114,9 @@ async function statusView(env: Env): Promise<Response> {
       : state?.phase === "active"
         ? { phase: "active" as const, expiresAt: state.expiresAt }
         : { phase: "idle" as const };
+  // Surfaced so a held-off tick reads as a deliberate back-off in the Scheduler
+  // tab rather than another silent gap.
+  const until = Number((await env.PROOF_KV.get(INFLIGHT_KEY)) ?? 0);
   return json({
     version: WORKER_VERSION,
     cadence: CADENCE,
@@ -109,6 +125,7 @@ async function statusView(env: Env): Promise<Response> {
     mcpUrl: env.MCP_URL,
     verifyAt: env.FE_URL ?? null,
     authorization,
+    heldOffUntil: until > Date.now() ? until : null,
   });
 }
 
@@ -190,6 +207,11 @@ async function tick(env: Env): Promise<string> {
 
     // 1) Fresh cached token → fire due posts. No courier traffic.
     if (state?.phase === "active" && state.expiresAt - now > RENEW_BEFORE_MS) {
+      const until = Number((await env.PROOF_KV.get(INFLIGHT_KEY)) ?? 0);
+      if (until > now) {
+        const mins = Math.ceil((until - now) / 60_000);
+        return `previous tick was cut off mid-flight and its posts may still be claimed; holding off ~${mins}m.`;
+      }
       return fire(call, env, operatorNpub, state.token);
     }
 
@@ -238,7 +260,22 @@ async function request(call: Call, env: Env, operatorNpub: string): Promise<stri
 }
 
 async function fire(call: Call, env: Env, operatorNpub: string, dpopToken: string): Promise<string> {
-  const r = await call("process_scheduled_posts", { npub: operatorNpub, dpop_token: dpopToken });
+  let r: any;
+  try {
+    r = await call("process_scheduled_posts", { npub: operatorNpub, dpop_token: dpopToken });
+  } catch (e) {
+    const msg = (e as Error).message ?? String(e);
+    // The edge in front of the MCP cuts a request long before our own callTool
+    // ceiling, so a slow tick surfaces here as a transport error, not a result.
+    // That is NOT a failed attempt to retry into — the server may still be
+    // working, and the posts it claimed are held for the lease either way. Back
+    // off for the lease and leave the proof state alone.
+    if (isCutOff(msg)) {
+      await env.PROOF_KV.put(INFLIGHT_KEY, String(Date.now() + INFLIGHT_COOLDOWN_MS));
+      return `tick cut off mid-flight (${msg.trim()}); backing off for the claim lease.`;
+    }
+    throw e;
+  }
   // If the token was rejected (expired/revoked), drop it so the next tick
   // re-runs the proof dance rather than wedging on a dead token.
   const code = String(r?.error_code ?? "").toLowerCase();
@@ -246,7 +283,16 @@ async function fire(call: Call, env: Env, operatorNpub: string, dpopToken: strin
     await env.PROOF_KV.delete(KEY);
     return `proof rejected (${code}); cleared — will re-request next tick.`;
   }
+  await env.PROOF_KV.delete(INFLIGHT_KEY);
   return `process_scheduled_posts: ${JSON.stringify(r)}`;
+}
+
+// Did this error mean "the connection died while the server was still working"?
+// 524/504 are the edge's own timeout pages; the SDK's own ceiling reads as a
+// timeout. Anything else is a real failure and should surface as one.
+function isCutOff(message: string): boolean {
+  const m = message.toLowerCase();
+  return m.includes("524") || m.includes("504") || m.includes("timed out") || m.includes("timeout");
 }
 
 async function withClient<T>(url: string, fn: (call: Call) => Promise<T>): Promise<T> {
