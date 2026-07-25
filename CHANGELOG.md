@@ -11,6 +11,30 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a dead X authorization now says so, and stops retrying
+
+The first unwedged tick (2026-07-25 23:00 UTC) surfaced a real post failing with
+`x_api_error: X API 401: Unauthorized` — the owner's X authorization is dead. The
+scheduler recorded it correctly, but everything downstream mishandled it.
+
+- **It pauses instead of retrying forever.** Only a 402 was treated as
+  non-transient; a 401/403 fell through to the "hold and retry" path, so the post
+  sat `scheduled` and every tick re-billed and re-refunded the owner while the
+  post looked like it was still trying. `_X_NON_TRANSIENT` now covers 401/402/403
+  — a dead authorization is exactly as un-retryable as a lapsed subscription. A
+  500 still holds and retries, which is what a blip deserves.
+- **The post card names the right problem.** `attemptLabel` mapped a 401 to "X
+  network error" — a label a human reasonably reads as "it'll clear on its own."
+  It reads "X access expired" now.
+- **The pause names the remedy.** A paused post's tooltip said "fix the cause at
+  the provider", leaving the human to work out which provider and which cause.
+  It now points at reconnecting X on the Profile tab, or renewing the X
+  subscription for a 402.
+- **Deferred posts are visible in the Scheduler tab.** They were counted in the
+  health pill but missing from the traffic log. Shown as a neutral "N waiting"
+  rather than folded into the error count — running out of tick budget is a
+  hand-off, not a failure.
+
 ### Fixed — a scheduler tick can no longer stall the queue in silence
 
 Diagnosed live on 2026-07-25: the cron kept firing, but every tick from ~19:00 UTC
