@@ -22,6 +22,7 @@ import asyncio
 import calendar
 import json
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -30,6 +31,28 @@ from excalibur_mcp.db import scheduler_runs
 from excalibur_mcp.formatter import markdown_to_unicode
 
 logger = logging.getLogger(__name__)
+
+
+# -- tick budget -------------------------------------------------------------
+#
+# A tick is one HTTP request, and the edge in front of this origin cuts a
+# request at roughly 100 seconds — far below the 900s a dynamic block is allowed
+# to ask for. An overrunning tick doesn't just lose its posts: the connection
+# dies, the server task goes with it, nothing is recorded, and every post it had
+# claimed comes back at the next cron to overrun again. So the tick works to a
+# wall-clock deadline that fits inside that window and hands the remainder to
+# the next tick — which is 30 minutes away, and strictly better than a retry
+# that was always going to be cut off.
+TICK_BUDGET_S = 75.0
+
+# Ceiling for a single scheduler-fired dynamic resolve. An author may ask for
+# more (the interactive path still honors it); from the scheduler, a budget that
+# can't fit inside a tick is a budget that can't post.
+RESOLVE_BUDGET_S = 60.0
+
+# Don't open a post we can't plausibly finish — resolve clamps its own floor at
+# 30s, so starting one with less than this left just overruns the deadline.
+MIN_POST_BUDGET_S = 35.0
 
 
 # -- time / recurrence helpers ----------------------------------------------
@@ -143,12 +166,27 @@ async def _owner_voice(owner: str) -> tuple[str, list[str]]:
         return "", []
 
 
+def _resolve_timeout(requested: Any, budget_s: float) -> float:
+    """The budget a scheduler-fired resolve actually gets.
+
+    The author's ``runtimeLimit`` is a ceiling for the interactive path; here it
+    competes with what's left of the tick. Whichever is smallest wins, so a
+    900s block can't take the whole tick down with it.
+    """
+    try:
+        want = float(requested) if requested else RESOLVE_BUDGET_S
+    except (TypeError, ValueError):
+        want = RESOLVE_BUDGET_S
+    return max(1.0, min(want, RESOLVE_BUDGET_S, budget_s))
+
+
 async def _resolve_post_text(
     owner: str,
     blocks: list[dict[str, Any]],
     voice: str,
     bans: list[str],
     api_key: str | None,
+    budget_s: float = RESOLVE_BUDGET_S,
 ) -> tuple[str | None, list[dict[str, Any]] | None, str | None]:
     """Compose the final tweet text by resolving each dynamic block at fire time.
 
@@ -203,7 +241,8 @@ async def _resolve_post_text(
                     api_key=api_key, prompt=prompt, context=_context_for(i),
                     voice=voice, bans=bans, allowed_domains=_domains(b),
                     max_fetches=clamp_fetches(b.get("maxFetches", 5)),
-                    timeout_seconds=b.get("runtimeLimit"),  # author's budget; None → default
+                    # Author's budget, clamped to what's left of the tick.
+                    timeout_seconds=_resolve_timeout(b.get("runtimeLimit"), budget_s),
                 )
             except Exception as exc:  # noqa: BLE001 — fall back, report via reason
                 logger.warning("scheduler: dynamic resolve failed for %s: %s", owner, exc)
@@ -248,12 +287,18 @@ async def process_due_posts(runtime: Any) -> dict[str, Any]:
 
     post_tweet_id = capability_uuid("post_tweet")
     resolve_id = capability_uuid("resolve_dynamic_block")
+    # Open the audit row FIRST: if the edge cuts this request mid-flight, the row
+    # stays ``status: started`` and the log shows a tick that was cut off rather
+    # than no tick at all.
+    run_id = await scheduler_runs.begin_run()
+    deadline = time.monotonic() + TICK_BUDGET_S
     now = datetime.now(timezone.utc)
     due = await posts_db.list_due(now.isoformat())
 
     posted: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
+    deferred: list[dict[str, Any]] = []
 
     async def _hold(bucket: list[dict[str, Any]], pid: str, owner: str, reason: str, **extra: Any) -> None:
         """Record an attempt the scheduler held back: report it in the summary AND
@@ -277,8 +322,20 @@ async def process_due_posts(runtime: Any) -> dict[str, Any]:
         except Exception:  # noqa: BLE001 — stamping is non-critical
             logger.exception("scheduler: failed to stamp attempt on %s", pid)
 
-    for row in due:
+    for idx, row in enumerate(due):
         pid = row["post_id"]
+        # Out of tick budget: hand the remainder to the next cron UNCLAIMED, so
+        # they stay plainly ``scheduled`` instead of being claimed by a tick that
+        # is about to be cut off. The first post always gets its turn (the budget
+        # starts well above the minimum), so this can never starve the queue.
+        left = deadline - time.monotonic()
+        if idx and left < MIN_POST_BUDGET_S:
+            deferred.extend(
+                {"post_id": r["post_id"], "owner": r["npub"], "reason": "tick_budget_exhausted"}
+                for r in due[idx:]
+            )
+            logger.info("scheduler: deferring %d post(s) to the next tick", len(due) - idx)
+            break
         # Atomically claim the post (scheduled → sending) before any work, so
         # overlapping cron ticks can never fire the same post twice. The claim is
         # the exclusivity gate; the candidate row from list_due carries the same
@@ -331,6 +388,7 @@ async def process_due_posts(runtime: Any) -> dict[str, Any]:
             voice, bans = await _owner_voice(owner)
             rendered, rendered_blocks, reason = await _resolve_post_text(
                 owner, list(doc.get("blocks") or []) if doc else [], voice, bans, key,
+                budget_s=deadline - time.monotonic(),
             )
             if rendered is None:
                 await runtime.rollback_debit(resolve_id, owner)
@@ -410,15 +468,15 @@ async def process_due_posts(runtime: Any) -> dict[str, Any]:
                        "tweet_url": tweet_url})
 
     summary = {"processed": len(due), "posted": posted,
-               "skipped": skipped, "errors": errors}
+               "skipped": skipped, "errors": errors, "deferred": deferred}
     logger.info(
-        "scheduler: processed=%d posted=%d skipped=%d errors=%d",
-        len(due), len(posted), len(skipped), len(errors),
+        "scheduler: processed=%d posted=%d skipped=%d errors=%d deferred=%d",
+        len(due), len(posted), len(skipped), len(errors), len(deferred),
     )
-    # Record the tick for FE visibility. Best-effort: an audit-write failure must
-    # never undo the posting work we just did.
+    # Close the run row opened at the top. Best-effort: an audit-write failure
+    # must never undo the posting work we just did.
     try:
-        await scheduler_runs.record_run(summary)
+        await scheduler_runs.complete_run(run_id, summary)
     except Exception:  # noqa: BLE001 — audit is non-critical
         logger.exception("scheduler: failed to record run summary")
     return summary

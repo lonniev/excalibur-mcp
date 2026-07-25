@@ -12,12 +12,17 @@ import { getSchedulerLog } from "../lib/mcp";
 // stalled, not idle.
 const FRESH_MS = 40 * 60 * 1000;
 const STALE_MS = 100 * 60 * 1000;
+// A tick opens its run row before doing any work, so a fresh row may simply be a
+// tick in flight. It works to a budget well under two minutes, so a row still
+// reading `started` past this is a tick that was cut off and never came back —
+// which must NOT read as healthy just because its heartbeat is recent.
+const INFLIGHT_MS = 5 * 60 * 1000;
 // Poll cadence for the status dot. The scheduler only ticks every 30 min, so a
 // 5-min poll surfaces a stall promptly without pinning the Neon compute awake.
 // We also pause entirely while the tab is hidden (see the effect below).
 const POLL_MS = 5 * 60 * 1000;
 
-type Health = "loading" | "healthy" | "quiet" | "stalled" | "unknown";
+type Health = "loading" | "healthy" | "working" | "cutoff" | "quiet" | "stalled" | "unknown";
 
 function relative(fromIso: string): string {
   const then = new Date(fromIso).getTime();
@@ -50,9 +55,17 @@ export default function SchedulerHealth() {
       setLastRun(newest.run_at);
       const s = newest.summary ?? {};
       // Owner-scoped: for a patron these arrays already hold only their OWN posts.
-      setHeld((s.skipped?.length ?? 0) + (s.errors?.length ?? 0));
+      // Deferred posts are held too — they just wait for the next tick.
+      setHeld((s.skipped?.length ?? 0) + (s.errors?.length ?? 0) + (s.deferred?.length ?? 0));
       const age = Date.now() - new Date(newest.run_at).getTime();
-      setHealth(isNaN(age) ? "unknown" : age <= FRESH_MS ? "healthy" : age <= STALE_MS ? "quiet" : "stalled");
+      if (isNaN(age)) {
+        setHealth("unknown");
+      } else if (s.status === "started") {
+        // An open row: in flight if it just started, cut off if it never closed.
+        setHealth(age <= INFLIGHT_MS ? "working" : "cutoff");
+      } else {
+        setHealth(age <= FRESH_MS ? "healthy" : age <= STALE_MS ? "quiet" : "stalled");
+      }
     } catch {
       // Free + proof-gated; a failure means the sign-in proof lapsed, not that
       // the scheduler is down — show "unknown", never a false alarm.
@@ -96,14 +109,18 @@ export default function SchedulerHealth() {
   const dot = {
     loading: "bg-zinc-400",
     healthy: "bg-green-500",
+    working: "bg-sky-500",
+    cutoff: "bg-red-500",
     quiet: "bg-amber-400",
     stalled: "bg-red-500",
     unknown: "bg-zinc-400",
   }[health];
-  const pulse = health === "healthy" || health === "quiet";
+  const pulse = health === "healthy" || health === "quiet" || health === "working";
   const label = {
     loading: "Scheduler…",
     healthy: "Scheduler healthy",
+    working: "Scheduler working",
+    cutoff: "Scheduler cut off",
     quiet: "Scheduler quiet",
     stalled: "Scheduler stalled",
     unknown: "Scheduler status unknown",
@@ -111,9 +128,11 @@ export default function SchedulerHealth() {
   const title =
     health === "unknown"
       ? "Couldn't read scheduler status — your sign-in proof may have lapsed. Click to retry."
-      : lastRun
-        ? `Scheduler last ran ${relative(lastRun)}${held ? ` · ${held} of your posts were held that tick` : ""}. Click to refresh.`
-        : "The scheduler hasn't logged a run yet — it checks for due posts about every half hour.";
+      : health === "cutoff"
+        ? `A scheduler run started ${relative(lastRun ?? "")} and never finished — it was cut short before it could post. The next run picks the work back up.`
+        : lastRun
+          ? `Scheduler last ran ${relative(lastRun)}${held ? ` · ${held} of your posts were held that tick` : ""}. Click to refresh.`
+          : "The scheduler hasn't logged a run yet — it checks for due posts about every half hour.";
 
   return (
     <button
