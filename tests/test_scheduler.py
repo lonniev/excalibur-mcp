@@ -493,3 +493,41 @@ async def test_tick_defers_remaining_posts_once_the_budget_is_spent(_stub_claim_
     # …and were never claimed, so they stay `scheduled` for the next tick.
     assert [c.args[0] for c in _stub_claim_due_post.await_args_list] == ["p0"]
     assert client.post_tweet.await_count == 1
+
+
+@pytest.mark.parametrize("status,detail", [(401, "Unauthorized"), (403, "Forbidden")])
+@pytest.mark.asyncio
+async def test_dead_x_authorization_pauses_like_a_lapsed_subscription(
+    _stub_mark_attempt, _stub_mark_paused, status, detail,
+):
+    """A 401/403 is a dead authorization — revoked, expired, or scope-stripped.
+    It fails identically on every future tick, so it must PAUSE like its 402
+    sibling rather than sit `scheduled`, re-billing and refunding the owner every
+    30 minutes while the post looks like it's still trying."""
+    rt = _runtime()
+    client = SimpleNamespace(post_tweet=AsyncMock(side_effect=XAPIError(status, detail)))
+    with patch.object(scheduler.posts_db, "list_due", AsyncMock(return_value=[_due_row()])), \
+         patch.object(scheduler.posts_db, "mark_sent", AsyncMock()) as mark, \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        out = await scheduler.process_due_posts(rt)
+
+    assert out["errors"] and out["errors"][0]["paused"] is True
+    assert str(status) in out["errors"][0]["reason"]
+    rt.rollback_debit.assert_awaited_once()  # the owner is made whole
+    _stub_mark_paused.assert_awaited_once()  # paused, not left scheduled
+    _stub_mark_attempt.assert_not_awaited()
+    mark.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_transient_x_failure_still_only_holds(_stub_mark_attempt, _stub_mark_paused):
+    """The pause is reserved for what the next tick can't fix — a 500 is exactly
+    the kind of blip that SHOULD be retried, so it stays scheduled."""
+    rt = _runtime()
+    client = SimpleNamespace(post_tweet=AsyncMock(side_effect=XAPIError(500, "server error")))
+    with patch.object(scheduler.posts_db, "list_due", AsyncMock(return_value=[_due_row()])), \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        out = await scheduler.process_due_posts(rt)
+    assert out["errors"] and "paused" not in out["errors"][0]
+    _stub_mark_paused.assert_not_awaited()
+    _stub_mark_attempt.assert_awaited_once()

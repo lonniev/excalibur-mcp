@@ -208,6 +208,10 @@ export default function SchedulerPage() {
                     const reasons = [...(s.skipped ?? []), ...(s.errors ?? [])]
                       .map((o) => o.reason)
                       .filter(Boolean);
+                    // Deferred posts ran out of tick budget, nothing went wrong —
+                    // they're simply next in line. Counted separately so a normal
+                    // hand-off never reads as a run full of errors.
+                    const waiting = s.deferred?.length ?? 0;
                     return (
                       <tr key={i} className="border-t border-stone-100 dark:border-zinc-800/70">
                         <td className="py-1.5 pr-4 text-stone-700 dark:text-zinc-200" title={run.run_at}>
@@ -222,7 +226,16 @@ export default function SchedulerPage() {
                               {reasons.length ? ` · ${reasons[0]}${reasons.length > 1 ? "…" : ""}` : ""}
                             </span>
                           ) : (
-                            <span className="text-stone-400">0</span>
+                            !waiting && <span className="text-stone-400">0</span>
+                          )}
+                          {waiting > 0 && (
+                            <span
+                              className="ml-1.5 text-stone-500 dark:text-zinc-400"
+                              title="Ran out of time this run; the next run picks them up."
+                            >
+                              {held ? "· " : ""}
+                              {waiting} waiting
+                            </span>
                           )}
                         </td>
                       </tr>

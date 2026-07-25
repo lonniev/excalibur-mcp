@@ -54,6 +54,13 @@ RESOLVE_BUDGET_S = 60.0
 # 30s, so starting one with less than this left just overruns the deadline.
 MIN_POST_BUDGET_S = 35.0
 
+# X statuses the next tick cannot possibly resolve: the owner's developer
+# subscription lapsed (402), or their authorization is dead — revoked, expired,
+# or scope-stripped (401/403). Retrying these every 30 minutes just re-bills and
+# re-refunds the owner forever while the post looks like it's still trying. They
+# pause instead, and the owner resumes after reconnecting X.
+_X_NON_TRANSIENT = frozenset({401, 402, 403})
+
 
 # -- time / recurrence helpers ----------------------------------------------
 
@@ -420,11 +427,12 @@ async def process_due_posts(runtime: Any) -> dict[str, Any]:
             if resolve_charged:
                 await runtime.rollback_debit(resolve_id, owner)
             reason = f"x_api_error: {exc}"
-            if getattr(exc, "status_code", None) == 402:
-                # Non-transient: the owner's X subscription/tier lapsed. Pause so
+            if getattr(exc, "status_code", None) in _X_NON_TRANSIENT:
+                # Nothing the next tick can resolve: the owner's X subscription
+                # lapsed (402) or their authorization is dead (401/403). Pause so
                 # we stop re-firing (and re-billing+refunding) every tick; the FE
-                # surfaces the situation and the owner resumes after renewing. —
-                # subscription reason
+                # surfaces the situation and the owner resumes after fixing it at
+                # X. — subscription / authorization reason
                 await _pause(errors, pid, owner, reason)
             else:
                 await _hold(errors, pid, owner, reason)
