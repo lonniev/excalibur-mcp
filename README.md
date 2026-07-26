@@ -3,7 +3,7 @@
 Sword-swift posting of pretty tweets to X (Twitter) via AI agents, monetized
 with Bitcoin Lightning micropayments through the DPYC(TM) Tollbooth protocol.
 
-[![Version](https://img.shields.io/badge/version-0.8.0-blue)](https://github.com/lonniev/excalibur-mcp)
+[![Version](https://img.shields.io/badge/version-0.34.4-blue)](https://github.com/lonniev/excalibur-mcp)
 [![Python](https://img.shields.io/badge/python-3.12+-green)](https://python.org)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -20,7 +20,7 @@ Part of the [DPYC(TM) Social Contract](https://github.com/lonniev/dpyc-community
 
 ## Getting Started
 
-Connect via FastMCP Cloud -- no local install needed:
+Connect via Horizon -- no local install needed:
 
 ```
 https://www.fastmcp.cloud/mcp/lonniev/excalibur-mcp
@@ -77,16 +77,64 @@ and Oracle delegation. Each tool is identified by a deterministic UUID v5.
 | Pricing & Constraints | `get_pricing_model`, `set_pricing_model`, `reset_pricing_model`, `list_constraint_types` |
 | Notarization | `notarize_ledger`, `list_notarizations`, `get_notarization_proof` |
 | Onboarding | `get_operator_onboarding_status`, `get_patron_onboarding_status` |
+| OAuth (X) | `begin_oauth`, `check_oauth_status` |
 | Oracle (delegated) | `oracle_about`, `oracle_how_to_join`, `oracle_lookup_member`, `oracle_get_tax_rate`, `oracle_network_advisory` |
 
 ### Domain Tools (eXcalibur-specific)
 
-| Tool | Cost | Description |
-|------|------|-------------|
-| `begin_oauth` | Free | Start X OAuth2 Authorization Code + PKCE flow; returns `authorize_url` |
-| `check_oauth_status` | Free | Complete the browser authorization and exchange the code for tokens |
-| `post_tweet` | ad valorem | Post to X with markdown-to-Unicode rich text formatting |
-| `post_tweet_image` | ad valorem | Post with an image URL or SVG banner (rendered to PNG) |
+Domain tools are defined in `server.py` (with storage handlers under
+`tools/`). Prices are set by the operator's pricing model -- preview any
+call with `check_price`. Read and auth tools are free.
+
+**Posting to X**
+
+| Tool | Description |
+|------|-------------|
+| `post_tweet` | Post a text tweet with markdown-to-Unicode rich text formatting |
+| `post_tweet_image` | Post a tweet with a hero banner image (image URL or SVG rendered to PNG) |
+| `get_x_profile` | Fetch the connected X account's handle and name for this patron (free) |
+
+**Stored posts (drafts & scheduling)**
+
+| Tool | Description |
+|------|-------------|
+| `create_post` | Store a new post (draft or scheduled); returns its `post_id` |
+| `get_post` | Read one stored post by id (owner-scoped) |
+| `list_posts` | List your stored posts, server-side sorted, filtered, and paginated |
+| `update_post` | Patch a stored post (`doc`, `publish_at`, `recurrence`, `status`) |
+| `delete_post` | Delete a stored post (soft delete by default) |
+
+**Snippets & Voice**
+
+| Tool | Description |
+|------|-------------|
+| `list_snippets` | List your saved post snippets (server-side sorted/filtered/paginated) |
+| `get_snippet` | Read one saved snippet by id |
+| `save_snippet` | Save a reusable snippet (opening/footer/CTA) |
+| `delete_snippet` | Delete a saved snippet (free, owner-scoped) |
+| `get_voice` | Read your saved writing Voice (profile blurb + banned words) |
+| `save_voice` | Save your per-npub writing Voice |
+
+**AI editorial & dynamic blocks**
+
+| Tool | Description |
+|------|-------------|
+| `refine_post_region` | Refine a flagged region of a post with Claude, server-side |
+| `resolve_dynamic_block` | Start resolving a dynamic (prompt-backed) post block; returns a claim check |
+| `fetch_dynamic_block` | Redeem a `resolve_dynamic_block` claim check (free, proof-gated) |
+
+**Scheduler**
+
+| Tool | Description |
+|------|-------------|
+| `process_scheduled_posts` | Publish every due scheduled post (operator-only) |
+| `get_scheduler_log` | Read recent scheduler-tick outcomes |
+| `scheduler_status` | The scheduler's configuration and current status (free; any proven patron) |
+| `scheduler_pending` | What the scheduled-post cron Worker is waiting on (operator-only) |
+| `scheduler_check_now` | Run one scheduler tick now (operator-only) |
+
+OAuth flow tools (`begin_oauth`, `check_oauth_status`) are now standard tools
+provided by the wheel (see the Standard Tools table above).
 
 All tools that take an `npub` also accept a `proof: str` parameter for
 kind-27235 Schnorr proof attestation.
@@ -112,9 +160,13 @@ src/excalibur_mcp/
   server.py        FastMCP server -- domain tools + register_standard_tools()
   config.py        Pydantic settings from environment variables
   oauth_flow.py    X-specific OAuth2 Authorization Code + PKCE wrapper
-  vault.py         In-memory Bearer token session cache (keyed by npub)
   x_client.py      X API v2 client with OAuth 2.0 Bearer token auth
   formatter.py     Markdown -> Unicode rich text (bold, italic, headers)
+  refine.py        Server-side "Refine with Claude" for the editorial editor
+  resolve.py       Server-side resolution of dynamic (prompt-backed) post blocks
+  scheduler.py     Scheduled-post firing (publishes due posts on the owner's behalf)
+  tools/           Domain storage handlers (posts, snippets, voices)
+  db/              eXcalibur persistence on the wheel's NeonVault (posts, scheduler runs, migrations)
 ```
 
 **Key design choices:**
@@ -170,6 +222,8 @@ encrypted Nostr DM -- `NEON_DATABASE_URL` is not read from the environment.
 | `SEED_BALANCE_SATS` | Starter credits for new users (default: 0) |
 | `DPYC_REGISTRY_CACHE_TTL_SECONDS` | How long to cache the DPYC community registry (default: 300) |
 | `CONSTRAINTS_ENABLED` | `"true"` to enable constraint engine evaluation on tool calls |
+| `CONSTRAINTS_CONFIG` | Optional constraint-engine configuration payload |
+| `SCHEDULER_WORKER_URL` | Public URL of the scheduled-post cron Worker (default: `https://excalibur-scheduler.lonniev.workers.dev`) |
 
 ## Troubleshooting
 
