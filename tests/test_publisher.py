@@ -453,3 +453,53 @@ def test_fallback_reason_separates_the_blocks_budget_from_an_outage():
     assert publisher._fallback_reason(Exception("credit balance too low"), 60) == "operator_llm_unfunded"
     assert publisher._fallback_reason(Exception("429 rate limited"), 60) == "upstream_rate_limited"
     assert publisher._fallback_reason(ValueError("boom"), 60) == "resolve_failed:ValueError"
+
+
+# -- a hold always says why --------------------------------------------------
+#
+# `dict.get(k, default)` returns the STORED value when the key exists, so an
+# upstream `{"error_code": None}` slips past the default and lands as a blank
+# reason — a post that quietly didn't publish, which is the exact failure this
+# service keeps relearning.
+
+def test_stated_falls_back_when_a_call_site_hands_over_nothing():
+    assert publisher._stated("insufficient_balance", "p1") == "insufficient_balance"
+    assert publisher._stated("  spaced  ", "p1") == "spaced"
+    for blank in (None, "", "   "):
+        assert publisher._stated(blank, "p1") == "unreported"
+
+
+@pytest.mark.asyncio
+async def test_situation_with_a_null_error_code_still_names_a_reason():
+    """The shape that produced a bare '—' in the live log."""
+    rt = _runtime()
+    with _claimed(), \
+         patch("excalibur_mcp.server._resolve_x_client",
+               AsyncMock(return_value=(None, {"error_code": None}))):
+        out = await publisher.publish_one(rt, "p1")
+    assert out["outcome"] == "held"
+    assert out["reason"] == "oauth_unavailable"  # not None, not ""
+
+
+@pytest.mark.asyncio
+async def test_exception_with_an_empty_message_is_named_by_its_type():
+    """`str(RuntimeError())` is legitimately empty; the type still identifies it."""
+    rt = _runtime()
+    client = SimpleNamespace(post_tweet=AsyncMock(side_effect=RuntimeError()))
+    with _claimed(), \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        out = await publisher.publish_one(rt, "p1")
+    assert out["outcome"] == "held" and out["reason"] == "RuntimeError"
+
+
+@pytest.mark.asyncio
+async def test_no_hold_can_ever_record_a_blank_reason(_stub_record):
+    """The backstop, asserted end to end: whatever a call site does, the row the
+    reader sees names something."""
+    rt = _runtime()
+    with _claimed(), \
+         patch("excalibur_mcp.server._resolve_x_client",
+               AsyncMock(return_value=(None, {"error_code": ""}))):
+        await publisher.publish_one(rt, "p1")
+    recorded = _stub_record.await_args.args[0]
+    assert recorded["reason"]  # non-empty, whatever path got us here

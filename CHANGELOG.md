@@ -11,6 +11,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a held post can no longer decline to say why
+
+The live log showed a `held` publication whose reason rendered as `—`.
+`dict.get(k, default)` returns the STORED value when the key exists, so an
+upstream situation arriving as `{"error_code": None}` slipped past the default
+and recorded a blank reason; `str(exc)` on an exception with no message did the
+same. A post that quietly didn't publish is the exact failure this service keeps
+relearning.
+
+- The four call sites that could pass a blank now use `or` rather than a default
+  argument, and a message-less exception is named by its type.
+- `_stated()` is the backstop: any blank reaching it is recorded as
+  `unreported` **and logged as a call-site bug**, so the row always names
+  something and the defect is still visible as a defect.
+
 ### Added — the heartbeat forecasts instead of just reassuring
 
 `alive · nothing due` said the cron was breathing and nothing else. It now says
