@@ -1074,6 +1074,9 @@ export interface SchedulerRun {
     status?: string;
 
     // --- tick rows ---
+    // Which build answered this tick. A heartbeat that only says "alive" can't
+    // tell you WHICH deployment is alive.
+    who?: { version?: string; commit?: string };
     processed?: number;
     launched?: SchedulerOutcome[];
     contended?: SchedulerOutcome[];

@@ -117,7 +117,8 @@ async def test_quiet_tick_records_a_heartbeat(_stub_run_ring):
     rt = _runtime()
     with _list_due():
         out = await scheduler.process_due_posts(rt)
-    assert out == {"kind": "tick", "processed": 0, "launched": [], "contended": []}
+    assert out["kind"] == "tick"
+    assert out["processed"] == 0 and out["launched"] == [] and out["contended"] == []
     _stub_run_ring.assert_awaited_once()
 
 
@@ -132,3 +133,32 @@ async def test_tick_never_touches_content_or_money():
     # reaching for any of them would have raised AttributeError above.
     assert not hasattr(rt, "_apply_billing")
     assert not hasattr(rt, "load_credentials")
+
+
+# -- heartbeat identity ------------------------------------------------------
+
+def test_who_names_the_build(monkeypatch):
+    """A heartbeat that only says "alive" can't answer "which deployment?" —
+    and this service has served cached bytes while reporting a fresh version,
+    so the commit travels alongside."""
+    monkeypatch.setenv("FASTMCP_CLOUD_GIT_COMMIT_SHA", "da6905443ecb99fafcf9d78")
+    who = scheduler._who()
+    assert who["commit"] == "da69054"  # short, not the full 40 chars
+    assert who["version"]  # whatever the wheel reports
+
+
+def test_who_omits_the_commit_when_unbuilt(monkeypatch):
+    """Local runs have no build SHA; the field is absent rather than empty."""
+    monkeypatch.delenv("FASTMCP_CLOUD_GIT_COMMIT_SHA", raising=False)
+    assert "commit" not in scheduler._who()
+
+
+@pytest.mark.asyncio
+async def test_quiet_tick_still_says_who_it_is():
+    """The whole point: the do-nothing tick is the one that most needs to be
+    worth reading."""
+    rt = _runtime()
+    with _list_due():
+        out = await scheduler.process_due_posts(rt)
+    assert out["processed"] == 0
+    assert out["who"]["version"]

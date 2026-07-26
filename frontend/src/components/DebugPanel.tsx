@@ -73,7 +73,13 @@ function pushRun(run: SchedulerRun): void {
       : processed === 0
         ? "alive · nothing due"
         : `due=${processed} launched=${launched.length}`;
-  debugPush(contended.length || s.status === "started" ? "error" : "result", `scheduler ${when} · ${tally}`);
+  // Name the build. "alive" alone is noise you learn to skim past; "alive, and
+  // it's THIS commit" is the line that settles a "did my deploy land?" question.
+  const who = [s.who?.version && `v${s.who.version}`, s.who?.commit].filter(Boolean).join(" ");
+  debugPush(
+    contended.length || s.status === "started" ? "error" : "result",
+    `scheduler ${when} · ${tally}${who ? ` · ${who}` : ""}`,
+  );
 }
 
 export default function DebugPanel() {
