@@ -43,6 +43,66 @@ function health(runs: SchedulerRun[]): { dot: string; label: string } {
   return { dot: "bg-red-500", label: "Stalled" };
 }
 
+// One log row, rendered by kind. A TICK is the scheduler dispatching — it never
+// publishes anything, so it has no outcome to show, only what it handed off. A
+// PUBLICATION is one post's result, written by the publisher that did the work.
+function RunCells({ summary: s }: { summary: SchedulerRun["summary"] }) {
+  const cell = "py-1.5 pr-4";
+  if (s.kind === "publication") {
+    const fell = s.fallbacks ?? [];
+    const tone =
+      s.outcome === "posted" ? "text-green-700 dark:text-green-400"
+        : s.outcome === "paused" ? "text-rose-600 dark:text-rose-400"
+          : "text-amber-600 dark:text-amber-400";
+    return (
+      <>
+        <td className={`${cell} ${tone}`}>{s.outcome ?? "published"}</td>
+        <td className={cell}>
+          {s.reason && <span className="text-stone-600 dark:text-zinc-300">{s.reason}</span>}
+          {fell.length > 0 && (
+            <span
+              className="ml-1.5 text-amber-600 dark:text-amber-400"
+              title={`Posted, but ${fell.length === 1 ? "a dynamic block" : `${fell.length} dynamic blocks`} fell back to the author's text: ${fell
+                .map((f) => `${f.reason}${f.budget_s ? ` (budget ${f.budget_s}s)` : ""}`)
+                .join(", ")}`}
+            >
+              ⚠ {fell.length} on fallback
+            </span>
+          )}
+          {!s.reason && !fell.length && <span className="text-stone-400">—</span>}
+        </td>
+      </>
+    );
+  }
+  // A tick still open is one that was cut off before it could close its row.
+  if (s.status === "started") {
+    return (
+      <>
+        <td className={`${cell} text-stone-500 dark:text-zinc-400`}>tick</td>
+        <td className={`${cell} text-amber-600 dark:text-amber-400`}>started, never finished</td>
+      </>
+    );
+  }
+  const launched = s.launched?.length ?? 0;
+  const contended = s.contended?.length ?? 0;
+  return (
+    <>
+      <td className={`${cell} text-stone-500 dark:text-zinc-400`}>tick</td>
+      <td className={`${cell} text-stone-600 dark:text-zinc-300`}>
+        {s.processed ? `${s.processed} due · ${launched} launched` : "nothing due"}
+        {contended > 0 && (
+          <span
+            className="ml-1.5 text-stone-500 dark:text-zinc-400"
+            title={(s.contended ?? []).map((c) => c.reason).filter(Boolean).join(", ")}
+          >
+            · {contended} skipped
+          </span>
+        )}
+      </td>
+    </>
+  );
+}
+
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex gap-3 py-1.5 text-sm">
@@ -195,68 +255,19 @@ export default function SchedulerPage() {
                 <thead className="text-xs uppercase tracking-wide text-stone-400 dark:text-zinc-500">
                   <tr>
                     <th className="py-1.5 pr-4 font-medium">When</th>
-                    <th className="py-1.5 pr-4 font-medium">Checked</th>
-                    <th className="py-1.5 pr-4 font-medium">Posted</th>
-                    <th className="py-1.5 pr-4 font-medium">Held / errors</th>
+                    <th className="py-1.5 pr-4 font-medium">Event</th>
+                    <th className="py-1.5 pr-4 font-medium">Detail</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {runs.map((run, i) => {
-                    const s = run.summary ?? {};
-                    const posted = s.posted?.length ?? 0;
-                    const held = (s.skipped?.length ?? 0) + (s.errors?.length ?? 0);
-                    const reasons = [...(s.skipped ?? []), ...(s.errors ?? [])]
-                      .map((o) => o.reason)
-                      .filter(Boolean);
-                    // Deferred posts ran out of tick budget, nothing went wrong —
-                    // they're simply next in line. Counted separately so a normal
-                    // hand-off never reads as a run full of errors.
-                    const waiting = s.deferred?.length ?? 0;
-                    // Posts that went out on fallback text: the tweet succeeded,
-                    // but not with the words the author wrote. Recorded against
-                    // the POSTED entry, so it would otherwise read as a clean run.
-                    const degraded = (s.posted ?? []).flatMap((p) => p.fallbacks ?? []);
-                    return (
-                      <tr key={i} className="border-t border-stone-100 dark:border-zinc-800/70">
-                        <td className="py-1.5 pr-4 text-stone-700 dark:text-zinc-200" title={run.run_at}>
-                          {relative(new Date(run.run_at).getTime())}
-                        </td>
-                        <td className="py-1.5 pr-4 text-stone-600 dark:text-zinc-300">{s.processed ?? 0}</td>
-                        <td className="py-1.5 pr-4 text-stone-600 dark:text-zinc-300">
-                          {posted}
-                          {degraded.length > 0 && (
-                            <span
-                              className="ml-1.5 text-amber-600 dark:text-amber-400"
-                              title={`Posted, but ${degraded.length === 1 ? "a dynamic block" : `${degraded.length} dynamic blocks`} fell back to the author's text: ${degraded
-                                .map((f) => `${f.reason}${f.budget_s ? ` (budget ${f.budget_s}s)` : ""}`)
-                                .join(", ")}`}
-                            >
-                              ⚠ {degraded.length} on fallback
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-1.5 pr-4">
-                          {held ? (
-                            <span className="text-rose-600 dark:text-rose-400" title={reasons.join(", ")}>
-                              {held}
-                              {reasons.length ? ` · ${reasons[0]}${reasons.length > 1 ? "…" : ""}` : ""}
-                            </span>
-                          ) : (
-                            !waiting && <span className="text-stone-400">0</span>
-                          )}
-                          {waiting > 0 && (
-                            <span
-                              className="ml-1.5 text-stone-500 dark:text-zinc-400"
-                              title="Ran out of time this run; the next run picks them up."
-                            >
-                              {held ? "· " : ""}
-                              {waiting} waiting
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {runs.map((run, i) => (
+                    <tr key={i} className="border-t border-stone-100 dark:border-zinc-800/70">
+                      <td className="py-1.5 pr-4 whitespace-nowrap text-stone-700 dark:text-zinc-200" title={run.run_at}>
+                        {relative(new Date(run.run_at).getTime())}
+                      </td>
+                      <RunCells summary={run.summary ?? {}} />
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>

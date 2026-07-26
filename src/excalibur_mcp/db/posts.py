@@ -370,6 +370,15 @@ async def claim_due_post(post_id: str) -> dict[str, Any] | None:
     )
 
 
+async def get_claimed(post_id: str) -> dict[str, Any] | None:
+    """The full row for a post a publisher owns — operator-side, not npub-scoped.
+
+    A publisher is handed only an id; it reads its own row rather than having the
+    scheduler carry post content through job parameters.
+    """
+    return await fetchrow(f"SELECT {_FULL_COLS} FROM posts WHERE id = $1::uuid", post_id)
+
+
 async def release_claim(post_id: str) -> None:
     """Revert a claimed ('sending') post to 'scheduled' without stamping a reason
     (used when the caller bails before a real attempt)."""

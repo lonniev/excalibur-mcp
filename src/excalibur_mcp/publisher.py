@@ -1,0 +1,473 @@
+"""Publishing one post.
+
+A *publisher* owns a single post's journey to X and nothing else: resolve its
+dynamic blocks, bill the owner, post, and write down what happened. One
+publisher per publication, running as a background job — so the LLM work it does
+is bounded by the author's own runtime budget, not by the lifetime of whatever
+HTTP request happened to notice the post was due.
+
+It is deliberately ignorant of scheduling. It doesn't know what "due" means, it
+never looks for work, and nothing waits on it. The scheduler launches it and
+forgets it; the publisher records its own completion on the post row. If it dies
+mid-flight the post is simply left claimed, and the claim lease hands it back to
+a later tick — no supervisor required.
+
+Money rules are unchanged and stay here, where the work is: charge before the
+upstream call, refund whenever the post doesn't go out. Insufficient balance and
+unavailable OAuth are **situations, not failures** — the post is left
+``scheduled`` and reported, never dropped.
+"""
+
+from __future__ import annotations
+
+import calendar
+import json
+import logging
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
+from excalibur_mcp.db import posts as posts_db
+from excalibur_mcp.db import scheduler_runs
+from excalibur_mcp.formatter import markdown_to_unicode
+
+logger = logging.getLogger(__name__)
+
+# A 402 is the owner's own X developer subscription lapsing — a billing matter at
+# X that no retry can fix, so it pauses.
+#
+# A 401 does NOT belong here, though it looks like it should. The SDK refreshes
+# only when its own `expires_at` says the token is stale, so X rotating a refresh
+# token out from under us yields a 401 while our bookkeeping still reads fresh —
+# transient, and self-healing on the next refresh. Observed 2026-07-25: a post
+# that 401'd at 23:00 posted cleanly an hour later with no human involved.
+# Pausing on 401 would have stranded it awaiting a Resume it never needed.
+_X_NON_TRANSIENT = frozenset({402})
+
+
+# -- time / recurrence helpers ----------------------------------------------
+
+def _parse_iso(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _as_dict(value: Any) -> dict[str, Any] | None:
+    """Neon may hand JSONB back as a parsed object or a raw string — normalize."""
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else None
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
+def _add_months(dt: datetime, months: int) -> datetime:
+    m = dt.month - 1 + months
+    year = dt.year + m // 12
+    month = m % 12 + 1
+    day = min(dt.day, calendar.monthrange(year, month)[1])
+    return dt.replace(year=year, month=month, day=day)
+
+
+def _add_business_days(dt: datetime, n: int) -> datetime:
+    """Advance ``n`` business days (Mon-Fri), skipping Sat/Sun, preserving the
+    time of day. Stepping forward from a Friday (or a weekend) lands on the
+    next Monday, so a daily-on-weekdays cadence never fires on a weekend."""
+    r = dt
+    added = 0
+    while added < n:
+        r = r + timedelta(days=1)
+        if r.weekday() < 5:  # Mon=0 .. Fri=4
+            added += 1
+    return r
+
+
+def _advance(sent_at: datetime, recurrence: dict[str, Any]) -> datetime | None:
+    freq = recurrence.get("freq")
+    interval = recurrence.get("interval", 1)
+    interval = interval if isinstance(interval, int) and interval >= 1 else 1
+    if freq == "daily":
+        return sent_at + timedelta(days=interval)
+    if freq == "weekdays":
+        return _add_business_days(sent_at, interval)
+    if freq == "weekly":
+        return sent_at + timedelta(weeks=interval)
+    if freq == "monthly":
+        return _add_months(sent_at, interval)
+    return None
+
+
+def _next_state(
+    sent_at: datetime, recurrence: dict[str, Any] | None, cease_at: Any,
+) -> tuple[str, datetime | None]:
+    """Return ``(next_status, next_publish_at)`` after a successful fire."""
+    if not recurrence:
+        return "sent", None
+    nxt = _advance(sent_at, recurrence)
+    if nxt is None:
+        return "sent", None
+    cease = _parse_iso(cease_at)
+    if cease is not None and nxt > cease:
+        return "sent", None
+    return "scheduled", nxt
+
+
+# -- dynamic-block resolution ------------------------------------------------
+
+def _dynamic_blocks(doc: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """The dynamic blocks in a post's doc (empty for legacy/static posts)."""
+    if not isinstance(doc, dict):
+        return []
+    blocks = doc.get("blocks")
+    if not isinstance(blocks, list):
+        return []
+    return [b for b in blocks if isinstance(b, dict) and b.get("dynamic")]
+
+
+async def _owner_voice(owner: str) -> tuple[str, list[str]]:
+    """The owner's saved Voice (profile + active ban texts) for tone-matching.
+
+    Best-effort: a missing/unreadable Voice just means no voice constraints.
+    """
+    try:
+        from excalibur_mcp.tools import voices as voices_tools
+
+        v = await voices_tools.get(owner)
+        voice_obj = (v or {}).get("voice") or {}
+        profile = str(voice_obj.get("profile") or "")
+        bans = [
+            str(b.get("text"))
+            for b in (voice_obj.get("bans") or [])
+            if isinstance(b, dict) and b.get("on") and b.get("text")
+        ]
+        return profile, bans
+    except Exception:  # noqa: BLE001 — voice is an enhancement, never a blocker
+        logger.exception("publisher: failed to load voice for %s", owner)
+        return "", []
+
+
+def _fallback_reason(exc: Exception, budget_s: float) -> str:
+    """Why a dynamic block fell back, in a form worth reading in the audit ring.
+
+    The distinction that matters is whether the block ran out of ITS OWN time or
+    the provider failed — the first is a budget the author can raise, the second
+    is an outage. Both used to read as an identical silence."""
+    name = type(exc).__name__
+    if "Timeout" in name or isinstance(exc, TimeoutError):
+        return f"resolve_timed_out_at_{int(budget_s)}s"
+    text = str(exc).lower()
+    if "credit balance" in text or "quota" in text:
+        return "operator_llm_unfunded"
+    if "401" in text or "authentication" in text:
+        return "operator_llm_auth"
+    if "429" in text or "rate" in text:
+        return "upstream_rate_limited"
+    return f"resolve_failed:{name}"
+
+
+async def _resolve_post_text(
+    owner: str,
+    blocks: list[dict[str, Any]],
+    voice: str,
+    bans: list[str],
+    api_key: str | None,
+) -> tuple[str | None, list[dict[str, Any]] | None, str | None, list[dict[str, Any]]]:
+    """Compose the final tweet text by resolving each dynamic block at fire time.
+
+    Each block gets the budget its author asked for — the publisher is a
+    background job, so there is no request clock to race. Returns
+    ``(text, rendered_blocks, None, fallbacks)`` on success, where
+    ``rendered_blocks`` is a static snapshot for the Sent occurrence and
+    ``fallbacks`` names any block whose prompt didn't make it into the tweet.
+    Returns ``(None, None, reason, fallbacks)`` when a block failed AND carried
+    no fallback — the caller holds the post and never posts a gap. ``api_key`` is
+    None when the operator has no Anthropic key, so every dynamic block falls
+    back.
+    """
+    import asyncio
+
+    from excalibur_mcp.resolve import (
+        INSERT_MARKER,
+        clamp_fetches,
+        clamp_timeout,
+        resolve_block,
+    )
+
+    def _domains(b: dict[str, Any]) -> list[str]:
+        raw = b.get("domains")
+        if isinstance(raw, list):
+            return [str(x).strip() for x in raw if str(x).strip()]
+        if isinstance(raw, str):
+            return [x.strip() for x in raw.replace(",", "\n").split("\n") if x.strip()]
+        return []
+
+    # Static texts known up front; dynamic slots fill in after resolution.
+    rendered: list[str] = [
+        "" if (isinstance(b, dict) and b.get("dynamic")) else str((b or {}).get("text", ""))
+        for b in blocks
+    ]
+
+    # Context for a dynamic block: static siblings verbatim + OTHER dynamics as
+    # their fallback. Blocks resolve in PARALLEL, so none can see another's
+    # resolved value — independence is the trade for not posting at the sum of the
+    # per-block times.
+    def _context_for(i: int) -> str:
+        parts: list[str] = []
+        for j, bj in enumerate(blocks):
+            if j == i:
+                parts.append(INSERT_MARKER)
+            elif isinstance(bj, dict) and bj.get("dynamic"):
+                parts.append(str(bj.get("fallback", "")).strip())
+            else:
+                parts.append(rendered[j])
+        return "\n\n".join(p for p in parts if p).strip()
+
+    async def _resolve_one(i: int) -> tuple[str | None, dict[str, Any] | None]:
+        """``(text, fallback_note)`` for dynamic block i.
+
+        ``text`` is the resolved text, or the block's fallback when the resolve
+        didn't produce anything, or None when it failed AND has no fallback (the
+        caller then holds the post rather than posting a gap).
+
+        ``fallback_note`` is non-None exactly when the author's prompt did NOT
+        make it into the tweet. Substituting fallback text is a real degradation
+        of what the author asked for, and it used to leave no trace anywhere but
+        a log line — the post was reported as cleanly `posted` while carrying
+        different words than intended. The note is what makes that visible."""
+        b = blocks[i]
+        prompt = str(b.get("text", "")).strip()
+        fallback = str(b.get("fallback", "")).strip()
+        budget = clamp_timeout(b.get("runtimeLimit"))
+        resolved, why = "", None
+        if not prompt:
+            return (fallback or None), None  # nothing was asked for; not a degradation
+        if not api_key:
+            why = "no_operator_llm_key"
+        else:
+            try:
+                resolved = await resolve_block(
+                    api_key=api_key, prompt=prompt, context=_context_for(i),
+                    voice=voice, bans=bans, allowed_domains=_domains(b),
+                    max_fetches=clamp_fetches(b.get("maxFetches", 5)),
+                    timeout_seconds=budget,
+                )
+                if not resolved:
+                    why = "empty_resolution"
+            except Exception as exc:  # noqa: BLE001 — fall back, report the reason
+                logger.warning("publisher: dynamic resolve failed for %s: %s", owner, exc)
+                why = _fallback_reason(exc, budget)
+        if resolved:
+            return resolved, None
+        return (fallback or None), {"block": i, "reason": why, "budget_s": round(budget, 1)}
+
+    dynamic_idx = [
+        i for i, b in enumerate(blocks) if isinstance(b, dict) and b.get("dynamic")
+    ]
+    results = await asyncio.gather(*(_resolve_one(i) for i in dynamic_idx))
+    fallbacks: list[dict[str, Any]] = []
+    for i, (val, note) in zip(dynamic_idx, results):
+        if val is None:
+            return None, None, "dynamic_resolve_failed", fallbacks
+        if note is not None:
+            fallbacks.append(note)
+        rendered[i] = val
+
+    text = "\n\n".join(p for p in rendered if p).strip()
+    if not text:
+        return None, None, "empty_after_resolve", fallbacks
+
+    # Static snapshot: dynamic blocks become plain text of what actually went out.
+    rendered_blocks: list[dict[str, Any]] = []
+    for i, b in enumerate(blocks):
+        if isinstance(b, dict) and b.get("dynamic"):
+            rendered_blocks.append({"text": rendered[i], "flags": []})
+        elif isinstance(b, dict):
+            rendered_blocks.append(b)
+        else:
+            rendered_blocks.append({"text": str(b), "flags": []})
+    return text, rendered_blocks, None, fallbacks
+
+
+# -- one publication ---------------------------------------------------------
+
+async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
+    """Carry one claimed post to X and record what happened.
+
+    Returns the outcome dict that is also written to the audit ring, so a
+    publication is legible whether you read the job result or the log.
+    """
+    from tollbooth.tool_identity import capability_uuid
+
+    from excalibur_mcp.server import _resolve_x_client
+    from excalibur_mcp.x_client import XAPIError
+
+    post_tweet_id = capability_uuid("post_tweet")
+    resolve_id = capability_uuid("resolve_dynamic_block")
+
+    row = await posts_db.get_claimed(post_id)
+    if row is None:
+        return await _record({"post_id": post_id, "outcome": "gone"})
+    owner = row["npub"]
+
+    async def _hold(reason: str, **extra: Any) -> dict[str, Any]:
+        """Leave the post ``scheduled`` for a later tick and say why — the
+        situation is stamped on the post so it never sits silently."""
+        try:
+            await posts_db.mark_attempt(post_id, _now().isoformat(), reason)
+        except Exception:  # noqa: BLE001 — stamping is non-critical
+            logger.exception("publisher: failed to stamp attempt on %s", post_id)
+        return await _record({"post_id": post_id, "owner": owner, "outcome": "held",
+                              "reason": reason, **extra})
+
+    async def _pause(reason: str, **extra: Any) -> dict[str, Any]:
+        """Like ``_hold``, but for a situation no later tick can resolve. The
+        owner fixes the upstream cause and resumes the post themselves."""
+        try:
+            await posts_db.mark_paused(post_id, _now().isoformat(), reason)
+        except Exception:  # noqa: BLE001 — stamping is non-critical
+            logger.exception("publisher: failed to stamp attempt on %s", post_id)
+        return await _record({"post_id": post_id, "owner": owner, "outcome": "paused",
+                              "reason": reason, **extra})
+
+    doc = _as_dict(row.get("doc"))
+    dynamic = _dynamic_blocks(doc)
+    text = (row.get("text_cache") or "").strip()
+    # The doc snapshotted into a recurring occurrence — replaced below with the
+    # rendered (static) doc when the post carried dynamic blocks.
+    occurrence_doc: dict[str, Any] = doc or {}
+
+    if not dynamic and not text:  # content reason
+        return await _hold("empty_text_cache")
+
+    # 1. Resolve the owner's X bearer (no billing yet). — access reason
+    client, situation = await _resolve_x_client(owner)
+    if client is None:
+        return await _hold((situation or {}).get("error_code", "oauth_unavailable"))
+
+    # 2. Dynamic blocks: bill the owner once for resolution, run each prompt, and
+    #    compose the final text. A failed block falls back to its author text; a
+    #    failed block with no fallback holds the post (refunding the resolve fare)
+    #    — we never post a gap. The fare is refunded again if anything downstream
+    #    holds the post.
+    resolve_charged = False
+    fallbacks: list[dict[str, Any]] = []
+    if dynamic:
+        rcost, rdenial = await runtime._resolve_pricing(
+            resolve_id, "resolve_dynamic_block", "heavy", {},
+        )
+        if rdenial is not None:
+            return await _hold(rdenial.get("error_code", "pricing_unavailable"))
+        rbilling = await runtime._apply_billing(owner, "resolve_dynamic_block", rcost, [])
+        if isinstance(rbilling, dict):  # finance reason
+            return await _hold("insufficient_balance_resolve", cost_sats=rcost)
+        resolve_charged = True
+
+        try:
+            creds = await runtime.load_credentials(["anthropic_api_key"])
+            key = creds.get("anthropic_api_key")
+        except Exception:  # noqa: BLE001 — no key → blocks fall back
+            key = None
+        voice, bans = await _owner_voice(owner)
+        rendered, rendered_blocks, reason, fallbacks = await _resolve_post_text(
+            owner, list(doc.get("blocks") or []) if doc else [], voice, bans, key,
+        )
+        if rendered is None:
+            await runtime.rollback_debit(resolve_id, owner)
+            return await _hold(reason or "dynamic_resolve_failed", fallbacks=fallbacks)
+        text = rendered
+        occurrence_doc = {"blocks": rendered_blocks or []}
+
+    # 3. Price + bill the owner for post_tweet (tranche-expiry guard inside).
+    cost, denial = await runtime._resolve_pricing(post_tweet_id, "post_tweet", "write", {})
+    if denial is not None:
+        if resolve_charged:
+            await runtime.rollback_debit(resolve_id, owner)
+        return await _hold(denial.get("error_code", "pricing_unavailable"))
+    billing = await runtime._apply_billing(owner, "post_tweet", cost, [])
+    if isinstance(billing, dict):
+        # Insufficient / expired balance — leave it scheduled, report it. — finance reason
+        if resolve_charged:
+            await runtime.rollback_debit(resolve_id, owner)
+        return await _hold("insufficient_balance", cost_sats=cost)
+
+    # 4. Post. On failure, refund the owner and leave the post scheduled. — network reason
+    try:
+        result = await client.post_tweet(markdown_to_unicode(text))
+    except XAPIError as exc:
+        await runtime.rollback_debit(post_tweet_id, owner)
+        if resolve_charged:
+            await runtime.rollback_debit(resolve_id, owner)
+        reason = f"x_api_error: {exc}"
+        if getattr(exc, "status_code", None) in _X_NON_TRANSIENT:
+            return await _pause(reason)
+        return await _hold(reason)
+    except Exception as exc:  # noqa: BLE001 — money path, refund then report
+        await runtime.rollback_debit(post_tweet_id, owner)
+        if resolve_charged:
+            await runtime.rollback_debit(resolve_id, owner)
+        return await _hold(str(exc))
+
+    # 5. Stamp the fire and reschedule (or retire past cease_at).
+    sent_at = _now()
+    next_status, next_publish = _next_state(
+        sent_at, _as_dict(row.get("recurrence")), row.get("cease_at"),
+    )
+    tweet_url = (result or {}).get("tweet_url") if isinstance(result, dict) else None
+
+    if next_status == "scheduled":
+        # Recurring: snapshot THIS occurrence as its own Sent post (with the X
+        # URL), then advance the recurring template — so every posting stays
+        # visible instead of collapsing into a row that silently reschedules. For
+        # a dynamic post the snapshot carries the RESOLVED text + a static
+        # rendered doc, so history shows exactly what went out, not the prompt.
+        await posts_db.create_sent_occurrence(
+            npub=owner, doc=occurrence_doc, text_cache=text,
+            tweet_url=tweet_url, sent_at=sent_at.isoformat(), template_id=post_id,
+            publish_at=str(row.get("publish_at")) if row.get("publish_at") else None,
+        )
+        await posts_db.mark_sent(
+            post_id, sent_at.isoformat(), "scheduled",
+            next_publish.isoformat() if next_publish else None,
+            None,  # the occurrence carries the URL; the template just advances
+        )
+    else:
+        # One-shot: the row itself becomes the Sent record.
+        await posts_db.mark_sent(post_id, sent_at.isoformat(), "sent", None, tweet_url)
+
+    # `fallbacks` rides along on a SUCCESSFUL publication on purpose: the tweet
+    # went out, but not with the words the author asked for. Without it the run
+    # reads as a clean success and the degradation is invisible.
+    return await _record({
+        "post_id": post_id, "owner": owner, "outcome": "posted",
+        "next_status": next_status,
+        "tweet_id": (result or {}).get("tweet_id") if isinstance(result, dict) else None,
+        "tweet_url": tweet_url,
+        **({"fallbacks": fallbacks} if fallbacks else {}),
+    })
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+async def _record(outcome: dict[str, Any]) -> dict[str, Any]:
+    """Append this publication to the audit ring and hand the outcome back.
+
+    Every exit from ``publish_one`` goes through here, so a publication cannot
+    finish without leaving a trace. Best-effort: an audit-write failure must
+    never undo (or mask) the publishing work that just happened.
+    """
+    try:
+        await scheduler_runs.record_run({"kind": "publication", **outcome})
+    except Exception:  # noqa: BLE001 — audit is non-critical
+        logger.exception("publisher: failed to record outcome for %s", outcome.get("post_id"))
+    return outcome

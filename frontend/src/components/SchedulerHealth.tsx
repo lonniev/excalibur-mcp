@@ -44,19 +44,30 @@ export default function SchedulerHealth() {
 
   const refresh = useCallback(async () => {
     try {
-      const runs = await getSchedulerLog(5);
-      if (!runs.length) {
+      // Enough rows that a tick is in the window even when publications — one
+      // per post published — are interleaved with the heartbeats.
+      const runs = await getSchedulerLog(25);
+      // Freshness must come from a TICK. A publication finishes minutes after
+      // the tick that launched it, so reading its timestamp as the heartbeat
+      // would make a dying cron look livelier than it is.
+      const newest = runs.find((r) => r.summary?.kind !== "publication");
+      if (!newest) {
         setHealth("quiet");
         setLastRun(null);
         setHeld(0);
         return;
       }
-      const newest = runs[0];
       setLastRun(newest.run_at);
       const s = newest.summary ?? {};
-      // Owner-scoped: for a patron these arrays already hold only their OWN posts.
-      // Deferred posts are held too — they just wait for the next tick.
-      setHeld((s.skipped?.length ?? 0) + (s.errors?.length ?? 0) + (s.deferred?.length ?? 0));
+      // Publications are per-post rows written by the publisher that did the
+      // work, and are owner-scoped before they reach us — so counting the recent
+      // window gives the reader their OWN posts that didn't go out.
+      setHeld(
+        runs.filter(
+          (r) => r.summary?.kind === "publication"
+            && (r.summary.outcome === "held" || r.summary.outcome === "paused"),
+        ).length,
+      );
       const age = Date.now() - new Date(newest.run_at).getTime();
       if (isNaN(age)) {
         setHealth("unknown");
