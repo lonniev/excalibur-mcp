@@ -1077,6 +1077,10 @@ export interface SchedulerRun {
     // Which build answered this tick. A heartbeat that only says "alive" can't
     // tell you WHICH deployment is alive.
     who?: { version?: string; commit?: string };
+    // The forecast: posts still ahead of the scheduler, and how far off the
+    // soonest is. Owner-scoped before it reaches us — a patron sees their own
+    // queue, the operator sees everyone's.
+    upcoming?: { count?: number; next_in_minutes?: number };
     processed?: number;
     launched?: SchedulerOutcome[];
     contended?: SchedulerOutcome[];

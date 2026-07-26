@@ -30,6 +30,13 @@ function isFailure(entry: DebugEntry): boolean {
 }
 
 const short = (id?: string) => (id ? id.slice(0, 8) : "?");
+
+// "47 min" reads fine; "1387 min" does not. Hours and days once it's worth it.
+function humanMins(m: number): string {
+  if (m < 90) return `${m} min`;
+  const h = Math.round(m / 60);
+  return h < 36 ? `${h} h` : `${Math.round(h / 24)} d`;
+}
 const outcome = (e: SchedulerOutcome, verb: string) =>
   `  ↳ ${short(e.post_id)} ${verb}${e.reason ? `:${e.reason}` : ""}${e.tweet_url ? ` ${e.tweet_url}` : ""}`;
 
@@ -67,12 +74,20 @@ function pushRun(run: SchedulerRun): void {
   const processed = s.processed ?? 0;
   // A processed=0 tick is the Worker's heartbeat — say so plainly, otherwise a
   // row of zeroes reads like a failure when it just means nothing was due.
+  // What's coming, so the quiet tick forecasts instead of just reassuring.
+  const up = s.upcoming;
+  const ahead =
+    !up || !up.count
+      ? "nothing scheduled ahead"
+      : up.next_in_minutes === undefined
+        ? `${up.count} ahead`
+        : `next of ${up.count} in ${humanMins(up.next_in_minutes)}`;
   const tally =
     s.status === "started"
       ? "started, never finished"
       : processed === 0
-        ? "alive · nothing due"
-        : `due=${processed} launched=${launched.length}`;
+        ? `alive · nothing due · ${ahead}`
+        : `due=${processed} launched=${launched.length} · ${ahead}`;
   // Name the build. "alive" alone is noise you learn to skim past; "alive, and
   // it's THIS commit" is the line that settles a "did my deploy land?" question.
   const who = [s.who?.version && `v${s.who.version}`, s.who?.commit].filter(Boolean).join(" ");

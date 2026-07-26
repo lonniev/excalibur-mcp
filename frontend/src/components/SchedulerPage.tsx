@@ -43,6 +43,13 @@ function health(runs: SchedulerRun[]): { dot: string; label: string } {
   return { dot: "bg-red-500", label: "Stalled" };
 }
 
+// "47 min" reads fine; "1387 min" does not. Hours and days once it's worth it.
+function untilMins(m: number): string {
+  if (m < 90) return `${m} min`;
+  const h = Math.round(m / 60);
+  return h < 36 ? `${h} h` : `${Math.round(h / 24)} d`;
+}
+
 // One log row, rendered by kind. A TICK is the scheduler dispatching — it never
 // publishes anything, so it has no outcome to show, only what it handed off. A
 // PUBLICATION is one post's result, written by the publisher that did the work.
@@ -90,6 +97,17 @@ function RunCells({ summary: s }: { summary: SchedulerRun["summary"] }) {
       <td className={`${cell} text-stone-500 dark:text-zinc-400`}>tick</td>
       <td className={`${cell} text-stone-600 dark:text-zinc-300`}>
         {s.processed ? `${s.processed} due · ${launched} launched` : "nothing due"}
+        {/* The forecast — what makes a quiet tick worth reading. */}
+        {(() => {
+          const up = s.upcoming;
+          if (!up) return null;
+          const text = !up.count
+            ? "nothing scheduled ahead"
+            : up.next_in_minutes === undefined
+              ? `${up.count} ahead`
+              : `next of ${up.count} in ${untilMins(up.next_in_minutes)}`;
+          return <span className="ml-1.5 text-stone-500 dark:text-zinc-400">· {text}</span>;
+        })()}
         {contended > 0 && (
           <span
             className="ml-1.5 text-stone-500 dark:text-zinc-400"

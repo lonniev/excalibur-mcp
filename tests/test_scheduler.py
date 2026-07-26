@@ -6,6 +6,7 @@ bill anyone, or wait to see how a publication turned out — those belong to the
 publisher, and keeping them out is what lets a dynamic block take minutes.
 """
 
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -162,3 +163,58 @@ async def test_quiet_tick_still_says_who_it_is():
         out = await scheduler.process_due_posts(rt)
     assert out["processed"] == 0
     assert out["who"]["version"]
+
+
+# -- the forecast ------------------------------------------------------------
+
+def _upcoming_rows(*rows):
+    return patch.object(scheduler.posts_db, "upcoming_by_owner", AsyncMock(return_value=list(rows)))
+
+
+@pytest.mark.asyncio
+async def test_quiet_tick_forecasts_what_is_coming():
+    """The heartbeat's whole job: say what happens next, not just that we live."""
+    rt = _runtime()
+    soon = datetime.now(timezone.utc) + timedelta(minutes=47)
+    with _list_due(), _upcoming_rows({"npub": NPUB, "count": 3, "next_at": soon}):
+        out = await scheduler.process_due_posts(rt)
+    up = out["upcoming"]
+    assert up["count"] == 3
+    assert 46 <= up["next_in_minutes"] <= 48  # rounded from real clock arithmetic
+
+
+@pytest.mark.asyncio
+async def test_forecast_totals_across_owners_and_takes_the_soonest():
+    rt = _runtime()
+    now = datetime.now(timezone.utc)
+    with _list_due(), _upcoming_rows(
+        {"npub": NPUB, "count": 2, "next_at": now + timedelta(minutes=120)},
+        {"npub": "npub1other", "count": 1, "next_at": now + timedelta(minutes=10)},
+    ):
+        out = await scheduler.process_due_posts(rt)
+    assert out["upcoming"]["count"] == 3  # every owner's posts
+    assert out["upcoming"]["next_in_minutes"] <= 11  # the soonest of them all
+    # …but kept per-owner too, so the log can be scoped without re-querying
+    assert out["upcoming"]["by_owner"][NPUB]["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_empty_queue_is_stated_not_omitted():
+    """'nothing scheduled ahead' is information — a queue that quietly emptied
+    should be visible, not indistinguishable from a missing field."""
+    rt = _runtime()
+    with _list_due(), _upcoming_rows():
+        out = await scheduler.process_due_posts(rt)
+    assert out["upcoming"]["count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_broken_forecast_never_fails_the_tick():
+    """Dispatching the present matters more than describing the future."""
+    rt = _runtime()
+    with _list_due("p1"), \
+         patch.object(scheduler.posts_db, "upcoming_by_owner",
+                      AsyncMock(side_effect=RuntimeError("neon down"))):
+        out = await scheduler.process_due_posts(rt)
+    assert [x["post_id"] for x in out["launched"]] == ["p1"]  # the work still happened
+    assert out["upcoming"] == {}
