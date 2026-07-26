@@ -212,13 +212,29 @@ export default function SchedulerPage() {
                     // they're simply next in line. Counted separately so a normal
                     // hand-off never reads as a run full of errors.
                     const waiting = s.deferred?.length ?? 0;
+                    // Posts that went out on fallback text: the tweet succeeded,
+                    // but not with the words the author wrote. Recorded against
+                    // the POSTED entry, so it would otherwise read as a clean run.
+                    const degraded = (s.posted ?? []).flatMap((p) => p.fallbacks ?? []);
                     return (
                       <tr key={i} className="border-t border-stone-100 dark:border-zinc-800/70">
                         <td className="py-1.5 pr-4 text-stone-700 dark:text-zinc-200" title={run.run_at}>
                           {relative(new Date(run.run_at).getTime())}
                         </td>
                         <td className="py-1.5 pr-4 text-stone-600 dark:text-zinc-300">{s.processed ?? 0}</td>
-                        <td className="py-1.5 pr-4 text-stone-600 dark:text-zinc-300">{posted}</td>
+                        <td className="py-1.5 pr-4 text-stone-600 dark:text-zinc-300">
+                          {posted}
+                          {degraded.length > 0 && (
+                            <span
+                              className="ml-1.5 text-amber-600 dark:text-amber-400"
+                              title={`Posted, but ${degraded.length === 1 ? "a dynamic block" : `${degraded.length} dynamic blocks`} fell back to the author's text: ${degraded
+                                .map((f) => `${f.reason}${f.budget_s ? ` (budget ${f.budget_s}s)` : ""}`)
+                                .join(", ")}`}
+                            >
+                              ⚠ {degraded.length} on fallback
+                            </span>
+                          )}
+                        </td>
                         <td className="py-1.5 pr-4">
                           {held ? (
                             <span className="text-rose-600 dark:text-rose-400" title={reasons.join(", ")}>

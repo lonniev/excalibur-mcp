@@ -446,19 +446,24 @@ async def test_dynamic_insufficient_balance_for_resolve_holds(_stub_mark_attempt
 
 # -- tick budget -------------------------------------------------------------
 #
-# The edge in front of the MCP cuts a request at roughly 100s. A tick that runs
-# past that dies with nothing recorded and re-wedges on every cron, so the loop
-# works to a deadline and hands the remainder to the next tick.
+# The edge in front of the MCP cuts a request at a MEASURED ~128s (two ticks died
+# at 129.7s / 131.2s on 2026-07-25). A tick that runs past it dies with nothing
+# recorded and re-wedges on every cron, so the loop works to a deadline and hands
+# the remainder to the next tick.
 
 def test_resolve_timeout_clamps_author_budget_to_the_ceiling():
+    full = scheduler.TICK_BUDGET_S  # a whole tick still ahead of us
     # A 900s block (the interactive maximum) can't take a tick down with it.
-    assert scheduler._resolve_timeout(900, 60.0) == scheduler.RESOLVE_BUDGET_S
+    assert scheduler._resolve_timeout(900, full) == scheduler.RESOLVE_BUDGET_S
     # An author asking for less than the ceiling keeps their smaller budget.
-    assert scheduler._resolve_timeout(20, 60.0) == 20.0
+    assert scheduler._resolve_timeout(20, full) == 20.0
     # No stated budget → the scheduler's own ceiling.
-    assert scheduler._resolve_timeout(None, 60.0) == scheduler.RESOLVE_BUDGET_S
+    assert scheduler._resolve_timeout(None, full) == scheduler.RESOLVE_BUDGET_S
     # Garbage in the doc must not crash a fire.
-    assert scheduler._resolve_timeout("soon", 60.0) == scheduler.RESOLVE_BUDGET_S
+    assert scheduler._resolve_timeout("soon", full) == scheduler.RESOLVE_BUDGET_S
+    # The ceiling must leave room inside a tick for the X call and the writes
+    # that follow the last resolve — otherwise one block eats the whole budget.
+    assert scheduler.RESOLVE_BUDGET_S < scheduler.TICK_BUDGET_S
 
 
 def test_resolve_timeout_never_exceeds_what_is_left_of_the_tick():
@@ -497,13 +502,17 @@ async def test_tick_defers_remaining_posts_once_the_budget_is_spent(_stub_claim_
 
 @pytest.mark.parametrize("status,detail", [(401, "Unauthorized"), (403, "Forbidden")])
 @pytest.mark.asyncio
-async def test_dead_x_authorization_pauses_like_a_lapsed_subscription(
+async def test_rejected_x_token_holds_and_never_pauses(
     _stub_mark_attempt, _stub_mark_paused, status, detail,
 ):
-    """A 401/403 is a dead authorization — revoked, expired, or scope-stripped.
-    It fails identically on every future tick, so it must PAUSE like its 402
-    sibling rather than sit `scheduled`, re-billing and refunding the owner every
-    30 minutes while the post looks like it's still trying."""
+    """A 401/403 must HOLD, not pause — it looks terminal and isn't.
+
+    The SDK refreshes only when its own ``expires_at`` says the token is stale,
+    so X rotating a refresh token out from under us yields a rejected token while
+    our bookkeeping still reads fresh. That heals on the next refresh with no
+    human involved — observed 2026-07-25, when a post that 401'd at 23:00 posted
+    cleanly an hour later. Pausing would have stranded it awaiting a Resume it
+    never needed. Only a 402 (the owner's own lapsed X subscription) pauses."""
     rt = _runtime()
     client = SimpleNamespace(post_tweet=AsyncMock(side_effect=XAPIError(status, detail)))
     with patch.object(scheduler.posts_db, "list_due", AsyncMock(return_value=[_due_row()])), \
@@ -511,11 +520,11 @@ async def test_dead_x_authorization_pauses_like_a_lapsed_subscription(
          patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
         out = await scheduler.process_due_posts(rt)
 
-    assert out["errors"] and out["errors"][0]["paused"] is True
+    assert out["errors"] and "paused" not in out["errors"][0]  # held, still scheduled
     assert str(status) in out["errors"][0]["reason"]
     rt.rollback_debit.assert_awaited_once()  # the owner is made whole
-    _stub_mark_paused.assert_awaited_once()  # paused, not left scheduled
-    _stub_mark_attempt.assert_not_awaited()
+    _stub_mark_paused.assert_not_awaited()  # NOT paused — it retries and self-heals
+    _stub_mark_attempt.assert_awaited_once()
     mark.assert_not_called()
 
 
@@ -531,3 +540,59 @@ async def test_transient_x_failure_still_only_holds(_stub_mark_attempt, _stub_ma
     assert out["errors"] and "paused" not in out["errors"][0]
     _stub_mark_paused.assert_not_awaited()
     _stub_mark_attempt.assert_awaited_once()
+
+
+# -- fallback visibility -----------------------------------------------------
+#
+# Substituting a block's fallback changes what the world reads. That used to
+# leave no trace but a log line: the run reported a clean `posted` while the
+# tweet carried different words than the author wrote.
+
+def test_fallback_reason_separates_our_budget_from_their_outage():
+    """The distinction worth recording: did WE cut it short, or did the provider
+    fail? The first is a tuning question, the second is an outage."""
+    assert scheduler._fallback_reason(TimeoutError("slow"), 85.0) == "resolve_timed_out_at_85s"
+    assert scheduler._fallback_reason(Exception("credit balance too low"), 85) == "operator_llm_unfunded"
+    assert scheduler._fallback_reason(Exception("429 rate limited"), 85) == "upstream_rate_limited"
+    assert scheduler._fallback_reason(ValueError("boom"), 85) == "resolve_failed:ValueError"
+
+
+@pytest.mark.asyncio
+async def test_timed_out_block_posts_fallback_and_records_why():
+    """The tweet still goes out on the author's fallback (their choice), but the
+    run now says the prompt never made it — with the budget that cut it, so the
+    ceiling can be judged against real evidence instead of guessed at."""
+    rt = _dynamic_runtime()
+    client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "t", "tweet_url": "u"}))
+    with patch.object(scheduler.posts_db, "list_due", AsyncMock(return_value=[_due_row(doc=_DYNAMIC_DOC)])), \
+         patch.object(scheduler.posts_db, "mark_sent", AsyncMock()), \
+         patch.object(scheduler.posts_db, "create_sent_occurrence", AsyncMock()), \
+         patch.object(scheduler, "_owner_voice", AsyncMock(return_value=("", []))), \
+         patch("excalibur_mcp.resolve.resolve_block", AsyncMock(side_effect=TimeoutError("too slow"))), \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        out = await scheduler.process_due_posts(rt)
+
+    assert len(out["posted"]) == 1  # the post still went out
+    notes = out["posted"][0]["fallbacks"]
+    assert len(notes) == 1
+    assert notes[0]["reason"].startswith("resolve_timed_out_at_")
+    assert notes[0]["budget_s"] > 0  # the ceiling that cut it, for judging later
+    # the author's fallback is what actually reached X, not their prompt
+    posted_text = client.post_tweet.await_args.args[0]
+    assert "Markets moving fast." in posted_text
+    assert "BTC/USD" not in posted_text
+
+
+@pytest.mark.asyncio
+async def test_successful_resolve_records_no_fallback_noise():
+    """A clean run must stay clean — no empty `fallbacks` key on every post."""
+    rt = _dynamic_runtime()
+    client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "t", "tweet_url": "u"}))
+    with patch.object(scheduler.posts_db, "list_due", AsyncMock(return_value=[_due_row(doc=_DYNAMIC_DOC)])), \
+         patch.object(scheduler.posts_db, "mark_sent", AsyncMock()), \
+         patch.object(scheduler.posts_db, "create_sent_occurrence", AsyncMock()), \
+         patch.object(scheduler, "_owner_voice", AsyncMock(return_value=("", []))), \
+         patch("excalibur_mcp.resolve.resolve_block", AsyncMock(return_value="BTC at $64,000")), \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        out = await scheduler.process_due_posts(rt)
+    assert "fallbacks" not in out["posted"][0]

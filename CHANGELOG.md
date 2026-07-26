@@ -11,6 +11,54 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Reverted — an X 401 is transient after all, and must not pause
+
+The previous entry's premise was wrong. A 401 on `post_tweet` is **not** a dead
+authorization needing re-auth: the SDK refreshes only when its own `expires_at`
+says the token is stale, so X rotating a refresh token out from under us yields a
+rejected token while our bookkeeping still reads fresh. It self-heals on the next
+refresh. Observed 2026-07-25: a post that 401'd at 23:00 published cleanly an
+hour later with no human involved — pausing would have stranded it awaiting a
+Resume it never needed.
+
+- `_X_NON_TRANSIENT` is back to `{402}` alone. A lapsed X subscription still
+  pauses; a rejected token holds and retries, as it did before.
+- The post-card label change is reverted with it — it was built on the same wrong
+  reading. A test now pins 401/403 as **holding**, with the reasoning, so the
+  mistake isn't repeated.
+
+### Fixed — the tick budget was sized against a guess, and it clipped real posts
+
+`TICK_BUDGET_S` was set to 75s against an *assumed* ~100s edge timeout (the
+proxy's documented default). The measured cut is **~128s** — two ticks died at
+129.7s and 131.2s of Worker wall time, ~2s of which is connect + whoami. The
+guess left ~50s of headroom unused and pushed a real dynamic block into its
+fallback: a published tweet carried the author's fallback text instead of the
+content it asked for.
+
+- `TICK_BUDGET_S` 75 → **95**, `RESOLVE_BUDGET_S` 60 → **85**,
+  `MIN_POST_BUDGET_S` 35 → **40**, keeping ~30s of margin under the measured
+  ceiling for the X call and the writes that follow the last resolve. A single
+  dynamic block now gets 85s instead of 60s. The comment records the measurement
+  so the next person tunes against evidence rather than a default.
+
+### Added — a post that goes out on fallback text says so
+
+Substituting a block's fallback changes what the world reads, and it left no
+trace but a log line: the run reported a clean `posted` while the tweet carried
+different words than the author wrote. Neither the operator nor the owner could
+tell it had happened, let alone why.
+
+- Each fallback is recorded against the posted entry as
+  `{block, reason, budget_s}`. The reason separates *we* cut it short
+  (`resolve_timed_out_at_85s`) from *the provider* failed
+  (`operator_llm_unfunded`, `upstream_rate_limited`, …) — the first is a tuning
+  question answerable from the recorded budget, the second an outage.
+- The Scheduler tab shows "⚠ N on fallback" beside the posted count, with the
+  reasons in the tooltip. Recording it somewhere nobody looks would have repeated
+  the original mistake.
+- Publishing behavior is unchanged: the author wrote a fallback, so it's used.
+
 ### Fixed — a dead X authorization now says so, and stops retrying
 
 The first unwedged tick (2026-07-25 23:00 UTC) surfaced a real post failing with

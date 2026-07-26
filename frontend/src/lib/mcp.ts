@@ -1055,6 +1055,10 @@ export interface SchedulerOutcome {
   reason?: string; // skip/error reason, e.g. insufficient_balance / oauth_token_expired
   next_status?: string;
   tweet_url?: string | null;
+  // Present on a POSTED entry when a dynamic block didn't resolve and the
+  // author's fallback text went out in its place — the tweet succeeded, but not
+  // with the words that were asked for. `budget_s` is the ceiling that cut it.
+  fallbacks?: { block?: number; reason?: string; budget_s?: number }[];
 }
 export interface SchedulerRun {
   run_at: string;

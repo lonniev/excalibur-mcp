@@ -52,13 +52,6 @@ function attemptLabel(reason: string): string {
     if (reason.includes("402") || /subscription|access tier/i.test(reason)) {
       return "X subscription/tier";
     }
-    // A 401/403 is a dead authorization — revoked, expired, or scope-stripped.
-    // It will fail identically on every future tick, so it must NOT wear the
-    // "network error" label a human reasonably reads as "it'll retry and clear".
-    // Reconnecting X is the only thing that fixes it; say so.
-    if (reason.includes("401") || reason.includes("403") || /unauthorized|forbidden/i.test(reason)) {
-      return "X access expired";
-    }
     return "X network error";
   }
   return (
@@ -70,19 +63,6 @@ function attemptLabel(reason: string): string {
       pricing_unavailable: "pricing unavailable",
     } as Record<string, string>
   )[reason] ?? reason;
-}
-
-// What the human actually does about a paused post. A pause is only fair if it
-// names the remedy — otherwise "fix the cause at the provider" leaves them
-// hunting for which provider and which cause.
-function attemptRemedy(reason: string): string {
-  if (/401|403|unauthorized|forbidden/i.test(reason) || reason.startsWith("oauth")) {
-    return "Reconnect X on the Profile tab, then Resume to reschedule it.";
-  }
-  if (reason.includes("402") || /subscription|access tier/i.test(reason)) {
-    return "Renew your X developer subscription, then Resume to reschedule it.";
-  }
-  return "Fix the cause at the provider, then Resume to reschedule it.";
 }
 
 // Material Design action glyphs (Apache-2.0), inlined as `currentColor` paths
@@ -523,7 +503,7 @@ export default function PostsPage() {
                     {p.status === "paused" && p.last_attempt_reason && (
                       <span
                         className="mt-1 flex items-center gap-1 text-[11px] text-rose-600 dark:text-rose-400"
-                        title={`Scheduler paused this post${p.last_attempt_at ? ` at ${fmt(p.last_attempt_at)}` : ""}: ${p.last_attempt_reason}. ${attemptRemedy(p.last_attempt_reason)}`}
+                        title={`Scheduler paused this post${p.last_attempt_at ? ` at ${fmt(p.last_attempt_at)}` : ""}: ${p.last_attempt_reason}. Fix the cause at the provider, then Resume to reschedule it.`}
                       >
                         ⏸ {attemptLabel(p.last_attempt_reason)}
                       </span>
