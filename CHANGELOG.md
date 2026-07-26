@@ -11,6 +11,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — the X write path had a 5-second budget and no second chance
+
+`51110ca3` held three ticks running with `ConnectTimeout`, each time after
+~6 minutes of dynamic-block resolution. The resolve was working; the *last*
+step wasn't. `post_tweet` used a bare `httpx.AsyncClient()`, whose default
+allows 5s for every phase — while `/users/me` on the same host answered fine,
+so egress was healthy and the margin was simply too thin.
+
+- `X_API_TIMEOUT` (connect 10s, read/write 30s) now covers the API calls, the
+  way `IMAGE_DOWNLOAD_TIMEOUT_SECONDS` already covered the image paths.
+- `post_tweet` retries a **connect-phase** failure up to three attempts. By the
+  time a publication reaches this line it has spent minutes and real operator
+  money resolving its content; discarding that because a socket didn't open is
+  a bad trade.
+- A `ReadTimeout` is deliberately **not** retried. The request reached X and we
+  merely never saw the answer — the tweet may already be live, and a retry
+  would post it twice. Pinned by a test.
+
 ### Fixed — a held post can no longer decline to say why
 
 The live log showed a `held` publication whose reason rendered as `—`.
