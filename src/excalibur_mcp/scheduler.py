@@ -35,31 +35,43 @@ logger = logging.getLogger(__name__)
 
 # -- tick budget -------------------------------------------------------------
 #
-# A tick is one HTTP request, and the edge in front of this origin cuts a
-# request at roughly 100 seconds — far below the 900s a dynamic block is allowed
-# to ask for. An overrunning tick doesn't just lose its posts: the connection
-# dies, the server task goes with it, nothing is recorded, and every post it had
-# claimed comes back at the next cron to overrun again. So the tick works to a
-# wall-clock deadline that fits inside that window and hands the remainder to
-# the next tick — which is 30 minutes away, and strictly better than a retry
-# that was always going to be cut off.
-TICK_BUDGET_S = 75.0
+# A tick is one HTTP request, and the edge in front of this origin cuts it — far
+# below the 900s a dynamic block is allowed to ask for. An overrunning tick
+# doesn't just lose its posts: the connection dies, the server task goes with it,
+# nothing is recorded, and every post it had claimed comes back at the next cron
+# to overrun again. So the tick works to a wall-clock deadline inside that window
+# and hands the remainder to the next tick — 30 minutes away, and strictly better
+# than a retry that was always going to be cut off.
+#
+# The cut is MEASURED, not assumed: two ticks died at 129.7s and 131.2s of Worker
+# wall time on 2026-07-25, of which ~2s is connect + whoami, putting the edge's
+# ceiling on the POST itself at ~128s. (An earlier revision of this file guessed
+# 100s from the proxy's documented default and left ~50s of headroom unused,
+# which clipped real dynamic blocks into their fallbacks for no reason.) The
+# budget below keeps ~30s of margin under the measured ceiling for the X call,
+# the DB writes, and the audit close that follow the last resolve.
+TICK_BUDGET_S = 95.0
 
-# Ceiling for a single scheduler-fired dynamic resolve. An author may ask for
-# more (the interactive path still honors it); from the scheduler, a budget that
-# can't fit inside a tick is a budget that can't post.
-RESOLVE_BUDGET_S = 60.0
+# Ceiling for a single scheduler-fired dynamic resolve — most of a tick, so one
+# block can use nearly the whole budget. An author may still ask for more and get
+# it on the interactive path (bounded there at 240s); from the scheduler, a
+# budget that can't fit inside a tick is a budget that can't post.
+RESOLVE_BUDGET_S = 85.0
 
 # Don't open a post we can't plausibly finish — resolve clamps its own floor at
 # 30s, so starting one with less than this left just overruns the deadline.
-MIN_POST_BUDGET_S = 35.0
+MIN_POST_BUDGET_S = 40.0
 
-# X statuses the next tick cannot possibly resolve: the owner's developer
-# subscription lapsed (402), or their authorization is dead — revoked, expired,
-# or scope-stripped (401/403). Retrying these every 30 minutes just re-bills and
-# re-refunds the owner forever while the post looks like it's still trying. They
-# pause instead, and the owner resumes after reconnecting X.
-_X_NON_TRANSIENT = frozenset({401, 402, 403})
+# A 402 is the owner's own X developer subscription lapsing — a billing matter
+# at X that no retry can fix, so it pauses.
+#
+# A 401 does NOT belong here, though it looks like it should. The SDK refreshes
+# only when its own `expires_at` says the token is stale, so X rotating a refresh
+# token out from under us yields a 401 while our bookkeeping still reads fresh —
+# transient, and self-healing on the next refresh. Observed 2026-07-25: a post
+# that 401'd at 23:00 posted cleanly an hour later with no human involved.
+# Pausing on 401 would have stranded it awaiting a Resume it never needed.
+_X_NON_TRANSIENT = frozenset({402})
 
 
 # -- time / recurrence helpers ----------------------------------------------
@@ -173,6 +185,26 @@ async def _owner_voice(owner: str) -> tuple[str, list[str]]:
         return "", []
 
 
+def _fallback_reason(exc: Exception, budget_s: float) -> str:
+    """Why a dynamic block fell back, in a form worth reading in the audit ring.
+
+    The distinction that matters is whether WE cut it short (our budget) or the
+    provider failed — the first is a tuning question we can answer by looking at
+    the recorded budget, the second is an outage. Both used to read as an
+    identical silence."""
+    name = type(exc).__name__
+    if "Timeout" in name or isinstance(exc, TimeoutError):
+        return f"resolve_timed_out_at_{int(budget_s)}s"
+    text = str(exc).lower()
+    if "credit balance" in text or "quota" in text:
+        return "operator_llm_unfunded"
+    if "401" in text or "authentication" in text:
+        return "operator_llm_auth"
+    if "429" in text or "rate" in text:
+        return "upstream_rate_limited"
+    return f"resolve_failed:{name}"
+
+
 def _resolve_timeout(requested: Any, budget_s: float) -> float:
     """The budget a scheduler-fired resolve actually gets.
 
@@ -194,7 +226,7 @@ async def _resolve_post_text(
     bans: list[str],
     api_key: str | None,
     budget_s: float = RESOLVE_BUDGET_S,
-) -> tuple[str | None, list[dict[str, Any]] | None, str | None]:
+) -> tuple[str | None, list[dict[str, Any]] | None, str | None, list[dict[str, Any]]]:
     """Compose the final tweet text by resolving each dynamic block at fire time.
 
     Returns ``(text, rendered_blocks, None)`` on success, where ``rendered_blocks``
@@ -235,41 +267,60 @@ async def _resolve_post_text(
                 parts.append(rendered[j])
         return "\n\n".join(p for p in parts if p).strip()
 
-    async def _resolve_one(i: int) -> str | None:
-        """Resolved text for dynamic block i; its fallback on failure; None when
-        it failed AND has no fallback (caller then holds the post)."""
+    async def _resolve_one(i: int) -> tuple[str | None, dict[str, Any] | None]:
+        """``(text, fallback_note)`` for dynamic block i.
+
+        ``text`` is the resolved text, or the block's fallback when the resolve
+        didn't produce anything, or None when it failed AND has no fallback (the
+        caller then holds the post rather than posting a gap).
+
+        ``fallback_note`` is non-None exactly when the author's prompt did NOT
+        make it into the tweet. Substituting fallback text is a real degradation
+        of what the author asked for, and it used to leave no trace anywhere but
+        a log line — the post was reported as cleanly `posted` while carrying
+        different words than intended. The note is what makes that visible."""
         b = blocks[i]
         prompt = str(b.get("text", "")).strip()
         fallback = str(b.get("fallback", "")).strip()
-        resolved = ""
-        if api_key and prompt:
+        budget = _resolve_timeout(b.get("runtimeLimit"), budget_s)
+        resolved, why = "", None
+        if not prompt:
+            return (fallback or None), None  # nothing was asked for; not a degradation
+        if not api_key:
+            why = "no_operator_llm_key"
+        else:
             try:
                 resolved = await resolve_block(
                     api_key=api_key, prompt=prompt, context=_context_for(i),
                     voice=voice, bans=bans, allowed_domains=_domains(b),
                     max_fetches=clamp_fetches(b.get("maxFetches", 5)),
                     # Author's budget, clamped to what's left of the tick.
-                    timeout_seconds=_resolve_timeout(b.get("runtimeLimit"), budget_s),
+                    timeout_seconds=budget,
                 )
-            except Exception as exc:  # noqa: BLE001 — fall back, report via reason
+                if not resolved:
+                    why = "empty_resolution"
+            except Exception as exc:  # noqa: BLE001 — fall back, report the reason
                 logger.warning("scheduler: dynamic resolve failed for %s: %s", owner, exc)
-                resolved = ""
-        if not resolved:
-            return fallback or None
-        return resolved
+                why = _fallback_reason(exc, budget)
+        if resolved:
+            return resolved, None
+        return (fallback or None), {"block": i, "reason": why, "budget_s": round(budget, 1)}
 
     dynamic_idx = [
         i for i, b in enumerate(blocks) if isinstance(b, dict) and b.get("dynamic")
     ]
     results = await asyncio.gather(*(_resolve_one(i) for i in dynamic_idx))
-    for i, val in zip(dynamic_idx, results):
+    fallbacks: list[dict[str, Any]] = []
+    for i, (val, note) in zip(dynamic_idx, results):
         if val is None:
-            return None, None, "dynamic_resolve_failed"
+            return None, None, "dynamic_resolve_failed", fallbacks
+        if note is not None:
+            fallbacks.append(note)
         rendered[i] = val
 
     text = "\n\n".join(p for p in rendered if p).strip()
     if not text:
-        return None, None, "empty_after_resolve"
+        return None, None, "empty_after_resolve", fallbacks
 
     # Static snapshot: dynamic blocks become plain text of what actually went out.
     rendered_blocks: list[dict[str, Any]] = []
@@ -280,7 +331,7 @@ async def _resolve_post_text(
             rendered_blocks.append(b)
         else:
             rendered_blocks.append({"text": str(b), "flags": []})
-    return text, rendered_blocks, None
+    return text, rendered_blocks, None, fallbacks
 
 
 # -- main loop ---------------------------------------------------------------
@@ -374,6 +425,7 @@ async def process_due_posts(runtime: Any) -> dict[str, Any]:
         #     resolve fare) — we never post a gap. The resolve fare is also
         #     refunded if anything downstream holds the post (see refunds below).
         resolve_charged = False
+        fallbacks: list[dict[str, Any]] = []
         if dynamic:
             rcost, rdenial = await runtime._resolve_pricing(
                 resolve_id, "resolve_dynamic_block", "heavy", {},
@@ -393,7 +445,7 @@ async def process_due_posts(runtime: Any) -> dict[str, Any]:
             except Exception:  # noqa: BLE001 — no key → blocks fall back
                 key = None
             voice, bans = await _owner_voice(owner)
-            rendered, rendered_blocks, reason = await _resolve_post_text(
+            rendered, rendered_blocks, reason, fallbacks = await _resolve_post_text(
                 owner, list(doc.get("blocks") or []) if doc else [], voice, bans, key,
                 budget_s=deadline - time.monotonic(),
             )
@@ -428,11 +480,10 @@ async def process_due_posts(runtime: Any) -> dict[str, Any]:
                 await runtime.rollback_debit(resolve_id, owner)
             reason = f"x_api_error: {exc}"
             if getattr(exc, "status_code", None) in _X_NON_TRANSIENT:
-                # Nothing the next tick can resolve: the owner's X subscription
-                # lapsed (402) or their authorization is dead (401/403). Pause so
+                # Non-transient: the owner's X subscription/tier lapsed. Pause so
                 # we stop re-firing (and re-billing+refunding) every tick; the FE
-                # surfaces the situation and the owner resumes after fixing it at
-                # X. — subscription / authorization reason
+                # surfaces the situation and the owner resumes after renewing. —
+                # subscription reason
                 await _pause(errors, pid, owner, reason)
             else:
                 await _hold(errors, pid, owner, reason)
@@ -471,9 +522,13 @@ async def process_due_posts(runtime: Any) -> dict[str, Any]:
             # One-shot: the row itself becomes the Sent record.
             await posts_db.mark_sent(pid, sent_at.isoformat(), "sent", None, tweet_url)
 
+        # `fallbacks` rides along on a SUCCESSFUL post on purpose: the tweet went
+        # out, but not with the words the author asked for. Without it the run
+        # reads as a clean success and the degradation is invisible.
         posted.append({"post_id": pid, "owner": owner, "next_status": next_status,
                        "tweet_id": (result or {}).get("tweet_id") if isinstance(result, dict) else None,
-                       "tweet_url": tweet_url})
+                       "tweet_url": tweet_url,
+                       **({"fallbacks": fallbacks} if fallbacks else {})})
 
     summary = {"processed": len(due), "posted": posted,
                "skipped": skipped, "errors": errors, "deferred": deferred}
