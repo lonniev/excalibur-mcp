@@ -11,6 +11,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — "Held" was a status that doesn't exist, and the count was of the wrong thing
+
+The health pill read `2 Held` while only one post was in flight, and the Posts
+page has no Held tab to go looking in — because a held post isn't held, it's
+still **Scheduled**. "Held" is the outcome of one publication attempt, not a
+state a post occupies.
+
+- The badge counted publication *rows*. One post failing on every tick writes a
+  row each time, so a single struggling post read as two. It now counts distinct
+  posts, newest outcome first, so a post that has since published stops counting.
+- The badge says `N not posted` rather than inventing a seventh status, and its
+  tooltip names each post and says where it actually lives — "still Scheduled —
+  retries next run", or "now Paused".
+- The Scheduler tab's publication rows never showed *which* post. They now carry
+  the short id as a link straight to it.
+
 ### Fixed — the X write path had a 5-second budget and no second chance
 
 `51110ca3` held three ticks running with `ConnectTimeout`, each time after

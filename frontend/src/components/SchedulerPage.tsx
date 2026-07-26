@@ -6,6 +6,7 @@
 // current proofed npub is allowed to see.
 
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { getSchedulerStatus, getSchedulerLog, type SchedulerStatus, type SchedulerRun } from "../lib/mcp";
 import SchedulerPendingCard from "./SchedulerPendingCard";
 
@@ -63,7 +64,23 @@ function RunCells({ summary: s }: { summary: SchedulerRun["summary"] }) {
           : "text-amber-600 dark:text-amber-400";
     return (
       <>
-        <td className={`${cell} ${tone}`}>{s.outcome ?? "published"}</td>
+        <td className={`${cell} ${tone}`}>
+          {s.outcome ?? "published"}
+          {/* Which post. Without it the log tells you something didn't publish
+              and leaves you to find it — and "held" is an attempt outcome, not
+              a status, so there is no Held tab to look in. The post is still
+              Scheduled (or Paused); this goes straight to it. */}
+          {s.post_id && (
+            <Link
+              to={`/post/${s.post_id}`}
+              onClick={(e) => e.stopPropagation()}
+              className="ml-1.5 font-mono text-[11px] text-stone-500 underline decoration-dotted underline-offset-2 hover:text-stone-800 dark:text-zinc-400 dark:hover:text-zinc-100"
+              title="Open this post"
+            >
+              {s.post_id.slice(0, 8)}
+            </Link>
+          )}
+        </td>
         <td className={cell}>
           {s.reason && <span className="text-stone-600 dark:text-zinc-300">{s.reason}</span>}
           {fell.length > 0 && (

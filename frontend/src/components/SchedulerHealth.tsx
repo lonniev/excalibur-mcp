@@ -39,7 +39,10 @@ function relative(fromIso: string): string {
 export default function SchedulerHealth() {
   const [health, setHealth] = useState<Health>("loading");
   const [lastRun, setLastRun] = useState<string | null>(null);
-  const [held, setHeld] = useState(0);
+  // Posts that didn't go out, newest outcome per post. NOT a count of rows: one
+  // post failing on every tick writes a row each time, and reporting "2" for a
+  // single struggling post sends you hunting for a second one.
+  const [stuck, setStuck] = useState<{ id: string; reason: string; paused: boolean }[]>([]);
   const timer = useRef<number | null>(null);
 
   const refresh = useCallback(async () => {
@@ -54,20 +57,30 @@ export default function SchedulerHealth() {
       if (!newest) {
         setHealth("quiet");
         setLastRun(null);
-        setHeld(0);
+        setStuck([]);
         return;
       }
       setLastRun(newest.run_at);
       const s = newest.summary ?? {};
       // Publications are per-post rows written by the publisher that did the
-      // work, and are owner-scoped before they reach us — so counting the recent
-      // window gives the reader their OWN posts that didn't go out.
-      setHeld(
-        runs.filter(
-          (r) => r.summary?.kind === "publication"
-            && (r.summary.outcome === "held" || r.summary.outcome === "paused"),
-        ).length,
-      );
+      // work, owner-scoped before they reach us. Runs arrive newest-first, so
+      // the first row seen for a post is its latest word: a post that has since
+      // published stops counting, and one that keeps failing counts once.
+      const settled = new Set<string>();
+      const unposted: { id: string; reason: string; paused: boolean }[] = [];
+      for (const r of runs) {
+        const s = r.summary;
+        if (s?.kind !== "publication" || !s.post_id || settled.has(s.post_id)) continue;
+        settled.add(s.post_id); // first row wins — a post's later failures don't re-count it
+        if (s.outcome === "held" || s.outcome === "paused") {
+          unposted.push({
+            id: s.post_id.slice(0, 8),
+            reason: s.reason ?? "unreported",
+            paused: s.outcome === "paused",
+          });
+        }
+      }
+      setStuck(unposted);
       const age = Date.now() - new Date(newest.run_at).getTime();
       if (isNaN(age)) {
         setHealth("unknown");
@@ -136,13 +149,21 @@ export default function SchedulerHealth() {
     stalled: "Scheduler stalled",
     unknown: "Scheduler status unknown",
   }[health];
+  // Name the posts and say where each one LIVES. "Held" is an attempt outcome,
+  // not a status — a held post is still Scheduled — so pointing at a status
+  // that doesn't exist is what sends someone hunting through the Posts page.
+  const stuckNote = stuck.length
+    ? ` · didn't post: ${stuck
+        .map((p) => `${p.id} (${p.reason}${p.paused ? ", now Paused" : ", still Scheduled — retries next run"})`)
+        .join("; ")}`
+    : "";
   const title =
     health === "unknown"
       ? "Couldn't read scheduler status — your sign-in proof may have lapsed. Click to retry."
       : health === "cutoff"
         ? `A scheduler run started ${relative(lastRun ?? "")} and never finished — it was cut short before it could post. The next run picks the work back up.`
         : lastRun
-          ? `Scheduler last ran ${relative(lastRun)}${held ? ` · ${held} of your posts were held that tick` : ""}. Click to refresh.`
+          ? `Scheduler last ran ${relative(lastRun)}${stuckNote}. Click to refresh.`
           : "The scheduler hasn't logged a run yet — it checks for due posts about every half hour.";
 
   return (
@@ -153,9 +174,9 @@ export default function SchedulerHealth() {
     >
       <span className={`inline-block h-2 w-2 rounded-full ${dot} ${pulse ? "animate-pulse" : ""}`} />
       <span className="hidden sm:inline">{label}</span>
-      {held > 0 && (
+      {stuck.length > 0 && (
         <span className="rounded-full bg-rose-500/15 px-1.5 text-[10px] text-rose-600 dark:text-rose-400">
-          {held} held
+          {stuck.length} not posted
         </span>
       )}
     </button>
