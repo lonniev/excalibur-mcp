@@ -1060,18 +1060,31 @@ export interface SchedulerOutcome {
   // with the words that were asked for. `budget_s` is the ceiling that cut it.
   fallbacks?: { block?: number; reason?: string; budget_s?: number }[];
 }
+// The audit ring carries two kinds of row. A `tick` is the scheduler finding due
+// posts and launching a publisher for each — it never publishes anything itself.
+// A `publication` is one publisher's outcome for one post, written by the
+// publisher when it finishes. Owner-scoped: a patron sees every tick's heartbeat
+// with the lists narrowed to their own posts, and only their own publications.
 export interface SchedulerRun {
   run_at: string;
   summary: {
-    processed?: number;
-    posted?: SchedulerOutcome[];
-    skipped?: SchedulerOutcome[];
-    errors?: SchedulerOutcome[];
-    // Due posts the tick ran out of budget for; the next tick picks them up.
-    deferred?: SchedulerOutcome[];
+    kind?: "tick" | "publication";
     // Present only while a run is open — "started" until the tick closes it.
     // A row still wearing it long after run_at is a tick that was cut off.
     status?: string;
+
+    // --- tick rows ---
+    processed?: number;
+    launched?: SchedulerOutcome[];
+    contended?: SchedulerOutcome[];
+
+    // --- publication rows ---
+    post_id?: string;
+    owner?: string;
+    outcome?: "posted" | "held" | "paused" | "gone";
+    reason?: string;
+    tweet_url?: string | null;
+    fallbacks?: { block?: number; reason?: string; budget_s?: number }[];
   };
 }
 interface SchedulerLogResult {

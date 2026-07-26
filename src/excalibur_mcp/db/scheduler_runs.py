@@ -20,9 +20,10 @@ from excalibur_mcp.db.neon import execute, fetch, fetchrow
 
 logger = logging.getLogger(__name__)
 
-# How many recent runs to retain. At one tick / 30 min this is ~25h of history —
-# plenty to diagnose "why isn't this posting?" without unbounded growth.
-_KEEP = 50
+# How many recent rows to retain. The ring holds both tick heartbeats (one per
+# 30 min) and publication outcomes (one per post published), so a busy day of
+# posting would otherwise crowd the heartbeats out of view.
+_KEEP = 200
 
 # The summary a run carries between ``begin_run`` and ``complete_run``. A row
 # still wearing it is a tick that started and never came back.
@@ -97,37 +98,43 @@ async def list_runs(limit: int = 25) -> list[dict[str, Any]]:
     )
 
 
+def _owned(items: Any, npub: str) -> list[dict[str, Any]]:
+    return [e for e in (items or []) if isinstance(e, dict) and e.get("owner") == npub]
+
+
 def scope_runs(
     runs: list[dict[str, Any]], npub: str, operator_npub: str
 ) -> list[dict[str, Any]]:
     """Owner-scope ring rows for the reader.
 
-    The operator sees every run in full. Any other reader sees the per-tick
-    heartbeat (``run_at`` — proof the Worker ran) plus only the per-post entries
-    (posted/skipped/errors) for THEIR OWN posts, keyed by the ``owner`` npub the
-    scheduler records on each entry. ``processed`` is recomputed to the reader's
-    OWN entry count — never the global total — so no cross-patron activity (not
-    even an aggregate count) leaks between patrons.
+    The ring carries two kinds of row. A **tick** is the scheduler dispatching:
+    it names every post it launched, across all owners. A **publication** is one
+    publisher's outcome for one post, and belongs to exactly one owner.
+
+    The operator sees everything. Any other reader sees every tick's heartbeat
+    (``run_at`` — proof the cron is alive) with its per-post lists narrowed to
+    THEIR OWN posts and ``processed`` recomputed to that count, plus only the
+    publications for their own posts. No cross-patron activity leaks — not even
+    an aggregate count.
     """
     if npub and npub == operator_npub:
         return runs
 
-    def _mine(items: Any) -> list[dict[str, Any]]:
-        return [e for e in (items or []) if isinstance(e, dict) and e.get("owner") == npub]
-
     scoped: list[dict[str, Any]] = []
     for r in runs:
         s = r.get("summary") or {}
-        posted = _mine(s.get("posted"))
-        skipped = _mine(s.get("skipped"))
-        errors = _mine(s.get("errors"))
-        deferred = _mine(s.get("deferred"))
+        if s.get("kind") == "publication":
+            # One post, one owner: show it whole or not at all.
+            if s.get("owner") == npub:
+                scoped.append(r)
+            continue
+        launched = _owned(s.get("launched"), npub)
+        contended = _owned(s.get("contended"), npub)
         summary: dict[str, Any] = {
-            "processed": len(posted) + len(skipped) + len(errors) + len(deferred),
-            "posted": posted,
-            "skipped": skipped,
-            "errors": errors,
-            "deferred": deferred,
+            "kind": "tick",
+            "processed": len(launched) + len(contended),
+            "launched": launched,
+            "contended": contended,
         }
         # A tick that never came back carries no per-post entries to scope, but
         # every reader should still see that it started and was cut off — that's

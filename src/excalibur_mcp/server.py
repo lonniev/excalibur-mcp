@@ -1191,6 +1191,22 @@ async def _resolve_dynamic_runner(
 runtime.register_job_runner("resolve_dynamic_block", _resolve_dynamic_runner)
 
 
+async def _publish_post_runner(post_id: str = "", **_: Any) -> dict:
+    """Carry one due post to X, as a background job.
+
+    The scheduler tick launches one of these per due post and returns; this is
+    where the minutes-long work actually happens, off the request clock. Its
+    value is its side effects — the tweet, and the post row it updates — so
+    nobody redeems the claim check it was handed.
+    """
+    from excalibur_mcp.publisher import publish_one
+
+    return await publish_one(runtime, post_id)
+
+
+runtime.register_job_runner("publish_post", _publish_post_runner)
+
+
 async def _resolve_build_closure(
     npub: str = "",
     prompt: str = "",
@@ -1273,13 +1289,18 @@ async def process_scheduled_posts(
     npub: Annotated[str, Field(description="The OPERATOR's npub (npub1...); this tool is operator-only.")] = "",
     dpop_token: str = "",
 ) -> dict:
-    """Publish every due scheduled post (operator-only).
+    """Launch a publisher for every due post (operator-only).
 
-    Selects ``scheduled`` posts whose ``publish_at`` has arrived, posts each on
-    behalf of its owner (billing the owner for ``post_tweet``), stamps
-    ``last_sent_at``, and reschedules from ``recurrence`` or retires the post
-    past ``cease_at``. Requires the operator's npub proof; the trigger itself is
-    free. Returns ``{processed, posted, skipped, errors}``.
+    Selects ``scheduled`` posts whose ``publish_at`` has arrived, claims each
+    atomically, and starts one background publisher per post. It does NOT
+    publish: composing content, billing the owner, posting to X and recording the
+    outcome all belong to the publisher, which runs on the async job queue and so
+    may take the minutes a dynamic block needs. This call returns as soon as the
+    work is dispatched — expect it to be fast even when the publishing itself is
+    slow, and read per-post outcomes from ``get_scheduler_log`` or the post rows.
+
+    Requires the operator's npub proof; the trigger itself is free. Returns
+    ``{kind: "tick", processed, launched, contended}``.
     """
     from excalibur_mcp.scheduler import process_due_posts
 

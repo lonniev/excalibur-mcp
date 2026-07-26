@@ -11,6 +11,43 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — the scheduler dispatches; a publisher publishes
+
+Three clocks had been conflated into one: the cron's 30-minute periodicity, the
+~128s lifetime of the HTTP request the Worker makes, and a dynamic block's own
+runtime budget of up to 900s. The third was nested inside the second, because
+`scheduler.py` awaited `resolve_block` **inline** — the one place in the service
+that did long LLM work inside a request. The interactive path never did this: it
+calls `runtime.start_async_job(...)` and hands back a claim check. Every symptom
+of the last two days descends from that single inline `await`: the 524 stall, the
+budget clamps invented to survive it, and a tweet published on fallback text.
+
+The fix is to consume the capability that already existed rather than inline a
+synchronous copy of it.
+
+- **`scheduler.py` finds due posts and launches, and does nothing else.** Claim
+  atomically, `start_async_job("publish_post", …)` per post, record what was
+  dispatched, return. A tick is now seconds regardless of how slow publishing is.
+  It has no billing surface and never loads the operator's Anthropic key — a test
+  asserts both by giving it a runtime that lacks those attributes entirely.
+- **`publisher.py` (new) owns one post's journey to X** — resolve, bill, post,
+  write its own completion status. Registered as the `publish_post` job kind, so
+  it runs on the wheel's queue. Nothing waits on it and nothing supervises it: a
+  publisher that dies with its container leaves the post claimed, and the
+  existing 20-minute claim lease hands it back to a later tick. That lease was
+  always sized for this (*"must exceed the longest possible resolve, 900s"*) —
+  the request ceiling is what had made it unreachable.
+- **The author's `runtimeLimit` is honored again, up to 900s.** `TICK_BUDGET_S`,
+  `RESOLVE_BUDGET_S` and `MIN_POST_BUDGET_S` are **deleted**, not retuned — they
+  only ever existed to squeeze an LLM call into a request it didn't belong in.
+- **A recurrence that fires faster than its content can be built** needs no
+  special handling: a post still `sending` inside its lease isn't due, so it
+  serializes instead of piling up.
+- The audit ring now carries two row kinds — `tick` (dispatch) and `publication`
+  (one post's outcome) — each owner-scoped, with the Scheduler tab, health pill
+  and debug log reading both. The ring keeps 200 rows so publications can't crowd
+  out the heartbeats.
+
 ### Reverted — an X 401 is transient after all, and must not pause
 
 The previous entry's premise was wrong. A 401 on `post_tweet` is **not** a dead

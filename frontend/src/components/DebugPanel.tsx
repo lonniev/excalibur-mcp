@@ -33,32 +33,47 @@ const short = (id?: string) => (id ? id.slice(0, 8) : "?");
 const outcome = (e: SchedulerOutcome, verb: string) =>
   `  ↳ ${short(e.post_id)} ${verb}${e.reason ? `:${e.reason}` : ""}${e.tweet_url ? ` ${e.tweet_url}` : ""}`;
 
-// Render one scheduler tick into the log. debugPush prepends, so we push the
-// detail lines first and the header last — the header lands above its details,
-// and the newest run (processed last by the caller) lands at the top.
+// Render one audit-ring row into the log. The ring carries scheduler TICKS
+// (dispatch: what was launched) and PUBLICATIONS (one post's outcome, written by
+// the publisher that did the work). debugPush prepends, so detail lines go first
+// and the header last — the header lands above its details.
 function pushRun(run: SchedulerRun): void {
   const s = run.summary ?? {};
-  const posted = s.posted ?? [];
-  const skipped = s.skipped ?? [];
-  const errors = s.errors ?? [];
-  for (const e of errors) debugPush("error", outcome(e, "err"));
-  for (const e of skipped) debugPush("error", outcome(e, "skip"));
-  for (const e of posted) debugPush("result", `  ↳ ${short(e.post_id)} → ${e.next_status ?? "sent"}${e.tweet_url ? ` ${e.tweet_url}` : ""}`);
-  const bad = skipped.length + errors.length > 0;
   let when = run.run_at;
   try {
     when = new Date(run.run_at).toLocaleTimeString();
   } catch {
     /* keep raw */
   }
+
+  if (s.kind === "publication") {
+    const fell = s.fallbacks ?? [];
+    for (const f of fell) {
+      debugPush("error", `  ↳ block ${f.block} fell back: ${f.reason}${f.budget_s ? ` (budget ${f.budget_s}s)` : ""}`);
+    }
+    const bad = s.outcome === "held" || s.outcome === "paused";
+    const detail = [s.reason, s.tweet_url].filter(Boolean).join(" ");
+    debugPush(
+      bad ? "error" : "result",
+      `publish ${when} · ${short(s.post_id)} ${s.outcome ?? "?"}${detail ? ` · ${detail}` : ""}`,
+    );
+    return;
+  }
+
+  const launched = s.launched ?? [];
+  const contended = s.contended ?? [];
+  for (const e of contended) debugPush("error", outcome(e, "skip"));
+  for (const e of launched) debugPush("result", `  ↳ ${short(e.post_id)} launched`);
   const processed = s.processed ?? 0;
-  // A processed=0 tick is the Worker's heartbeat — say so plainly, otherwise
-  // "posted=0 skipped=0" reads like a failure when it just means nothing was due.
+  // A processed=0 tick is the Worker's heartbeat — say so plainly, otherwise a
+  // row of zeroes reads like a failure when it just means nothing was due.
   const tally =
-    processed === 0
-      ? "alive · nothing due"
-      : `processed=${processed} posted=${posted.length} skipped=${skipped.length} errors=${errors.length}`;
-  debugPush(bad ? "error" : "result", `scheduler ${when} · ${tally}`);
+    s.status === "started"
+      ? "started, never finished"
+      : processed === 0
+        ? "alive · nothing due"
+        : `due=${processed} launched=${launched.length}`;
+  debugPush(contended.length || s.status === "started" ? "error" : "result", `scheduler ${when} · ${tally}`);
 }
 
 export default function DebugPanel() {

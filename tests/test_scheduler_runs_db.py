@@ -61,45 +61,6 @@ async def test_list_runs_floor_limit():
     assert f.await_args.args[1] == 1  # clamped to min
 
 
-OP = "npub1operator"
-ALICE = "npub1alice"
-BOB = "npub1bob"
-
-
-def _run():
-    return {
-        "run_at": "t",
-        "summary": {
-            "processed": 2,
-            "posted": [{"post_id": "a1", "owner": ALICE, "tweet_url": "u"}],
-            "skipped": [{"post_id": "b1", "owner": BOB, "reason": "insufficient_balance"}],
-            "errors": [],
-        },
-    }
-
-
-def test_scope_runs_operator_sees_everything():
-    runs = [_run()]
-    assert sr.scope_runs(runs, OP, OP) is runs  # full, unfiltered
-
-
-def test_scope_runs_owner_sees_only_their_entries_and_own_count():
-    scoped = sr.scope_runs([_run()], ALICE, OP)
-    s = scoped[0]["summary"]
-    assert [e["post_id"] for e in s["posted"]] == ["a1"]  # alice's own
-    assert s["skipped"] == []  # bob's skip is hidden from alice
-    assert s["processed"] == 1  # alice's OWN count, NOT the global 2 (no leak)
-    assert scoped[0]["run_at"] == "t"  # heartbeat (proof it ran) still present
-
-
-def test_scope_runs_owner_with_no_posts_sees_heartbeat_but_no_global_count():
-    scoped = sr.scope_runs([_run()], "npub1carol", OP)
-    s = scoped[0]["summary"]
-    assert scoped[0]["run_at"] == "t"  # worker ran (heartbeat)
-    # no cross-patron leak: not the global 2, and none of bob's/alice's entries
-    assert s["processed"] == 0 and s["posted"] == [] and s["skipped"] == [] and s["errors"] == []
-
-
 # -- open/close pair ---------------------------------------------------------
 #
 # A tick whose request is cut off at the edge writes nothing at the end, so the
@@ -135,7 +96,7 @@ async def test_begin_run_survives_a_dead_audit_store():
 
 @pytest.mark.asyncio
 async def test_complete_run_updates_the_opened_row():
-    summary = {"processed": 1, "posted": [], "skipped": [], "errors": [], "deferred": []}
+    summary = {"kind": "tick", "processed": 1, "launched": [{"post_id": "p1"}], "contended": []}
     with patch.object(sr, "execute", AsyncMock(return_value={})) as ex:
         await sr.complete_run("abc-123", summary)
     q, args = ex.await_args.args[0], ex.await_args.args[1:]
@@ -147,32 +108,78 @@ async def test_complete_run_updates_the_opened_row():
 @pytest.mark.asyncio
 async def test_complete_run_appends_when_the_open_failed():
     """No row to close → the outcome is still recorded, just as a fresh append."""
-    summary = {"processed": 0, "posted": [], "skipped": [], "errors": [], "deferred": []}
+    summary = {"kind": "publication", "post_id": "p1", "outcome": "posted"}
     with patch.object(sr, "execute", AsyncMock(return_value={})) as ex:
         await sr.complete_run(None, summary)
     assert "INSERT INTO scheduler_runs" in ex.await_args_list[0].args[0]
 
 
-def test_scope_runs_carries_the_started_marker_to_every_reader():
-    """A cut-off tick has no per-post entries to scope, but every reader must
-    still see it was tried — otherwise it reads as 'the cron never ran'."""
-    runs = [{"run_at": "t", "summary": dict(sr.STARTED)}]
+
+
+# -- owner scoping over two row kinds ----------------------------------------
+#
+# The ring carries TICKS (the scheduler dispatching, across all owners) and
+# PUBLICATIONS (one publisher's outcome for one post, belonging to one owner).
+
+OP = "npub1operator"
+ALICE = "npub1alice"
+BOB = "npub1bob"
+
+
+def _tick():
+    return {"run_at": "t", "summary": {
+        "kind": "tick", "processed": 2,
+        "launched": [{"post_id": "a1", "owner": ALICE, "claim_check": "cc-a"},
+                     {"post_id": "b1", "owner": BOB, "claim_check": "cc-b"}],
+        "contended": [],
+    }}
+
+
+def _publication(owner, outcome="posted", **extra):
+    return {"run_at": "t", "summary": {
+        "kind": "publication", "post_id": "x1", "owner": owner,
+        "outcome": outcome, **extra,
+    }}
+
+
+def test_operator_sees_everything_untouched():
+    runs = [_tick(), _publication(ALICE)]
+    assert sr.scope_runs(runs, OP, OP) is runs
+
+
+def test_owner_sees_the_tick_heartbeat_with_only_their_launches():
+    scoped = sr.scope_runs([_tick()], ALICE, OP)
+    s = scoped[0]["summary"]
+    assert scoped[0]["run_at"] == "t"  # heartbeat survives — proof the cron ran
+    assert [e["post_id"] for e in s["launched"]] == ["a1"]  # bob's is hidden
+    assert s["processed"] == 1  # alice's OWN count, never the global 2
+
+
+def test_third_party_sees_the_heartbeat_but_no_counts_at_all():
+    s = sr.scope_runs([_tick()], "npub1carol", OP)[0]["summary"]
+    assert s["processed"] == 0 and s["launched"] == [] and s["contended"] == []
+
+
+def test_a_publication_reaches_only_its_own_owner():
+    runs = [_publication(ALICE, tweet_url="u"), _publication(BOB)]
     scoped = sr.scope_runs(runs, ALICE, OP)
+    assert len(scoped) == 1
+    assert scoped[0]["summary"]["owner"] == ALICE
+    # bob's publication is dropped entirely — not even an empty placeholder
+    assert all(r["summary"]["owner"] == ALICE for r in scoped)
+
+
+def test_owners_own_publication_keeps_its_detail():
+    """Held reasons and fallback notes are the whole point of the row — scoping
+    must not strip them from the person they belong to."""
+    runs = [_publication(ALICE, outcome="held", reason="insufficient_balance")]
+    s = sr.scope_runs(runs, ALICE, OP)[0]["summary"]
+    assert s["outcome"] == "held" and s["reason"] == "insufficient_balance"
+
+
+def test_scope_runs_carries_the_started_marker_to_every_reader():
+    """A cut-off tick has no entries to scope, but every reader must still see
+    it was tried — otherwise it reads as 'the cron never ran'."""
+    scoped = sr.scope_runs([{"run_at": "t", "summary": dict(sr.STARTED)}], ALICE, OP)
     assert scoped[0]["summary"]["status"] == "started"
     assert scoped[0]["summary"]["processed"] == 0
-
-
-def test_scope_runs_counts_deferred_as_the_readers_own_work():
-    runs = [{
-        "run_at": "t",
-        "summary": {
-            "processed": 2, "posted": [], "skipped": [], "errors": [],
-            "deferred": [
-                {"post_id": "a1", "owner": ALICE, "reason": "tick_budget_exhausted"},
-                {"post_id": "b1", "owner": BOB, "reason": "tick_budget_exhausted"},
-            ],
-        },
-    }]
-    s = sr.scope_runs(runs, ALICE, OP)[0]["summary"]
-    assert [d["post_id"] for d in s["deferred"]] == ["a1"]  # bob's is hidden
-    assert s["processed"] == 1  # alice's own held post, not the global 2
