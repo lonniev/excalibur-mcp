@@ -11,6 +11,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — the heartbeat forecasts instead of just reassuring
+
+`alive · nothing due` said the cron was breathing and nothing else. It now says
+what's coming: `alive · nothing due · next of 3 in 47 min`, or
+`nothing scheduled ahead` when the queue has emptied — which is itself worth
+seeing, since an empty queue and a broken one used to read the same.
+
+Grouped by owner in the ring rather than totalled, because the log is
+owner-scoped: a patron is told about their own queue and never the size or
+timing of anyone else's. The tick's own totals span every owner and stay with
+the operator. Best-effort — a forecast that can't be read never fails a tick.
+
 ### Added — the heartbeat says which build is beating
 
 `scheduler … · alive · nothing due` is the line you see most and learn to skim

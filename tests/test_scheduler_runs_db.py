@@ -183,3 +183,38 @@ def test_scope_runs_carries_the_started_marker_to_every_reader():
     scoped = sr.scope_runs([{"run_at": "t", "summary": dict(sr.STARTED)}], ALICE, OP)
     assert scoped[0]["summary"]["status"] == "started"
     assert scoped[0]["summary"]["processed"] == 0
+
+
+def _tick_with_forecast():
+    return {"run_at": "t", "summary": {
+        "kind": "tick", "processed": 0, "launched": [], "contended": [],
+        # The tick's own totals span every owner.
+        "upcoming": {"count": 5, "next_in_minutes": 12, "by_owner": {
+            ALICE: {"count": 2, "next_in_minutes": 47},
+            BOB: {"count": 3, "next_in_minutes": 12},
+        }},
+    }}
+
+
+def test_forecast_is_narrowed_to_the_readers_own_queue():
+    s = sr.scope_runs([_tick_with_forecast()], ALICE, OP)[0]["summary"]
+    assert s["upcoming"] == {"count": 2, "next_in_minutes": 47}  # hers, not the total
+
+
+def test_forecast_never_leaks_the_global_total_or_another_owners_timing():
+    """The tick knows 5 posts are coming and the soonest is 12 min out — both
+    facts describe other patrons, so neither may reach this reader."""
+    s = sr.scope_runs([_tick_with_forecast()], ALICE, OP)[0]["summary"]
+    assert s["upcoming"]["count"] != 5
+    assert s["upcoming"].get("next_in_minutes") != 12
+    assert "by_owner" not in s["upcoming"]  # the whole map must not travel
+
+
+def test_reader_with_nothing_queued_is_told_so():
+    s = sr.scope_runs([_tick_with_forecast()], "npub1carol", OP)[0]["summary"]
+    assert s["upcoming"] == {"count": 0}
+
+
+def test_operator_keeps_the_whole_forecast():
+    runs = [_tick_with_forecast()]
+    assert sr.scope_runs(runs, OP, OP)[0]["summary"]["upcoming"]["count"] == 5

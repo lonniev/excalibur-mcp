@@ -140,6 +140,11 @@ def scope_runs(
         # heartbeat evidence instead of reassurance — every reader gets it.
         if s.get("who"):
             summary["who"] = s["who"]
+        # The forecast, narrowed to this reader's own queue. The tick's totals
+        # describe every owner at once, so handing them over would leak exactly
+        # the aggregate this function exists to withhold.
+        mine = ((s.get("upcoming") or {}).get("by_owner") or {}).get(npub)
+        summary["upcoming"] = dict(mine) if mine else {"count": 0}
         # A tick that never came back carries no per-post entries to scope, but
         # every reader should still see that it started and was cut off — that's
         # the difference between "the Worker is wedged" and "the cron is dead".

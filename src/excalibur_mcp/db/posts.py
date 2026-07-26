@@ -370,6 +370,28 @@ async def claim_due_post(post_id: str) -> dict[str, Any] | None:
     )
 
 
+async def upcoming_by_owner(now_iso: str) -> list[dict[str, Any]]:
+    """What the scheduler expects next, grouped by owner:
+    ``[{npub, count, next_at}]`` over the posts still ahead of it.
+
+    A tick that reports only "nothing due" is a line you learn to skim. How many
+    posts are waiting and when the soonest lands turns the same heartbeat into a
+    forecast — and makes a queue that has quietly emptied visible at a glance.
+
+    Grouped rather than totalled because the log is owner-scoped: a patron may
+    be told about their own queue, never the size of anyone else's.
+    """
+    return await fetch(
+        """
+        SELECT npub, COUNT(*) AS count, MIN(publish_at) AS next_at FROM posts
+        WHERE status = 'scheduled' AND publish_at IS NOT NULL
+          AND publish_at > $1::timestamptz
+        GROUP BY npub
+        """,
+        now_iso,
+    )
+
+
 async def get_claimed(post_id: str) -> dict[str, Any] | None:
     """The full row for a post a publisher owns — operator-side, not npub-scoped.
 

@@ -60,6 +60,53 @@ def _who() -> dict[str, str]:
     return who
 
 
+async def _upcoming(now: datetime) -> dict[str, Any]:
+    """The forecast a heartbeat carries: how many posts are still ahead and how
+    far off the soonest is — in total, and per owner.
+
+    ``by_owner`` is what lets the log stay owner-scoped: the operator reads the
+    whole queue, a patron reads only their own slice of it, and neither has to
+    be told the other's numbers. Best-effort — a tick that can't see the future
+    still dispatches the present.
+    """
+    try:
+        rows = await posts_db.upcoming_by_owner(now.isoformat())
+    except Exception:  # noqa: BLE001 — a forecast is never worth failing a tick over
+        logger.exception("scheduler: could not read the upcoming queue")
+        return {}
+
+    def _mins(at: Any) -> int | None:
+        when = at if isinstance(at, datetime) else _parse_pg(str(at)) if at else None
+        return None if when is None else max(0, round((when - now).total_seconds() / 60))
+
+    by_owner: dict[str, Any] = {}
+    total, soonest = 0, None
+    for r in rows:
+        count = int(r.get("count") or 0)
+        mins = _mins(r.get("next_at"))
+        total += count
+        if mins is not None and (soonest is None or mins < soonest):
+            soonest = mins
+        entry: dict[str, Any] = {"count": count}
+        if mins is not None:
+            entry["next_in_minutes"] = mins
+        by_owner[str(r.get("npub") or "")] = entry
+
+    out: dict[str, Any] = {"count": total, "by_owner": by_owner}
+    if soonest is not None:
+        out["next_in_minutes"] = soonest
+    return out
+
+
+def _parse_pg(value: str) -> datetime | None:
+    """Postgres hands back ``2026-07-26 19:00:00+00`` — a two-digit offset that
+    ``fromisoformat`` won't take before 3.11's relaxation covers it."""
+    try:
+        return datetime.fromisoformat(value.replace(" ", "T").replace("+00", "+00:00"))
+    except ValueError:
+        return None
+
+
 async def process_due_posts(runtime: Any) -> dict[str, Any]:
     """Launch a publisher for every due post; return what was dispatched."""
     from tollbooth.tool_identity import capability_uuid
@@ -100,7 +147,8 @@ async def process_due_posts(runtime: Any) -> dict[str, Any]:
         })
 
     summary = {"kind": "tick", "who": _who(), "processed": len(due),
-               "launched": launched, "contended": contended}
+               "launched": launched, "contended": contended,
+               "upcoming": await _upcoming(now)}
     logger.info("scheduler: due=%d launched=%d", len(due), len(launched))
     try:
         await scheduler_runs.complete_run(run_id, summary)
