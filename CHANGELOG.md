@@ -11,6 +11,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — a `none` chiclet on the Posts filters
+
+`all` had been doing double duty: it selected every status, unless everything
+was already selected, in which case it cleared them. So from a *partial*
+selection there was no way to clear at all — clicking it selected everything
+instead, the opposite of what you wanted.
+
+`all` and `none` are now two actions, each idempotent and each doing exactly one
+thing. The empty selection says so plainly ("No status selected — pick one
+above, or choose all.") rather than claiming nothing matched.
+
 ### Changed — the scheduler badges speak the Posts vocabulary
 
 A Post is only ever one of six things: Draft, Scheduled, Sending, Sent, Paused,

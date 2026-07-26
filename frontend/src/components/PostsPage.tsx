@@ -16,9 +16,10 @@ import SchedulerPendingCard from "./SchedulerPendingCard";
 // means "show posts with this status", OFF means "exclude them" — together they
 // form a select/reject chain. `sending` is the transient state the scheduler
 // stamps when it claims a due post to fire it; it's a chiclet so a claimed (or
-// stuck) post is never invisible. The "All" chiclet (rendered separately) selects
-// or clears the whole set. Default is everything selected — equivalent to the old
-// unfiltered view.
+// stuck) post is never invisible. The "all" and "none" chiclets (rendered
+// separately) are actions rather than filters: one selects every status, the
+// other clears them so you can pick from scratch. Default is everything
+// selected — equivalent to the old unfiltered view.
 const POST_STATUSES = ["draft", "scheduled", "sending", "paused", "sent", "archived"] as const;
 const DATE_FIELDS = [
   { value: "created", label: "Created" },
@@ -221,11 +222,19 @@ export default function PostsPage() {
     setPage(0);
   }
 
-  // "All" is a convenience: when everything is already selected it clears the set
-  // (reject-all); otherwise it selects the whole set.
+  // "all" and "none" are actions, not filters, and each does exactly one thing.
+  // "all" used to double as the way to clear — which meant that from a PARTIAL
+  // selection there was no way to clear at all, since clicking it selected
+  // everything instead. Two idempotent controls beat one with a hidden second
+  // meaning.
   const allSelected = selected.size === POST_STATUSES.length;
-  function toggleAll() {
-    setSelected(allSelected ? new Set() : new Set(POST_STATUSES));
+  const noneSelected = selected.size === 0;
+  function selectAll() {
+    setSelected(new Set(POST_STATUSES));
+    setPage(0);
+  }
+  function selectNone() {
+    setSelected(new Set());
     setPage(0);
   }
 
@@ -382,10 +391,10 @@ export default function PostsPage() {
 
       <div className="flex flex-wrap gap-1.5 mb-4 text-xs">
         <button
-          onClick={toggleAll}
+          onClick={selectAll}
           disabled={loading}
           aria-pressed={allSelected}
-          title={allSelected ? "All statuses shown — click to clear" : "Show all statuses"}
+          title="Show every status"
           className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg capitalize border transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
             allSelected
               ? "bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-500/15 dark:text-amber-400 dark:border-amber-500/30"
@@ -394,6 +403,20 @@ export default function PostsPage() {
         >
           <ChicletBox on={allSelected} />
           all
+        </button>
+        <button
+          onClick={selectNone}
+          disabled={loading}
+          aria-pressed={noneSelected}
+          title="Clear every status, then pick the ones you want"
+          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg capitalize border transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+            noneSelected
+              ? "bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-500/15 dark:text-amber-400 dark:border-amber-500/30"
+              : "text-stone-500 border-transparent hover:bg-stone-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
+          }`}
+        >
+          <ChicletBox on={noneSelected} />
+          none
         </button>
         {POST_STATUSES.map((s) => {
           const on = selected.has(s);
@@ -460,9 +483,11 @@ export default function PostsPage() {
       ) : posts.length === 0 ? (
         <div className="text-center py-12">
           <p className="text-sm text-stone-400 dark:text-zinc-500 mb-3">
-            {search || dateFrom || dateTo || !allSelected
-              ? "No posts match this filter."
-              : "No posts yet."}
+            {noneSelected
+              ? "No status selected — pick one above, or choose all."
+              : search || dateFrom || dateTo || !allSelected
+                ? "No posts match this filter."
+                : "No posts yet."}
           </p>
           <Link to="/new" className="text-sm text-amber-600 dark:text-amber-400 hover:underline">
             Compose a new post →
