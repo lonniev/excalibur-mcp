@@ -22,7 +22,7 @@ const INFLIGHT_MS = 5 * 60 * 1000;
 // We also pause entirely while the tab is hidden (see the effect below).
 const POLL_MS = 5 * 60 * 1000;
 
-type Health = "loading" | "healthy" | "working" | "cutoff" | "quiet" | "stalled" | "unknown";
+type Health = "loading" | "healthy" | "cutoff" | "quiet" | "stalled" | "unknown";
 
 function relative(fromIso: string): string {
   const then = new Date(fromIso).getTime();
@@ -108,7 +108,9 @@ export default function SchedulerHealth() {
       else if (s.status === "started" && age > INFLIGHT_MS) setHealth("cutoff");
       else if (age > STALE_MS) setHealth("stalled");
       else if (age > FRESH_MS) setHealth("quiet");
-      else if (inFlight.length) setHealth("working");
+      // A publisher being mid-flight is POST state, reported by the Sending
+      // badge. The dot stays about the cron, so the two never compete to
+      // describe the same thing in different words.
       else setHealth("healthy");
     } catch {
       // Free + proof-gated; a failure means the sign-in proof lapsed, not that
@@ -153,28 +155,30 @@ export default function SchedulerHealth() {
   const dot = {
     loading: "bg-zinc-400",
     healthy: "bg-green-500",
-    working: "bg-sky-500",
     cutoff: "bg-red-500",
     quiet: "bg-amber-400",
     stalled: "bg-red-500",
     unknown: "bg-zinc-400",
   }[health];
-  const pulse = health === "healthy" || health === "quiet" || health === "working";
+  const pulse = health === "healthy" || health === "quiet";
   const label = {
     loading: "Scheduler…",
     healthy: "Scheduler healthy",
-    working: "Scheduler publishing",
     cutoff: "Scheduler cut off",
     quiet: "Scheduler quiet",
     stalled: "Scheduler stalled",
     unknown: "Scheduler status unknown",
   }[health];
-  // Name the posts and say where each one LIVES. "Held" is an attempt outcome,
-  // not a status — a held post is still Scheduled — so pointing at a status
-  // that doesn't exist is what sends someone hunting through the Posts page.
+  // A Post is only ever one of six things: Draft, Scheduled, Sending, Sent,
+  // Paused, Archived. Anything describing a Post says one of those words, so
+  // every badge here maps to a filter that already exists on the Posts tab —
+  // "publishing" and "not posted" were this component's own inventions, and a
+  // name with nowhere to click is what makes a post hard to track down.
+  const held = stuck.filter((p) => !p.paused);   // attempt held → back to Scheduled
+  const paused = stuck.filter((p) => p.paused);  // stopped → Paused, needs a human
   const stuckNote = stuck.length
     ? ` · didn't post: ${stuck
-        .map((p) => `${p.id} (${p.reason}${p.paused ? ", now Paused" : ", still Scheduled — retries next run"})`)
+        .map((p) => `${p.id} (${p.reason}${p.paused ? ", Paused" : ", Scheduled — retries next run"})`)
         .join("; ")}`
     : "";
   const title =
@@ -197,14 +201,29 @@ export default function SchedulerHealth() {
       {publishing.length > 0 && (
         <span
           className="rounded-full bg-sky-500/15 px-1.5 text-[10px] text-sky-600 dark:text-sky-400"
-          title={`A publisher is working on ${publishing.join(", ")} right now — the post shows as Sending until it reports back.`}
+          title={`A publisher is working on ${publishing.join(", ")} right now. Filter Posts by Sending to see it.`}
         >
-          {publishing.length} publishing
+          {publishing.length} Sending
         </span>
       )}
-      {stuck.length > 0 && (
-        <span className="rounded-full bg-rose-500/15 px-1.5 text-[10px] text-rose-600 dark:text-rose-400">
-          {stuck.length} not posted
+      {held.length > 0 && (
+        <span
+          className="rounded-full bg-amber-500/15 px-1.5 text-[10px] text-amber-700 dark:text-amber-400"
+          title={`Held on the last run, still Scheduled and due to retry: ${held
+            .map((p) => `${p.id} (${p.reason})`)
+            .join("; ")}. Filter Posts by Scheduled — each one carries the same ⚠ marker.`}
+        >
+          ⚠ {held.length} Scheduled
+        </span>
+      )}
+      {paused.length > 0 && (
+        <span
+          className="rounded-full bg-rose-500/15 px-1.5 text-[10px] text-rose-600 dark:text-rose-400"
+          title={`Stopped until you resume them: ${paused
+            .map((p) => `${p.id} (${p.reason})`)
+            .join("; ")}. Filter Posts by Paused.`}
+        >
+          ⏸ {paused.length} Paused
         </span>
       )}
     </button>
