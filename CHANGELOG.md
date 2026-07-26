@@ -11,6 +11,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — the heartbeat says which build is beating
+
+`scheduler … · alive · nothing due` is the line you see most and learn to skim
+past. It now names the deployment that answered — `· v0.34.4 da69054` — in the
+debug log and the Scheduler tab. Version *and* commit, because this service has
+served cached bytes while reporting a fresh version, and the commit is the
+honest half of that pair. It's the difference between a row that reassures and
+one that can settle "did my deploy actually land?".
+
 ### Changed — the scheduler dispatches; a publisher publishes
 
 Three clocks had been conflated into one: the cron's 30-minute periodicity, the

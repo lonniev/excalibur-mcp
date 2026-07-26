@@ -98,6 +98,13 @@ function RunCells({ summary: s }: { summary: SchedulerRun["summary"] }) {
             · {contended} skipped
           </span>
         )}
+        {/* Which build answered — turns a row you skim past into one that can
+            settle "is my deploy actually live?". */}
+        {(s.who?.version || s.who?.commit) && (
+          <span className="ml-1.5 text-stone-400 dark:text-zinc-500" title="The build that ran this tick">
+            · {[s.who.version && `v${s.who.version}`, s.who.commit].filter(Boolean).join(" ")}
+          </span>
+        )}
       </td>
     </>
   );

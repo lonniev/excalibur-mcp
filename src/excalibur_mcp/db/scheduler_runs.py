@@ -136,6 +136,10 @@ def scope_runs(
             "launched": launched,
             "contended": contended,
         }
+        # Which build answered. Not owner-specific, and it's what makes a
+        # heartbeat evidence instead of reassurance — every reader gets it.
+        if s.get("who"):
+            summary["who"] = s["who"]
         # A tick that never came back carries no per-post entries to scope, but
         # every reader should still see that it started and was cut off — that's
         # the difference between "the Worker is wedged" and "the cron is dead".
