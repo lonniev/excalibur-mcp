@@ -517,3 +517,54 @@ class TestUploadToPostImg:
             with pytest.raises(PostImgUploadError) as exc_info:
                 await upload_to_postimg(b"\x89PNG\r\n")
             assert "refused" in exc_info.value.detail
+
+
+# ---------------------------------------------------------------------------
+# Connect-phase retry
+# ---------------------------------------------------------------------------
+
+
+class TestPostTweetConnectRetry:
+    """A publication reaches post_tweet having already spent minutes, and real
+    money, resolving its content. A TCP connection that never opened shouldn't
+    throw that away — but anything that DID reach X must never be sent twice."""
+
+    @pytest.mark.asyncio
+    async def test_connect_timeout_is_retried_and_can_succeed(self, client):
+        ok = _mock_response(201, {"data": {"id": "tw1", "text": "hi"}})
+        post = AsyncMock(side_effect=[httpx.ConnectTimeout(""), ok])
+        with patch("httpx.AsyncClient") as ac, patch("asyncio.sleep", AsyncMock()):
+            ac.return_value.__aenter__.return_value.post = post
+            out = await client.post_tweet("hi")
+        assert post.await_count == 2  # failed once, then landed
+        assert out["tweet_id"] == "tw1"
+
+    @pytest.mark.asyncio
+    async def test_connect_error_gives_up_after_the_cap(self, client):
+        post = AsyncMock(side_effect=httpx.ConnectError("no route"))
+        with patch("httpx.AsyncClient") as ac, patch("asyncio.sleep", AsyncMock()):
+            ac.return_value.__aenter__.return_value.post = post
+            with pytest.raises(httpx.ConnectError):
+                await client.post_tweet("hi")
+        assert post.await_count == 3  # bounded, not infinite
+
+    @pytest.mark.asyncio
+    async def test_read_timeout_is_never_retried(self, client):
+        """The request reached X; the tweet may already be live. Retrying it
+        would post twice, so this one is left to fail."""
+        post = AsyncMock(side_effect=httpx.ReadTimeout(""))
+        with patch("httpx.AsyncClient") as ac, patch("asyncio.sleep", AsyncMock()):
+            ac.return_value.__aenter__.return_value.post = post
+            with pytest.raises(httpx.ReadTimeout):
+                await client.post_tweet("hi")
+        assert post.await_count == 1  # exactly once — no double-post risk
+
+    @pytest.mark.asyncio
+    async def test_an_http_error_response_is_not_a_connect_failure(self, client):
+        """A 401 is an answer, not a failure to reach X — no retrying."""
+        post = AsyncMock(return_value=_mock_response(401, {"detail": "nope"}))
+        with patch("httpx.AsyncClient") as ac, patch("asyncio.sleep", AsyncMock()):
+            ac.return_value.__aenter__.return_value.post = post
+            with pytest.raises(XAPIError):
+                await client.post_tweet("hi")
+        assert post.await_count == 1

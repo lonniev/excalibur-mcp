@@ -6,6 +6,7 @@ Code Flow with PKCE. No OAuth 1.0a signing — all endpoints are v2.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from dataclasses import dataclass
@@ -21,6 +22,22 @@ IMAGE_DOWNLOAD_TIMEOUT_SECONDS = 30
 
 POSTIMG_UPLOAD_URL = "https://postimg.cc/json?q=a"
 POSTIMG_UPLOAD_TIMEOUT_SECONDS = 30
+
+# The X API's own budget. A bare httpx client allows 5s for EVERY phase, which
+# is a thin margin for an outbound write — and was seen timing out on connect
+# while reads from the same host succeeded. The image paths were given
+# deliberate budgets; the API calls get one too.
+X_API_TIMEOUT = httpx.Timeout(connect=10.0, read=30.0, write=30.0, pool=10.0)
+
+# A publication reaches post_tweet having already spent minutes, and real
+# money, resolving its content. Discarding all of that because a TCP connection
+# didn't open is a bad trade, so a connect-phase failure is retried.
+#
+# ONLY the connect phase. A ReadTimeout means the request DID reach X and we
+# merely never saw the answer — the tweet may already be live, and retrying
+# would post it twice. That one is left to fail and be reported.
+_CONNECT_ATTEMPTS = 3
+_CONNECT_BACKOFF_S = 2.0
 
 
 class PostImgUploadError(Exception):
@@ -142,7 +159,7 @@ class XClient:
         """
         url = f"{X_API_BASE}/media/upload"
 
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=X_API_TIMEOUT) as client:
             response = await client.post(
                 url,
                 files={"media": ("image.jpg", image_bytes, content_type)},
@@ -167,6 +184,28 @@ class XClient:
 
         return str(media_id)
 
+    async def _post_retrying_connect(self, url: str, payload: dict) -> httpx.Response:
+        """POST to X, retrying only when the connection never opened.
+
+        Safe to repeat precisely because a connect-phase failure means the
+        request never reached X. Anything that got as far as being sent is
+        raised, so a tweet that may already be live is never sent twice.
+        """
+        last: Exception | None = None
+        for attempt in range(_CONNECT_ATTEMPTS):
+            try:
+                async with httpx.AsyncClient(timeout=X_API_TIMEOUT) as client:
+                    return await client.post(
+                        url,
+                        json=payload,
+                        headers={"Authorization": self._auth_header()},
+                    )
+            except (httpx.ConnectTimeout, httpx.ConnectError) as exc:
+                last = exc
+                if attempt + 1 < _CONNECT_ATTEMPTS:
+                    await asyncio.sleep(_CONNECT_BACKOFF_S * (attempt + 1))
+        raise last  # type: ignore[misc]
+
     async def post_tweet(
         self, text: str, *, media_ids: list[str] | None = None
     ) -> dict:
@@ -177,12 +216,7 @@ class XClient:
         if media_ids:
             payload["media"] = {"media_ids": media_ids}
 
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                url,
-                json=payload,
-                headers={"Authorization": self._auth_header()},
-            )
+        response = await self._post_retrying_connect(url, payload)
 
         if response.status_code == 429:
             raise XAPIError(429, "Rate limited — try again later", response.json())
@@ -242,7 +276,7 @@ class XClient:
         Returns ``{id, username, name, profile_image_url}`` — used to show the
         real @handle on the editor's tweet-card preview."""
         url = f"{X_API_BASE}/users/me"
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=X_API_TIMEOUT) as client:
             response = await client.get(
                 url,
                 params={"user.fields": "profile_image_url,name,username"},
