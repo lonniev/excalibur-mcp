@@ -322,21 +322,22 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
         """Leave the post ``scheduled`` for a later tick and say why — the
         situation is stamped on the post so it never sits silently."""
         try:
+            reason = _stated(reason, post_id)
             await posts_db.mark_attempt(post_id, _now().isoformat(), reason)
         except Exception:  # noqa: BLE001 — stamping is non-critical
             logger.exception("publisher: failed to stamp attempt on %s", post_id)
         return await _record({"post_id": post_id, "owner": owner, "outcome": "held",
-                              "reason": reason, **extra})
+                              "reason": _stated(reason, post_id), **extra})
 
     async def _pause(reason: str, **extra: Any) -> dict[str, Any]:
         """Like ``_hold``, but for a situation no later tick can resolve. The
         owner fixes the upstream cause and resumes the post themselves."""
         try:
-            await posts_db.mark_paused(post_id, _now().isoformat(), reason)
+            await posts_db.mark_paused(post_id, _now().isoformat(), _stated(reason, post_id))
         except Exception:  # noqa: BLE001 — stamping is non-critical
             logger.exception("publisher: failed to stamp attempt on %s", post_id)
         return await _record({"post_id": post_id, "owner": owner, "outcome": "paused",
-                              "reason": reason, **extra})
+                              "reason": _stated(reason, post_id), **extra})
 
     doc = _as_dict(row.get("doc"))
     dynamic = _dynamic_blocks(doc)
@@ -351,7 +352,7 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
     # 1. Resolve the owner's X bearer (no billing yet). — access reason
     client, situation = await _resolve_x_client(owner)
     if client is None:
-        return await _hold((situation or {}).get("error_code", "oauth_unavailable"))
+        return await _hold((situation or {}).get("error_code") or "oauth_unavailable")
 
     # 2. Dynamic blocks: bill the owner once for resolution, run each prompt, and
     #    compose the final text. A failed block falls back to its author text; a
@@ -365,7 +366,7 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
             resolve_id, "resolve_dynamic_block", "heavy", {},
         )
         if rdenial is not None:
-            return await _hold(rdenial.get("error_code", "pricing_unavailable"))
+            return await _hold(rdenial.get("error_code") or "pricing_unavailable")
         rbilling = await runtime._apply_billing(owner, "resolve_dynamic_block", rcost, [])
         if isinstance(rbilling, dict):  # finance reason
             return await _hold("insufficient_balance_resolve", cost_sats=rcost)
@@ -391,7 +392,7 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
     if denial is not None:
         if resolve_charged:
             await runtime.rollback_debit(resolve_id, owner)
-        return await _hold(denial.get("error_code", "pricing_unavailable"))
+        return await _hold(denial.get("error_code") or "pricing_unavailable")
     billing = await runtime._apply_billing(owner, "post_tweet", cost, [])
     if isinstance(billing, dict):
         # Insufficient / expired balance — leave it scheduled, report it. — finance reason
@@ -414,7 +415,8 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
         await runtime.rollback_debit(post_tweet_id, owner)
         if resolve_charged:
             await runtime.rollback_debit(resolve_id, owner)
-        return await _hold(str(exc))
+        # An exception can carry an empty message; its type still names it.
+        return await _hold(str(exc) or type(exc).__name__)
 
     # 5. Stamp the fire and reschedule (or retire past cease_at).
     sent_at = _now()
@@ -457,6 +459,23 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _stated(reason: Any, post_id: str) -> str:
+    """A held post must always say why. This is the backstop that guarantees it.
+
+    Upstream situations reach us as ``{"error_code": None}`` as readily as with
+    the key absent, and ``str(SomeError())`` is legitimately empty — either way a
+    caller can hand over a blank reason and the log then shows a post that
+    quietly didn't publish, which is the exact failure this service keeps
+    relearning. A blank arriving here is a bug at the call site, so it's logged
+    as one rather than silently papered over.
+    """
+    text = str(reason or "").strip()
+    if text:
+        return text
+    logger.warning("publisher: a hold on %s carried no reason — call site bug", post_id)
+    return "unreported"
 
 
 async def _record(outcome: dict[str, Any]) -> dict[str, Any]:
