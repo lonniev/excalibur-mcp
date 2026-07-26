@@ -12,10 +12,10 @@ import { getSchedulerLog } from "../lib/mcp";
 // stalled, not idle.
 const FRESH_MS = 40 * 60 * 1000;
 const STALE_MS = 100 * 60 * 1000;
-// A tick opens its run row before doing any work, so a fresh row may simply be a
-// tick in flight. It works to a budget well under two minutes, so a row still
-// reading `started` past this is a tick that was cut off and never came back —
-// which must NOT read as healthy just because its heartbeat is recent.
+// A tick opens its run row before any work and now closes it seconds later — it
+// only dispatches. So an open row is unremarkable for a moment and damning after
+// this: a tick that was cut off before it could hand its posts to a publisher.
+// (It is NOT a signal about publishers, which run long and report separately.)
 const INFLIGHT_MS = 5 * 60 * 1000;
 // Poll cadence for the status dot. The scheduler only ticks every 30 min, so a
 // 5-min poll surfaces a stall promptly without pinning the Neon compute awake.
@@ -43,6 +43,9 @@ export default function SchedulerHealth() {
   // post failing on every tick writes a row each time, and reporting "2" for a
   // single struggling post sends you hunting for a second one.
   const [stuck, setStuck] = useState<{ id: string; reason: string; paused: boolean }[]>([]);
+  // Posts launched whose publisher hasn't reported back — the ones showing as
+  // Sending. This is the "in progress" the dot should mean.
+  const [publishing, setPublishing] = useState<string[]>([]);
   const timer = useRef<number | null>(null);
 
   const refresh = useCallback(async () => {
@@ -58,6 +61,7 @@ export default function SchedulerHealth() {
         setHealth("quiet");
         setLastRun(null);
         setStuck([]);
+        setPublishing([]);
         return;
       }
       setLastRun(newest.run_at);
@@ -66,30 +70,46 @@ export default function SchedulerHealth() {
       // work, owner-scoped before they reach us. Runs arrive newest-first, so
       // the first row seen for a post is its latest word: a post that has since
       // published stops counting, and one that keeps failing counts once.
-      const settled = new Set<string>();
+      // One pass, newest first: whichever row we meet first for a post is its
+      // latest word. A publication settles it. A launch with no publication
+      // since means a publisher is STILL WORKING it — which is precisely the
+      // post sitting in Sending on the Posts tab, and the only honest way to
+      // say "in progress" from a log that only records starts and finishes.
+      const accounted = new Set<string>();
       const unposted: { id: string; reason: string; paused: boolean }[] = [];
+      const inFlight: string[] = [];
       for (const r of runs) {
-        const s = r.summary;
-        if (s?.kind !== "publication" || !s.post_id || settled.has(s.post_id)) continue;
-        settled.add(s.post_id); // first row wins — a post's later failures don't re-count it
-        if (s.outcome === "held" || s.outcome === "paused") {
-          unposted.push({
-            id: s.post_id.slice(0, 8),
-            reason: s.reason ?? "unreported",
-            paused: s.outcome === "paused",
-          });
+        const row = r.summary;
+        if (!row) continue;
+        if (row.kind === "publication") {
+          if (!row.post_id || accounted.has(row.post_id)) continue;
+          accounted.add(row.post_id);
+          if (row.outcome === "held" || row.outcome === "paused") {
+            unposted.push({
+              id: row.post_id.slice(0, 8),
+              reason: row.reason ?? "unreported",
+              paused: row.outcome === "paused",
+            });
+          }
+          continue;
+        }
+        for (const l of row.launched ?? []) {
+          if (!l.post_id || accounted.has(l.post_id)) continue;
+          accounted.add(l.post_id);
+          inFlight.push(l.post_id.slice(0, 8));
         }
       }
       setStuck(unposted);
+      setPublishing(inFlight);
       const age = Date.now() - new Date(newest.run_at).getTime();
-      if (isNaN(age)) {
-        setHealth("unknown");
-      } else if (s.status === "started") {
-        // An open row: in flight if it just started, cut off if it never closed.
-        setHealth(age <= INFLIGHT_MS ? "working" : "cutoff");
-      } else {
-        setHealth(age <= FRESH_MS ? "healthy" : age <= STALE_MS ? "quiet" : "stalled");
-      }
+      // A stall always outranks activity: publishers can be mid-flight while the
+      // cron behind them has died, and the dead cron is the thing worth saying.
+      if (isNaN(age)) setHealth("unknown");
+      else if (s.status === "started" && age > INFLIGHT_MS) setHealth("cutoff");
+      else if (age > STALE_MS) setHealth("stalled");
+      else if (age > FRESH_MS) setHealth("quiet");
+      else if (inFlight.length) setHealth("working");
+      else setHealth("healthy");
     } catch {
       // Free + proof-gated; a failure means the sign-in proof lapsed, not that
       // the scheduler is down — show "unknown", never a false alarm.
@@ -143,7 +163,7 @@ export default function SchedulerHealth() {
   const label = {
     loading: "Scheduler…",
     healthy: "Scheduler healthy",
-    working: "Scheduler working",
+    working: "Scheduler publishing",
     cutoff: "Scheduler cut off",
     quiet: "Scheduler quiet",
     stalled: "Scheduler stalled",
@@ -174,6 +194,14 @@ export default function SchedulerHealth() {
     >
       <span className={`inline-block h-2 w-2 rounded-full ${dot} ${pulse ? "animate-pulse" : ""}`} />
       <span className="hidden sm:inline">{label}</span>
+      {publishing.length > 0 && (
+        <span
+          className="rounded-full bg-sky-500/15 px-1.5 text-[10px] text-sky-600 dark:text-sky-400"
+          title={`A publisher is working on ${publishing.join(", ")} right now — the post shows as Sending until it reports back.`}
+        >
+          {publishing.length} publishing
+        </span>
+      )}
       {stuck.length > 0 && (
         <span className="rounded-full bg-rose-500/15 px-1.5 text-[10px] text-rose-600 dark:text-rose-400">
           {stuck.length} not posted
