@@ -11,6 +11,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — the scheduler badges speak the Posts vocabulary
+
+A Post is only ever one of six things: Draft, Scheduled, Sending, Sent, Paused,
+Archived. The health pill had been inventing its own words — "2 Held", then
+"1 not posted", then "1 publishing" — each of which named something with no
+filter to click and no chiclet to reconcile against.
+
+Every badge is now a status that already exists, so each one maps to a filter
+that is already there:
+
+| Badge | Post status | Where |
+|---|---|---|
+| `1 Sending` | `sending` | a publisher is working it now |
+| `⚠ 1 Scheduled` | `scheduled` | held last run, retries next — same ⚠ the post row shows |
+| `⏸ 1 Paused` | `paused` | stopped until resumed — same ⏸ the post row shows |
+
+The `working` scheduler state is gone with them. A publisher being mid-flight is
+*post* state and belongs in a badge; the dot stays about the cron, so the two
+never compete to describe the same thing in different words.
+
 ### Fixed — "Scheduler working" meant the wrong thing entirely
 
 `working` was derived from the tick's own audit row still being open. That made
