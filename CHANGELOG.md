@@ -11,6 +11,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — "Scheduler working" meant the wrong thing entirely
+
+`working` was derived from the tick's own audit row still being open. That made
+sense when a tick did the publishing inline and ran for minutes. Since the
+scheduler became a dispatcher it closes that row in about two seconds, so the
+state was both unobservable and — when it did appear — a statement about the
+tick, not about any publishing.
+
+It now means what a reader would assume: **a publisher is working right now**.
+Derived honestly from a log that records only starts and finishes — a post
+launched by a tick with no publication row since is still in flight, which is
+exactly the post showing as `Sending` on the Posts tab. Shown as a
+`N publishing` chip, so the pill and the status chiclet can be reconciled.
+
+A stall still outranks it: publishers can be mid-flight while the cron behind
+them is dead, and the dead cron is the thing worth saying.
+
 ### Fixed — "Held" was a status that doesn't exist, and the count was of the wrong thing
 
 The health pill read `2 Held` while only one post was in flight, and the Posts
