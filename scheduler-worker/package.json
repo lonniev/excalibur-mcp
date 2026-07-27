@@ -14,8 +14,8 @@
     "nostr-tools": "^2.24.1"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20240620.0",
-    "typescript": "^5.5.0",
+    "@cloudflare/workers-types": "^5.0.0",
+    "typescript": "^7.0.0",
     "wrangler": "^4.0.0"
   }
 }
