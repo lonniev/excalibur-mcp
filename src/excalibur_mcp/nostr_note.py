@@ -10,9 +10,7 @@ repudiate it. Verification is deferred out-of-band: an interested reader follows
 up with the p-tagged author directly.
 
 The scribe is a role, not an identity — a key minted for the job carries no
-voice of its own. It is held in process only (never vaulted) and forgotten on
-cold start. See issue #276 for the adopted design; retraction is best-effort and
-must never be described as guaranteed.
+voice of its own. See issue #276 for the adopted design.
 
 Relay transport is wheel work: the signed event is handed to
 ``tollbooth.nostr_profile.publish_event`` — a kind- and identity-agnostic
@@ -23,20 +21,9 @@ the annotation, and setting the ``p`` tag.
 
 from __future__ import annotations
 
-import logging
 import time
 
-logger = logging.getLogger(__name__)
-
 _KIND_TEXT_NOTE = 1
-
-# In-process scribe-key registry: event_id -> ephemeral private key (hex). Held
-# in warm memory ONLY — never vaulted, never actively cleaned up, forgotten on
-# cold start. This is the best-effort NIP-09 delete handle: while the instance
-# is warm the same scribe key can sign a retraction; after a cold start the key
-# is gone and retraction is impossible. Deliberate (issue #276) — retraction is
-# never promised in user-facing copy.
-_SCRIBE_KEYS: dict[str, str] = {}
 
 
 def _npub_to_hex(npub: str) -> str:
@@ -59,13 +46,12 @@ def _compose_content(message: str, author_npub: str) -> str:
     )
 
 
-def build_note_event(message: str, author_npub: str) -> tuple[dict, str, str]:
+def build_note_event(message: str, author_npub: str) -> tuple[dict, str]:
     """Build a signed kind-1 note scribed for ``author_npub``.
 
     Mints a FRESH ephemeral keypair, signs the note with it, and ``p``-tags the
-    author. Returns ``(signed_event, scribe_pubkey_hex, scribe_privkey_hex)`` —
-    the private key is returned so the caller can retain it in process; it is
-    never persisted here.
+    author. Returns ``(signed_event, scribe_pubkey_hex)``. The scribe private key
+    signs the note and is then forgotten — it is never returned or persisted.
     """
     from pynostr.event import Event  # type: ignore[import-untyped]
     from pynostr.key import PrivateKey  # type: ignore[import-untyped]
@@ -73,7 +59,6 @@ def build_note_event(message: str, author_npub: str) -> tuple[dict, str, str]:
     author_hex = _npub_to_hex(author_npub)
 
     scribe = PrivateKey()  # fresh ephemeral keypair, one per note
-    scribe_priv_hex = scribe.hex()
     scribe_pub_hex = scribe.public_key.hex()
 
     event = Event(
@@ -83,8 +68,8 @@ def build_note_event(message: str, author_npub: str) -> tuple[dict, str, str]:
         created_at=int(time.time()),
         tags=[["p", author_hex]],
     )
-    event.sign(scribe_priv_hex)
-    return event.to_dict(), scribe_pub_hex, scribe_priv_hex
+    event.sign(scribe.hex())
+    return event.to_dict(), scribe_pub_hex
 
 
 def publish_note(
@@ -101,7 +86,7 @@ def publish_note(
     failure, ``{success: False, error: ...}``.
     """
     try:
-        signed, scribe_pub_hex, scribe_priv_hex = build_note_event(message, author_npub)
+        signed, scribe_pub_hex = build_note_event(message, author_npub)
     except Exception as exc:
         return {"success": False, "error": f"Invalid author npub: {author_npub!r} ({exc})"}
 
@@ -119,11 +104,5 @@ def publish_note(
     # exactly the scribe case ``publish_profile_event``'s signer==npub gate would
     # reject. We add only the domain fields this tool's contract promises.
     result = publish_event(signed, relay_urls)
-
-    # Retain the scribe key in warm memory so a retraction can be signed while
-    # the instance lives (best-effort — see module docstring). Never vaulted.
-    event_id = result.get("event_id") or signed.get("id", "")
-    if event_id:
-        _SCRIBE_KEYS[event_id] = scribe_priv_hex
 
     return {**result, "author_npub": author_npub, "scribe_pubkey": scribe_pub_hex}

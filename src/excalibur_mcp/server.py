@@ -471,8 +471,7 @@ async def post_nostr_message(
     The note publishes to the DPYC relay set. The call **succeeds if at least
     one** relay accepts it; the response lists every relay's accept/reject and
     the accepted/attempted counts so you can see the note's real reach — a
-    one-relay publish never reads as a clean broadcast. The scribe key is
-    ephemeral and held only in memory, so it is gone after the server restarts.
+    one-relay publish never reads as a clean broadcast.
 
     Args:
         message: The note text to publish.
