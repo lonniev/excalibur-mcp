@@ -55,13 +55,32 @@ def test_each_call_mints_a_fresh_scribe_key():
     assert nsec_a != nsec_b
 
 
+def _patch_transport(monkeypatch, fake):
+    """Patch the wheel's relay transport (``publish_event``).
+
+    Transport now lives in ``tollbooth`` — ``publish_note`` imports and calls
+    ``tollbooth.nostr_profile.publish_event`` rather than a local ``_publish_one``.
+    The behaviour under test is unchanged; only the seam we stub has moved.
+    """
+    import tollbooth.nostr_profile as wheel
+
+    monkeypatch.setattr(wheel, "publish_event", fake)
+
+
 def test_publish_note_succeeds_if_any_relay_accepts(monkeypatch):
-    from excalibur_mcp import nostr_note
+    def fake_publish_event(signed, relays):
+        return {
+            "success": True,
+            "event_id": signed.get("id", ""),
+            "accepted": 1,
+            "attempted": 2,
+            "relays": [
+                {"relay": "wss://a.good", "accepted": True, "error": None},
+                {"relay": "wss://b.bad", "accepted": False, "error": "rejected"},
+            ],
+        }
 
-    def fake_publish_one(url, message):
-        return (url.endswith("good"), None if url.endswith("good") else "rejected")
-
-    monkeypatch.setattr(nostr_note, "_publish_one", fake_publish_one)
+    _patch_transport(monkeypatch, fake_publish_event)
     _, author_npub = _author()
     result = publish_note("hi", author_npub, relays=["wss://a.good", "wss://b.bad"])
 
@@ -71,13 +90,25 @@ def test_publish_note_succeeds_if_any_relay_accepts(monkeypatch):
     # Per-relay detail is always present — a one-relay publish never reads clean.
     assert any(r["accepted"] for r in result["relays"])
     assert any(not r["accepted"] for r in result["relays"])
+    # Domain fields eXcalibur adds on top of the wheel's transport result.
     assert result["author_npub"] == author_npub
+    assert result["scribe_pubkey"]
 
 
 def test_publish_note_fails_when_all_relays_reject(monkeypatch):
-    from excalibur_mcp import nostr_note
+    def fake_publish_event(signed, relays):
+        return {
+            "success": False,
+            "event_id": signed.get("id", ""),
+            "accepted": 0,
+            "attempted": 2,
+            "relays": [
+                {"relay": "wss://a", "accepted": False, "error": "nope"},
+                {"relay": "wss://b", "accepted": False, "error": "nope"},
+            ],
+        }
 
-    monkeypatch.setattr(nostr_note, "_publish_one", lambda url, msg: (False, "nope"))
+    _patch_transport(monkeypatch, fake_publish_event)
     _, author_npub = _author()
     result = publish_note("hi", author_npub, relays=["wss://a", "wss://b"])
 
@@ -89,7 +120,16 @@ def test_publish_note_fails_when_all_relays_reject(monkeypatch):
 def test_scribe_key_retained_in_process_for_warm_retraction(monkeypatch):
     from excalibur_mcp import nostr_note
 
-    monkeypatch.setattr(nostr_note, "_publish_one", lambda url, msg: (True, None))
+    def fake_publish_event(signed, relays):
+        return {
+            "success": True,
+            "event_id": signed.get("id", ""),
+            "accepted": 1,
+            "attempted": 1,
+            "relays": [{"relay": "wss://a", "accepted": True, "error": None}],
+        }
+
+    _patch_transport(monkeypatch, fake_publish_event)
     _, author_npub = _author()
     result = publish_note("hi", author_npub, relays=["wss://a"])
     # The ephemeral key stays in warm memory so a best-effort NIP-09 retraction

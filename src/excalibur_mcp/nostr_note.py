@@ -14,25 +14,21 @@ voice of its own. It is held in process only (never vaulted) and forgotten on
 cold start. See issue #276 for the adopted design; retraction is best-effort and
 must never be described as guaranteed.
 
-Mirrors the self-contained raw-websocket approach in ``tollbooth`` modules
-(``nostr_profile.py`` / ``bootstrap_relay.py``): relay I/O is synchronous, fanned
-out one thread per relay, so total wall-clock is bounded by the slowest single
-relay rather than their sum.
+Relay transport is wheel work: the signed event is handed to
+``tollbooth.nostr_profile.publish_event`` — a kind- and identity-agnostic
+primitive that fans out to the relays in parallel and reports per-relay results.
+eXcalibur keeps only the domain part: minting the ephemeral scribe key, composing
+the annotation, and setting the ``p`` tag.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
 
 _KIND_TEXT_NOTE = 1
-# Per-relay socket timeout. Relays are queried in PARALLEL (one thread each),
-# so a slow or dead relay never holds the whole publish hostage.
-_TIMEOUT = 5
 
 # In-process scribe-key registry: event_id -> ephemeral private key (hex). Held
 # in warm memory ONLY — never vaulted, never actively cleaned up, forgotten on
@@ -96,8 +92,8 @@ def publish_note(
 ) -> dict:
     """Publish ``message`` as a public note scribed for ``author_npub``.
 
-    Signs with a fresh ephemeral key, ``p``-tags the author, and fans the event
-    out to the DPYC relay set in parallel. Succeeds if **at least one** relay
+    Signs with a fresh ephemeral key, ``p``-tags the author, and hands the signed
+    event to the wheel's relay transport. Succeeds if **at least one** relay
     accepts it; the response always carries per-relay accept/reject detail plus
     the accepted/attempted counts, so a one-relay publish never reads as a clean
     broadcast. Returns ``{success, event_id, author_npub, scribe_pubkey,
@@ -109,6 +105,7 @@ def publish_note(
     except Exception as exc:
         return {"success": False, "error": f"Invalid author npub: {author_npub!r} ({exc})"}
 
+    from tollbooth.nostr_profile import publish_event
     from tollbooth.relay_registry import RelayRegistryError, get_relays
 
     try:
@@ -116,70 +113,17 @@ def publish_note(
     except RelayRegistryError as exc:
         return {"success": False, "error": f"No relays available: {exc}"}
 
-    event_id = signed.get("id", "")
-    payload = json.dumps(["EVENT", signed])
-
-    ok = 0
-    results: list[dict] = []
-    with ThreadPoolExecutor(max_workers=len(relay_urls)) as pool:
-        futures = {pool.submit(_publish_one, url, payload): url for url in relay_urls}
-        for future in as_completed(futures, timeout=_TIMEOUT + 2):
-            url = futures[future]
-            try:
-                accepted, err = future.result()
-            except Exception as exc:
-                results.append({"relay": url, "accepted": False, "error": str(exc)})
-                continue
-            if accepted:
-                ok += 1
-                results.append({"relay": url, "accepted": True, "error": None})
-            else:
-                results.append({"relay": url, "accepted": False, "error": err})
+    # Relaying a signed event and reporting per-relay results is wheel work.
+    # ``publish_event`` is kind- and identity-agnostic by design, so it relays a
+    # scribe-signed note whose signer is deliberately NOT the p-tagged author —
+    # exactly the scribe case ``publish_profile_event``'s signer==npub gate would
+    # reject. We add only the domain fields this tool's contract promises.
+    result = publish_event(signed, relay_urls)
 
     # Retain the scribe key in warm memory so a retraction can be signed while
     # the instance lives (best-effort — see module docstring). Never vaulted.
+    event_id = result.get("event_id") or signed.get("id", "")
     if event_id:
         _SCRIBE_KEYS[event_id] = scribe_priv_hex
 
-    return {
-        "success": ok > 0,
-        "event_id": event_id,
-        "author_npub": author_npub,
-        "scribe_pubkey": scribe_pub_hex,
-        "accepted": ok,
-        "attempted": len(relay_urls),
-        "relays": results,
-    }
-
-
-def _publish_one(relay_url: str, message: str) -> tuple[bool, str | None]:
-    """Send one EVENT to a single relay. ``(accepted, error)`` — never raises.
-
-    Parses the NIP-20 ack strictly: only ``["OK", <id>, true, …]`` counts as
-    accepted, so a rejection like ``["OK", id, false, "rate-limited"]`` is not
-    silently counted as published.
-    """
-    import websocket  # type: ignore[import-untyped]
-
-    try:
-        ws = websocket.create_connection(relay_url, timeout=_TIMEOUT)
-        try:
-            ws.settimeout(_TIMEOUT)
-            ws.send(message)
-            raw = ws.recv()
-            try:
-                ack = json.loads(raw)
-                if (
-                    isinstance(ack, list)
-                    and len(ack) >= 3
-                    and ack[0] == "OK"
-                    and ack[2] is True
-                ):
-                    return (True, None)
-                return (False, f"{relay_url}: {str(raw)[:120]}")
-            except (json.JSONDecodeError, IndexError):
-                return (False, f"{relay_url}: unparseable ack {str(raw)[:80]}")
-        finally:
-            ws.close()
-    except Exception as exc:
-        return (False, f"{relay_url}: {exc}")
+    return {**result, "author_npub": author_npub, "scribe_pubkey": scribe_pub_hex}
