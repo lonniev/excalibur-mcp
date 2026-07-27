@@ -8,6 +8,7 @@ domain-specific X/Twitter tools are defined here.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Annotated, Any
@@ -120,6 +121,14 @@ _DOMAIN_TOOLS = [
     # tweet-card preview). Free + proof-gated to the npub owner.
     ToolIdentity(tool_id=capability_uuid("get_x_profile"), capability="get_x_profile",
                  category="free", intent="Read your connected X account handle"),
+    # Publish a public Nostr note (kind 1) authored by the caller's proven npub.
+    # eXcalibur can't sign as the patron (it never holds their nsec), so it mints
+    # a fresh ephemeral "scribe" key per note, signs with it, and p-tags the
+    # proven author — landing the note in the author's own mentions (the
+    # repudiation channel). A write: seed-priced flat, tuned in Pricing Studio.
+    ToolIdentity(tool_id=capability_uuid("post_nostr_message"), capability="post_nostr_message",
+                 category="write", intent="Publish a public Nostr note on behalf of your proven npub via an ephemeral scribe key",
+                 pricing_hint_type="flat", pricing_hint_value=5),
     ToolIdentity(tool_id=capability_uuid("save_snippet"), capability="save_snippet",
                  category="free", intent="Create or update a saved post snippet"),
     ToolIdentity(tool_id=capability_uuid("delete_snippet"), capability="delete_snippet",
@@ -437,6 +446,57 @@ async def get_x_profile(
     except XAPIError as exc:
         return _x_api_error_to_response(exc)
     return {"connected": True, **me}
+
+
+@tool
+@runtime.paid_tool(capability_uuid("post_nostr_message"), catch_errors=True)
+async def post_nostr_message(
+    message: str,
+    npub: Annotated[str, Field(description="Required. Your PROVEN Nostr public key (npub1...). You are recorded as the note's author.")] = "",
+    dpop_token: str = "",
+) -> dict:
+    """Publish a public Nostr note (kind 1) authored by your proven npub.
+
+    eXcalibur cannot sign a note *as* you — a Nostr event must be signed by the
+    key it claims to come from, and eXcalibur never holds your nsec. So for this
+    one note it mints a fresh, ephemeral "scribe" keypair, signs with it, and
+    ``p``-tags YOUR npub as the author. The p-tag renders the note as a real
+    mention and places it in your own Nostr mentions, so you can see — and
+    disown — anything published in your name.
+
+    The author is always your **proven** npub from this session (the same npub
+    you pass for billing); it is never a free-form argument, so no caller can
+    scribe as anyone else.
+
+    The note publishes to the DPYC relay set. The call **succeeds if at least
+    one** relay accepts it; the response lists every relay's accept/reject and
+    the accepted/attempted counts so you can see the note's real reach — a
+    one-relay publish never reads as a clean broadcast. The scribe key is
+    ephemeral and held only in memory, so it is gone after the server restarts.
+
+    Args:
+        message: The note text to publish.
+        npub: Your DPYC patron npub (npub1...) — proven, billed, and recorded as
+            the note's author.
+    """
+    tool_id = capability_uuid("post_nostr_message")
+    if not message.strip():
+        await runtime.rollback_debit(tool_id, npub)
+        return {
+            "success": False,
+            "error_code": "tool_input_invalid",
+            "error": "message is required.",
+        }
+
+    from excalibur_mcp.nostr_note import publish_note
+
+    # Relay I/O is blocking (raw websockets) — run it off the event loop.
+    result = await asyncio.to_thread(publish_note, message, npub)
+    if not result.get("success"):
+        # No relay accepted the note (or setup failed) — no reach delivered,
+        # so refund the fare. A partial publish (>=1 relay) is a success.
+        await runtime.rollback_debit(tool_id, npub)
+    return result
 
 
 @tool
