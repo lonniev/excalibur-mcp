@@ -133,6 +133,75 @@ def _dynamic_blocks(doc: dict[str, Any] | None) -> list[dict[str, Any]]:
     return [b for b in blocks if isinstance(b, dict) and b.get("dynamic")]
 
 
+def _nostr_blocks(doc: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """The Nostr companion-note blocks in a post's doc (empty for posts without).
+
+    A Nostr block is static copy that never enters the tweet; it is published
+    instead as a companion Nostr note carrying the live X URL. Read exactly the
+    way ``_dynamic_blocks`` reads its flag — ``b.get("nostr")``.
+    """
+    if not isinstance(doc, dict):
+        return []
+    blocks = doc.get("blocks")
+    if not isinstance(blocks, list):
+        return []
+    return [b for b in blocks if isinstance(b, dict) and b.get("nostr")]
+
+
+async def _publish_notes(
+    runtime: Any, owner: str, messages: list[str],
+) -> dict[str, Any]:
+    """Publish each Nostr companion note, billed per note, and report the result.
+
+    Called AFTER the tweet is recorded sent, so a slow relay never delays the sent
+    record. There is no proven session at 3am, so this cannot make a tool call: it
+    bills explicitly and calls ``publish_note`` directly — the same pattern
+    ``publish_one`` uses for ``resolve_dynamic_block`` and ``post_tweet``.
+
+    Money rules mirror the ``post_nostr_message`` tool: charge, publish, and refund
+    the fare only when **no** relay accepted the note (a partial publish is a
+    success). A pricing denial or insufficient balance SKIPS that note and is
+    reported — it never holds or pauses a post whose tweet is already live.
+    Returns ``{"published": n, "failed": [{"note": i, "reason": ...}, ...]}``.
+    """
+    import asyncio
+
+    from tollbooth.tool_identity import capability_uuid
+
+    from excalibur_mcp.nostr_note import publish_note
+
+    nostr_id = capability_uuid("post_nostr_message")
+    published = 0
+    failed: list[dict[str, Any]] = []
+    for i, message in enumerate(messages):
+        cost, denial = await runtime._resolve_pricing(
+            nostr_id, "post_nostr_message", "write", {},
+        )
+        if denial is not None:
+            failed.append({"note": i, "reason": denial.get("error_code") or "pricing_unavailable"})
+            continue
+        billing = await runtime._apply_billing(owner, "post_nostr_message", cost, [])
+        if isinstance(billing, dict):  # insufficient / expired balance
+            failed.append({"note": i, "reason": billing.get("error_code") or "insufficient_balance"})
+            continue
+        try:
+            # Relay I/O is blocking websockets — run it off the event loop the same
+            # way server.py calls it.
+            result = await asyncio.to_thread(publish_note, message, owner)
+        except Exception as exc:  # noqa: BLE001 — money path, refund then report
+            await runtime.rollback_debit(nostr_id, owner)
+            failed.append({"note": i, "reason": str(exc) or type(exc).__name__})
+            continue
+        if isinstance(result, dict) and result.get("success"):
+            published += 1
+        else:
+            # No relay accepted (or setup failed) — no reach delivered, refund.
+            await runtime.rollback_debit(nostr_id, owner)
+            reason = (result or {}).get("error") if isinstance(result, dict) else None
+            failed.append({"note": i, "reason": reason or "no_relay_accepted"})
+    return {"published": published, "failed": failed}
+
+
 async def _owner_voice(owner: str) -> tuple[str, list[str]]:
     """The owner's saved Voice (profile + active ban texts) for tone-matching.
 
@@ -210,9 +279,12 @@ async def _resolve_post_text(
             return [x.strip() for x in raw.replace(",", "\n").split("\n") if x.strip()]
         return []
 
-    # Static texts known up front; dynamic slots fill in after resolution.
+    # Static texts known up front; dynamic slots fill in after resolution. Nostr
+    # blocks are companion notes, never tweet copy — they compose to "" so they
+    # stay out of the tweet while remaining in the rendered snapshot below.
     rendered: list[str] = [
-        "" if (isinstance(b, dict) and b.get("dynamic")) else str((b or {}).get("text", ""))
+        "" if (isinstance(b, dict) and (b.get("dynamic") or b.get("nostr")))
+        else str((b or {}).get("text", ""))
         for b in blocks
     ]
 
@@ -341,6 +413,7 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
 
     doc = _as_dict(row.get("doc"))
     dynamic = _dynamic_blocks(doc)
+    nostr = _nostr_blocks(doc)
     text = (row.get("text_cache") or "").strip()
     # The doc snapshotted into a recurring occurrence — replaced below with the
     # rendered (static) doc when the post carried dynamic blocks.
@@ -425,6 +498,21 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
     )
     tweet_url = (result or {}).get("tweet_url") if isinstance(result, dict) else None
 
+    # Substitute the live X URL into each Nostr companion note and patch those
+    # blocks in the occurrence snapshot — so a recurring firing's history shows the
+    # note that actually went out, the same intent as rendered_blocks for dynamic
+    # blocks. Every {{tweet_url}} is replaced; a note without the token publishes
+    # verbatim. Guarded on tweet_url: a note is never published for an absent URL.
+    note_messages: list[str] = []
+    if nostr and tweet_url:
+        snap_blocks = list(occurrence_doc.get("blocks") or [])
+        for i, b in enumerate(snap_blocks):
+            if isinstance(b, dict) and b.get("nostr"):
+                message = str(b.get("text", "")).replace("{{tweet_url}}", tweet_url)
+                note_messages.append(message)
+                snap_blocks[i] = {**b, "text": message}
+        occurrence_doc = {**occurrence_doc, "blocks": snap_blocks}
+
     if next_status == "scheduled":
         # Recurring: snapshot THIS occurrence as its own Sent post (with the X
         # URL), then advance the recurring template — so every posting stays
@@ -445,15 +533,22 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
         # One-shot: the row itself becomes the Sent record.
         await posts_db.mark_sent(post_id, sent_at.isoformat(), "sent", None, tweet_url)
 
+    # Publish the Nostr companion notes LAST — the send is already recorded, so a
+    # slow relay never delays it and a relay miss never un-sends the live tweet.
+    nostr_result = await _publish_notes(runtime, owner, note_messages) if note_messages else None
+
     # `fallbacks` rides along on a SUCCESSFUL publication on purpose: the tweet
     # went out, but not with the words the author asked for. Without it the run
-    # reads as a clean success and the degradation is invisible.
+    # reads as a clean success and the degradation is invisible. `nostr` rides
+    # along the same way — a companion note that missed its relays is reported,
+    # never a reason to un-send the post.
     return await _record({
         "post_id": post_id, "owner": owner, "outcome": "posted",
         "next_status": next_status,
         "tweet_id": (result or {}).get("tweet_id") if isinstance(result, dict) else None,
         "tweet_url": tweet_url,
         **({"fallbacks": fallbacks} if fallbacks else {}),
+        **({"nostr": nostr_result} if nostr_result is not None else {}),
     })
 
 
