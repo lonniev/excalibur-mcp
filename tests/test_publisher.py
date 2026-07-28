@@ -9,7 +9,7 @@ the owner must fix, and reschedule vs retire correctly.
 
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -461,6 +461,132 @@ def test_fallback_reason_separates_the_blocks_budget_from_an_outage():
 # upstream `{"error_code": None}` slips past the default and lands as a blank
 # reason — a post that quietly didn't publish, which is the exact failure this
 # service keeps relearning.
+
+# -- companion Nostr notes ---------------------------------------------------
+#
+# A nostr block never enters the tweet; after the tweet lands, its text is
+# published as a companion note with `{{tweet_url}}` replaced by the live URL.
+# A relay miss is a situation, not a publish failure — the post stays `sent`.
+
+_NOSTR_DOC = {"blocks": [
+    {"text": "Fresh thread on X.", "flags": []},
+    {"text": "New post is live: {{tweet_url}} — {{tweet_url}}", "flags": [], "nostr": True},
+]}
+
+
+def test_with_tweet_url_substitutes_every_occurrence():
+    # zero, one, and many occurrences — a note with no token rides verbatim.
+    assert publisher._with_tweet_url("no token here", "u") == "no token here"
+    assert publisher._with_tweet_url("see {{tweet_url}}", "u") == "see u"
+    assert publisher._with_tweet_url("{{tweet_url}} & {{tweet_url}}", "u") == "u & u"
+
+
+def test_nostr_blocks_selects_only_nostr_blocks():
+    assert len(publisher._nostr_blocks(_NOSTR_DOC)) == 1
+    assert publisher._nostr_blocks({"blocks": []}) == []
+    assert publisher._nostr_blocks(None) == []
+
+
+@pytest.mark.asyncio
+async def test_nostr_block_publishes_note_after_tweet_with_url():
+    """The nostr block is excluded from the tweet and published as a companion
+    note only after X returns a URL, with `{{tweet_url}}` substituted."""
+    rt = _runtime()
+    url = "https://x.com/i/status/twn"
+    client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "twn", "tweet_url": url}))
+    pub = Mock(return_value={"success": True, "accepted": 2, "attempted": 3})
+    with _claimed(doc=_NOSTR_DOC, recurrence=None, cease_at=None), \
+         patch.object(publisher.posts_db, "mark_sent", AsyncMock()) as mark, \
+         patch("excalibur_mcp.nostr_note.publish_note", pub), \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        out = await publisher.publish_one(rt, "p1")
+
+    assert out["outcome"] == "posted"
+    assert mark.await_args.args[2] == "sent"
+    # the note fired once, scribed for the owner, with EVERY token substituted
+    pub.assert_called_once()
+    msg, author = pub.call_args.args[0], pub.call_args.args[1]
+    assert author == NPUB
+    assert "{{tweet_url}}" not in msg and msg.count(url) == 2
+    # the note text never entered the tweet (composeText-equivalent exclusion)
+    assert "New post is live" not in client.post_tweet.await_args.args[0]
+    assert out["nostr"] == {"published": 1, "failed": []}
+    rt.rollback_debit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_nostr_relay_rejection_keeps_post_sent_and_refunds():
+    """No relay accepts the note — the tweet is already live, so the post stays
+    `sent`; the miss rides back on `nostr.failed` and the note's fare is refunded."""
+    rt = _runtime()
+    url = "https://x.com/i/status/twr"
+    client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "twr", "tweet_url": url}))
+    pub = Mock(return_value={"success": False, "error": "no relay accepted the note"})
+    with _claimed(doc=_NOSTR_DOC, recurrence=None, cease_at=None), \
+         patch.object(publisher.posts_db, "mark_sent", AsyncMock()) as mark, \
+         patch("excalibur_mcp.nostr_note.publish_note", pub), \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        out = await publisher.publish_one(rt, "p1")
+
+    assert out["outcome"] == "posted"           # never flipped out of sent
+    assert mark.await_args.args[2] == "sent"
+    assert out["nostr"]["published"] == 0 and len(out["nostr"]["failed"]) == 1
+    rt.rollback_debit.assert_awaited_once()      # total relay failure refunds the fare
+
+
+@pytest.mark.asyncio
+async def test_recurring_nostr_snapshot_carries_substituted_note():
+    """The recurring occurrence's history shows the note that actually went out —
+    the substituted URL, not the `{{tweet_url}}` template."""
+    rt = _runtime()
+    url = "https://x.com/i/status/tws"
+    client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "tws", "tweet_url": url}))
+    pub = Mock(return_value={"success": True, "accepted": 1})
+    with _claimed(doc=_NOSTR_DOC), \
+         patch.object(publisher.posts_db, "mark_sent", AsyncMock()), \
+         patch.object(publisher.posts_db, "create_sent_occurrence", AsyncMock()) as occ, \
+         patch("excalibur_mcp.nostr_note.publish_note", pub), \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        out = await publisher.publish_one(rt, "p1")
+
+    assert out["outcome"] == "posted"
+    snap = [b for b in occ.await_args.kwargs["doc"]["blocks"] if b.get("nostr")]
+    assert len(snap) == 1
+    assert "{{tweet_url}}" not in snap[0]["text"] and snap[0]["text"].count(url) == 2
+
+
+@pytest.mark.asyncio
+async def test_nostr_only_post_is_not_publishable():
+    """A post whose only content is nostr blocks has no tweet to publish."""
+    rt = _runtime()
+    doc = {"blocks": [{"text": "just a note {{tweet_url}}", "flags": [], "nostr": True}]}
+    client = SimpleNamespace(post_tweet=AsyncMock())
+    with _claimed(doc=doc, text_cache=""), \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        out = await publisher.publish_one(rt, "p1")
+    assert out["outcome"] == "held" and out["reason"] == "empty_text_cache"
+    client.post_tweet.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_nostr_insufficient_balance_skips_note_never_holds_sent_post():
+    """A note's billing denial skips that note and is reported; it never holds or
+    pauses the already-sent post."""
+    rt = _runtime()
+    url = "https://x.com/i/status/twb"
+    client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "twb", "tweet_url": url}))
+    pub = Mock(return_value={"success": True})
+    # First _apply_billing call (post_tweet) succeeds; the note's call is denied.
+    rt._apply_billing = AsyncMock(side_effect=[5, {"success": False, "error_code": "insufficient_balance"}])
+    with _claimed(doc=_NOSTR_DOC, recurrence=None, cease_at=None), \
+         patch.object(publisher.posts_db, "mark_sent", AsyncMock()), \
+         patch("excalibur_mcp.nostr_note.publish_note", pub), \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        out = await publisher.publish_one(rt, "p1")
+    assert out["outcome"] == "posted"
+    pub.assert_not_called()  # note never published — its fare was denied
+    assert out["nostr"] == {"published": 0, "failed": [{"reason": "insufficient_balance"}]}
+
 
 def test_stated_falls_back_when_a_call_site_hands_over_nothing():
     assert publisher._stated("insufficient_balance", "p1") == "insufficient_balance"

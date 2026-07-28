@@ -704,6 +704,30 @@ export async function postTweet(text: string): Promise<PostTweetResult> {
   return callTool<PostTweetResult>("post_tweet", { text });
 }
 
+// ─── Companion Nostr note (paid) ───────────────────────────────────────────
+
+export interface PostNostrMessageResult {
+  success?: boolean;
+  event_id?: string;
+  author_npub?: string;
+  scribe_pubkey?: string;
+  accepted?: number;
+  attempted?: number;
+  relays?: { relay: string; accepted: boolean; error?: string }[];
+  error?: string;
+  error_code?: string;
+  message?: string;
+}
+
+/// Publish a public Nostr note (kind 1) authored by the proven session npub —
+/// the wheel mints an ephemeral scribe key, signs, and `p`-tags the author.
+/// The author is taken from the proven session (never a free-form argument), so
+/// the caller passes only the message. Paid tool (npub/proof envelope injected by
+/// callTool). Succeeds if at least one relay accepts it.
+export async function postNostrMessage(message: string): Promise<PostNostrMessageResult> {
+  return callTool<PostNostrMessageResult>("post_nostr_message", { message });
+}
+
 // ─── Refine with Claude (server-side; the operator's key never leaves the BE) ──
 
 export interface RefineResult {

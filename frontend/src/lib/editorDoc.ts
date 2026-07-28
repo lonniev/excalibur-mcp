@@ -34,6 +34,22 @@ export interface Block {
   // Author time budget (seconds) for resolving this block: bounds runtime and
   // sets the poll cadence; the operator may price it ad valorem. Clamped 60..900.
   runtimeLimit?: number;
+  // A nostr block contributes NOTHING to the tweet (not the body, not the char
+  // meter, not flags/refine). After the tweet lands, its `text` is published as a
+  // companion Nostr note with `{{tweet_url}}` replaced by the live tweet URL.
+  // Mutually exclusive with `dynamic`.
+  nostr?: boolean;
+}
+
+// The token a nostr block's text can carry; substituted with the live tweet URL
+// at publish time (after X returns it). Replaced at EVERY occurrence.
+export const TWEET_URL_TOKEN = "{{tweet_url}}";
+
+/// Substitute the live tweet URL into a nostr note at every `{{tweet_url}}`.
+/// Plain global string replace (the token is a literal, never a regex), so a
+/// note with no token is returned verbatim.
+export function withTweetUrl(text: string, url: string): string {
+  return text.split(TWEET_URL_TOKEN).join(url);
 }
 
 export interface Ban {
@@ -122,6 +138,9 @@ export const DYNAMIC_PLACEHOLDER = "⟨dynamic⟩";
 
 export function composeText(blocks: Block[]): string {
   return blocks
+    // A nostr block never enters the tweet — filter it out entirely (before the
+    // map) so it leaves no stray `\n\n` seam in the composed text.
+    .filter((b) => !b.nostr)
     .map((b) => (b.dynamic ? (b.fallback?.trim() || DYNAMIC_PLACEHOLDER) : b.text))
     .join("\n\n")
     .trim();
@@ -130,6 +149,11 @@ export function composeText(blocks: Block[]): string {
 /// Does this document carry any dynamic (prompt-driven) block?
 export function hasDynamic(blocks: Block[]): boolean {
   return blocks.some((b) => b.dynamic);
+}
+
+/// The nostr blocks in this document (companion notes posted after the tweet).
+export function nostrBlocks(blocks: Block[]): Block[] {
+  return blocks.filter((b) => b.nostr);
 }
 
 function freshFlag(start: number, end: number, colorIdx: number, note = "", regionId?: string): Flag {
@@ -155,6 +179,7 @@ interface StoredBlock {
   domains?: string;
   maxFetches?: number;
   runtimeLimit?: number;
+  nostr?: boolean;
 }
 
 /// Normalize a stored `doc` that may arrive as a parsed object OR a JSON string
@@ -188,6 +213,7 @@ export function parsePostDoc(doc: unknown, textCache?: string): Block[] {
             domains: (b as StoredBlock)?.domains,
             maxFetches: (b as StoredBlock)?.maxFetches,
             runtimeLimit: (b as StoredBlock)?.runtimeLimit,
+            nostr: (b as StoredBlock)?.nostr,
           },
     );
   } else if (textCache) {
@@ -197,8 +223,9 @@ export function parsePostDoc(doc: unknown, textCache?: string): Block[] {
   return raw.map((b) => ({
     id: uid(),
     text: b.text,
-    // A dynamic block's text is a prompt, not flaggable copy — drop any flags.
-    flags: b.dynamic
+    // A dynamic block's text is a prompt and a nostr block's is a note — neither
+    // is flaggable copy, so drop any flags.
+    flags: b.dynamic || b.nostr
       ? []
       : (b.flags ?? [])
           .filter((f) => typeof f.start === "number" && typeof f.end === "number" && f.end > f.start)
@@ -208,18 +235,20 @@ export function parsePostDoc(doc: unknown, textCache?: string): Block[] {
     ...(b.domains ? { domains: b.domains } : {}),
     ...(b.maxFetches ? { maxFetches: b.maxFetches } : {}),
     ...(b.runtimeLimit ? { runtimeLimit: b.runtimeLimit } : {}),
+    ...(b.nostr ? { nostr: true } : {}),
   }));
 }
 
 export interface PostDocPayload {
-  blocks: { text: string; flags: StoredFlag[]; dynamic?: boolean; fallback?: string; domains?: string; maxFetches?: number; runtimeLimit?: number }[];
+  blocks: { text: string; flags: StoredFlag[]; dynamic?: boolean; fallback?: string; domains?: string; maxFetches?: number; runtimeLimit?: number; nostr?: boolean }[];
 }
 
 export function serializeBlocks(blocks: Block[]): PostDocPayload {
   return {
     blocks: blocks.map((b) => ({
       text: b.text,
-      flags: b.dynamic
+      // Neither a dynamic prompt nor a nostr note carries flaggable copy.
+      flags: b.dynamic || b.nostr
         ? []
         : b.flags.map((f) => ({ start: f.start, end: f.end, note: f.note, colorIdx: f.colorIdx, ...(f.regionId ? { regionId: f.regionId } : {}) })),
       ...(b.dynamic ? { dynamic: true } : {}),
@@ -227,6 +256,7 @@ export function serializeBlocks(blocks: Block[]): PostDocPayload {
       ...(b.domains ? { domains: b.domains } : {}),
       ...(b.maxFetches ? { maxFetches: b.maxFetches } : {}),
       ...(b.runtimeLimit ? { runtimeLimit: b.runtimeLimit } : {}),
+      ...(b.nostr ? { nostr: true } : {}),
     })),
   };
 }

@@ -133,6 +133,33 @@ def _dynamic_blocks(doc: dict[str, Any] | None) -> list[dict[str, Any]]:
     return [b for b in blocks if isinstance(b, dict) and b.get("dynamic")]
 
 
+# -- companion Nostr notes ---------------------------------------------------
+# A nostr block never enters the tweet (composeText excludes it, so it contributes
+# nothing to text_cache). After the tweet lands, each nostr block's text is
+# published as its own kind-1 note, with the live tweet URL substituted in.
+
+TWEET_URL_TOKEN = "{{tweet_url}}"
+
+
+def _with_tweet_url(text: str, url: str) -> str:
+    """Substitute the live tweet URL into a note at every ``{{tweet_url}}``.
+
+    A plain string replace (mirrors the FE ``withTweetUrl``): every occurrence is
+    replaced, and a note with no token is returned verbatim.
+    """
+    return text.replace(TWEET_URL_TOKEN, url)
+
+
+def _nostr_blocks(doc: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """The nostr blocks in a post's doc (empty for legacy/static posts)."""
+    if not isinstance(doc, dict):
+        return []
+    blocks = doc.get("blocks")
+    if not isinstance(blocks, list):
+        return []
+    return [b for b in blocks if isinstance(b, dict) and b.get("nostr")]
+
+
 async def _owner_voice(owner: str) -> tuple[str, list[str]]:
     """The owner's saved Voice (profile + active ban texts) for tone-matching.
 
@@ -341,6 +368,7 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
 
     doc = _as_dict(row.get("doc"))
     dynamic = _dynamic_blocks(doc)
+    nostr = _nostr_blocks(doc)
     text = (row.get("text_cache") or "").strip()
     # The doc snapshotted into a recurring occurrence — replaced below with the
     # rendered (static) doc when the post carried dynamic blocks.
@@ -425,6 +453,21 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
     )
     tweet_url = (result or {}).get("tweet_url") if isinstance(result, dict) else None
 
+    # Substitute the live tweet URL into each nostr block — both for the notes we
+    # publish below and for the occurrence snapshot's history (same intent as
+    # `rendered_blocks` for dynamic blocks). No tweet URL → no note, ever.
+    nostr_messages: list[str] = []
+    if nostr and tweet_url:
+        patched: list[Any] = []
+        for b in occurrence_doc.get("blocks") or []:
+            if isinstance(b, dict) and b.get("nostr"):
+                msg = _with_tweet_url(str(b.get("text", "")), tweet_url)
+                nostr_messages.append(msg)
+                patched.append({**b, "text": msg})
+            else:
+                patched.append(b)
+        occurrence_doc = {**occurrence_doc, "blocks": patched}
+
     if next_status == "scheduled":
         # Recurring: snapshot THIS occurrence as its own Sent post (with the X
         # URL), then advance the recurring template — so every posting stays
@@ -445,6 +488,14 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
         # One-shot: the row itself becomes the Sent record.
         await posts_db.mark_sent(post_id, sent_at.isoformat(), "sent", None, tweet_url)
 
+    # 6. Companion Nostr notes, published LAST so a slow relay never delays the
+    #    sent record. The tweet is already live: a note that no relay accepts is a
+    #    situation, not a publish failure — it rides back on the successful result
+    #    as `nostr: {published, failed}` (the way `fallbacks` does) and never flips
+    #    the post out of `sent`. Each note is billed explicitly (no proven session
+    #    at 3am) and its fare is refunded when no relay accepts.
+    nostr_result = await _publish_nostr_notes(runtime, owner, nostr_messages) if nostr else None
+
     # `fallbacks` rides along on a SUCCESSFUL publication on purpose: the tweet
     # went out, but not with the words the author asked for. Without it the run
     # reads as a clean success and the degradation is invisible.
@@ -454,7 +505,54 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
         "tweet_id": (result or {}).get("tweet_id") if isinstance(result, dict) else None,
         "tweet_url": tweet_url,
         **({"fallbacks": fallbacks} if fallbacks else {}),
+        **({"nostr": nostr_result} if nostr_result is not None else {}),
     })
+
+
+async def _publish_nostr_notes(
+    runtime: Any, owner: str, messages: list[str],
+) -> dict[str, Any]:
+    """Publish each companion note for an already-sent post; report reach.
+
+    Returns ``{"published": n, "failed": [...]}``. Per note: price + bill the
+    owner explicitly (the scheduler path has no proven session), publish off the
+    event loop (relay I/O is blocking websockets), and refund the fare when no
+    relay accepts. A pricing denial or insufficient balance skips that note and is
+    reported — it never holds or pauses the already-sent post.
+    """
+    import asyncio
+
+    from tollbooth.tool_identity import capability_uuid
+
+    from excalibur_mcp.nostr_note import publish_note
+
+    nostr_id = capability_uuid("post_nostr_message")
+    published = 0
+    failed: list[dict[str, Any]] = []
+    for msg in messages:
+        cost, denial = await runtime._resolve_pricing(
+            nostr_id, "post_nostr_message", "write", {},
+        )
+        if denial is not None:
+            failed.append({"reason": denial.get("error_code") or "pricing_unavailable"})
+            continue
+        billing = await runtime._apply_billing(owner, "post_nostr_message", cost, [])
+        if isinstance(billing, dict):  # insufficient / expired balance
+            failed.append({"reason": "insufficient_balance"})
+            continue
+        try:
+            result = await asyncio.to_thread(publish_note, msg, owner)
+        except Exception as exc:  # noqa: BLE001 — money path, refund then report
+            await runtime.rollback_debit(nostr_id, owner)
+            failed.append({"reason": str(exc) or type(exc).__name__})
+            continue
+        if result.get("success"):  # >=1 relay accepted — a partial publish is a win
+            published += 1
+        else:
+            # No relay accepted (or setup failed) — no reach delivered, refund.
+            await runtime.rollback_debit(nostr_id, owner)
+            failed.append({"reason": result.get("error") or "no_relay_accepted"})
+    return {"published": published, "failed": failed}
 
 
 def _now() -> datetime:
