@@ -34,6 +34,11 @@ export interface Block {
   // Author time budget (seconds) for resolving this block: bounds runtime and
   // sets the poll cadence; the operator may price it ad valorem. Clamped 60..900.
   runtimeLimit?: number;
+  // A nostr block holds static formatted copy like a text block, but never
+  // enters the tweet. After the tweet publishes, its text goes out as a companion
+  // Nostr note with {{tweet_url}} replaced by the live X URL. Mutually exclusive
+  // with `dynamic`.
+  nostr?: boolean;
 }
 
 export interface Ban {
@@ -120,8 +125,21 @@ export function charOffset(root: Node, node: Node, offset: number): number {
 // list-excerpt only — the live post resolves the prompt fresh server-side).
 export const DYNAMIC_PLACEHOLDER = "⟨dynamic⟩";
 
+// Token a Nostr companion note can embed; replaced with the live X URL after
+// the tweet lands. Literal string replace at every occurrence — not a regex
+// built from input.
+export const TWEET_URL_TOKEN = "{{tweet_url}}";
+
+/// Substitute every {{tweet_url}} occurrence in `text` with the live X URL.
+export function withTweetUrl(text: string, url: string): string {
+  return text.split(TWEET_URL_TOKEN).join(url);
+}
+
 export function composeText(blocks: Block[]): string {
+  // Nostr blocks never contribute to the tweet body (or the char meter): filter
+  // them before map so no stray \n\n seam is left behind.
   return blocks
+    .filter((b) => !b.nostr)
     .map((b) => (b.dynamic ? (b.fallback?.trim() || DYNAMIC_PLACEHOLDER) : b.text))
     .join("\n\n")
     .trim();
@@ -130,6 +148,11 @@ export function composeText(blocks: Block[]): string {
 /// Does this document carry any dynamic (prompt-driven) block?
 export function hasDynamic(blocks: Block[]): boolean {
   return blocks.some((b) => b.dynamic);
+}
+
+/// Does this document carry any Nostr companion-note block?
+export function hasNostr(blocks: Block[]): boolean {
+  return blocks.some((b) => b.nostr);
 }
 
 function freshFlag(start: number, end: number, colorIdx: number, note = "", regionId?: string): Flag {
@@ -155,6 +178,7 @@ interface StoredBlock {
   domains?: string;
   maxFetches?: number;
   runtimeLimit?: number;
+  nostr?: boolean;
 }
 
 /// Normalize a stored `doc` that may arrive as a parsed object OR a JSON string
@@ -188,6 +212,7 @@ export function parsePostDoc(doc: unknown, textCache?: string): Block[] {
             domains: (b as StoredBlock)?.domains,
             maxFetches: (b as StoredBlock)?.maxFetches,
             runtimeLimit: (b as StoredBlock)?.runtimeLimit,
+            nostr: (b as StoredBlock)?.nostr,
           },
     );
   } else if (textCache) {
@@ -197,13 +222,14 @@ export function parsePostDoc(doc: unknown, textCache?: string): Block[] {
   return raw.map((b) => ({
     id: uid(),
     text: b.text,
-    // A dynamic block's text is a prompt, not flaggable copy — drop any flags.
-    flags: b.dynamic
+    // A dynamic or nostr block's text is not flaggable copy — drop any flags.
+    flags: b.dynamic || b.nostr
       ? []
       : (b.flags ?? [])
           .filter((f) => typeof f.start === "number" && typeof f.end === "number" && f.end > f.start)
           .map((f) => freshFlag(f.start, f.end, f.colorIdx ?? 0, f.note ?? "", f.regionId)),
-    ...(b.dynamic ? { dynamic: true } : {}),
+    // nostr and dynamic are mutually exclusive; prefer dynamic if both were stored.
+    ...(b.dynamic ? { dynamic: true } : b.nostr ? { nostr: true } : {}),
     ...(b.fallback ? { fallback: b.fallback } : {}),
     ...(b.domains ? { domains: b.domains } : {}),
     ...(b.maxFetches ? { maxFetches: b.maxFetches } : {}),
@@ -212,17 +238,28 @@ export function parsePostDoc(doc: unknown, textCache?: string): Block[] {
 }
 
 export interface PostDocPayload {
-  blocks: { text: string; flags: StoredFlag[]; dynamic?: boolean; fallback?: string; domains?: string; maxFetches?: number; runtimeLimit?: number }[];
+  blocks: {
+    text: string;
+    flags: StoredFlag[];
+    dynamic?: boolean;
+    fallback?: string;
+    domains?: string;
+    maxFetches?: number;
+    runtimeLimit?: number;
+    nostr?: boolean;
+  }[];
 }
 
 export function serializeBlocks(blocks: Block[]): PostDocPayload {
   return {
     blocks: blocks.map((b) => ({
       text: b.text,
-      flags: b.dynamic
+      // Nostr and dynamic blocks carry no flags.
+      flags: b.dynamic || b.nostr
         ? []
         : b.flags.map((f) => ({ start: f.start, end: f.end, note: f.note, colorIdx: f.colorIdx, ...(f.regionId ? { regionId: f.regionId } : {}) })),
       ...(b.dynamic ? { dynamic: true } : {}),
+      ...(b.nostr && !b.dynamic ? { nostr: true } : {}),
       ...(b.fallback ? { fallback: b.fallback } : {}),
       ...(b.domains ? { domains: b.domains } : {}),
       ...(b.maxFetches ? { maxFetches: b.maxFetches } : {}),

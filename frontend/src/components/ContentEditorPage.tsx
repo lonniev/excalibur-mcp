@@ -35,7 +35,7 @@ const EMOJI_GROUPS: { label: string; emojis: string[] }[] = [
   { label: "Money & Crypto", emojis: ["₿", "💰", "💸", "💵", "💴", "💶", "💷", "🪙", "💳", "📈", "📉", "📊", "💹", "🧾", "🏦", "⚖️", "🤑", "💲", "🏧", "💎"] },
 ];
 import {
-  createPost, deletePost, getPost, getSnippet, getVoice, listPosts, postTweet, refinePostRegion,
+  createPost, deletePost, getPost, getSnippet, getVoice, listPosts, postNostrMessage, postTweet, refinePostRegion,
   resolveDynamicBlock, saveSnippet, saveVoice, updatePost,
   OAUTH_NEEDED_CODES, type PostRow, type PostSummary, type Recurrence,
 } from "../lib/mcp";
@@ -43,7 +43,7 @@ import { debugPush } from "../lib/debugLog";
 import TweetPreviewModal from "./TweetPreviewModal";
 import {
   charOffset, composeText, DEFAULT_BANS, DEFAULT_VOICE, hasDynamic, overlaps, paletteOf,
-  parsePostDoc, segmentize, serializeBlocks, uid,
+  parsePostDoc, segmentize, serializeBlocks, TWEET_URL_TOKEN, uid, withTweetUrl,
   type Ban, type Block, type Flag as FlagT,
 } from "../lib/editorDoc";
 import {
@@ -694,19 +694,40 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   };
 
   // Flip a block between static text and a dynamic prompt, in place. Turning it
-  // dynamic clears any flags (a prompt isn't flaggable copy); turning it static
-  // drops the dynamic/fallback fields. Either way, clear its cached resolution.
+  // dynamic clears any flags (a prompt isn't flaggable copy) and drops `nostr`
+  // (the two kinds are mutually exclusive). Turning it static drops the
+  // dynamic/fallback fields. Either way, clear its cached resolution.
   const toggleBlockDynamic = useCallback((blockId: string) => {
     let nowDynamic = false;
     setBlocks((prev) => prev.map((b) => {
       if (b.id !== blockId) return b;
       if (b.dynamic) return { id: b.id, text: b.text, flags: [] };
       nowDynamic = true;
-      return { ...b, dynamic: true, flags: [] };
+      // dynamic ⇄ nostr are exclusive: promote by dropping nostr + dynamic extras.
+      const { nostr: _n, fallback: _f, domains: _d, maxFetches: _m, runtimeLimit: _r, ...rest } = b;
+      return { ...rest, dynamic: true, flags: [] };
     }));
     setResolved((r) => { const { [blockId]: _drop, ...rest } = r; return rest; });
     setHint(nowDynamic
       ? "Now a dynamic prompt — it runs at post time. Edit the prompt and fallback below, then Run to preview."
+      : "Back to a static text block.");
+  }, []);
+
+  // Flip a block between static text and a Nostr companion note. Turning it on
+  // clears flags and drops `dynamic` (mutually exclusive); turning it off drops
+  // the `nostr` flag. Nostr copy never enters the tweet.
+  const toggleBlockNostr = useCallback((blockId: string) => {
+    let nowNostr = false;
+    setBlocks((prev) => prev.map((b) => {
+      if (b.id !== blockId) return b;
+      if (b.nostr) return { id: b.id, text: b.text, flags: [] };
+      nowNostr = true;
+      // Prefer static nostr shape — drop dynamic fields if any.
+      return { id: b.id, text: b.text, flags: [], nostr: true };
+    }));
+    setResolved((r) => { const { [blockId]: _drop, ...rest } = r; return rest; });
+    setHint(nowNostr
+      ? "Nostr note — posts after the tweet lands. Use {{tweet_url}} to embed the live X link."
       : "Back to a static text block.");
   }, []);
 
@@ -994,19 +1015,22 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   // Compose the text to actually post: static blocks verbatim, each dynamic block
   // resolved now (reusing a current Preview result, else a fresh paid run). A
   // dynamic block that fails with no fallback aborts the post — never a gap.
+  // Nostr blocks are skipped entirely — they never enter the tweet body.
   async function buildFinalText(): Promise<{ text: string; error?: string }> {
-    if (!hasDynamic(blocks)) return { text: composed };
+    const tweetBlocks = blocks.filter((b) => !b.nostr);
+    if (!hasDynamic(tweetBlocks)) return { text: composed };
     const activeBans = bans.filter((b) => b.on).map((b) => b.text);
     // Context for each dynamic block: static siblings + OTHER dynamics as their
     // fallback (we resolve in parallel, so none sees another's resolved value).
+    // Nostr siblings are excluded so they don't leak into the prompt context.
     const contextFor = (i: number) =>
-      blocks
+      tweetBlocks
         .map((x, j) => (j === i ? "⟨HERE⟩" : x.dynamic ? (x.fallback ?? "") : x.text))
         .filter(Boolean)
         .join("\n\n");
 
     // Resolve every dynamic block concurrently (reusing a current Preview result).
-    const rendered = await Promise.all(blocks.map(async (b, i): Promise<string | null> => {
+    const rendered = await Promise.all(tweetBlocks.map(async (b, i): Promise<string | null> => {
       if (!b.dynamic) return b.text;
       const cached = resolved[b.id];
       if (cached && cached.promptKey === b.text && !cached.error) return cached.text;
@@ -1087,6 +1111,30 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
         return;
       }
       const tweetUrl = r.tweet_url ?? "";
+      // Companion Nostr notes fire only after the tweet succeeds AND we have a URL.
+      // A relay miss is a soft hint — it never flips the "Posted" state. Save the
+      // post row with the authored doc: {{tweet_url}} stays unsubstituted, same
+      // way a dynamic block keeps its prompt while text_cache holds the resolved text.
+      let nostrHint = "";
+      if (tweetUrl) {
+        const nostrBlocks = blocks.filter((b) => b.nostr && b.text.trim());
+        for (const nb of nostrBlocks) {
+          try {
+            const note = await postNostrMessage(withTweetUrl(nb.text, tweetUrl));
+            if (note.error || note.success === false) {
+              const why = note.message || note.error || note.error_code || "relay rejected";
+              debugPush("error", `post_nostr_message failed: ${why}`);
+              nostrHint = nostrHint || `Posted to X; Nostr note didn't land (${why}).`;
+            } else {
+              debugPush("info", `post_nostr_message ok → ${note.event_id || note.note_id || "ok"}`);
+            }
+          } catch (e) {
+            const why = (e as Error).message;
+            debugPush("error", `post_nostr_message threw: ${why}`);
+            nostrHint = nostrHint || `Posted to X; Nostr note didn't land (${why}).`;
+          }
+        }
+      }
       const docPayload = serializeBlocks(blocks);
       // The tweet is live; now record it as Sent. A soft-fail here (the tool's
       // catch_errors returns {success:false,…} rather than throwing) was
@@ -1111,7 +1159,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
         setError(`Posted to X, but couldn't record it as Sent (${why}). The tweet is live — try Save again to record it.`);
         return;
       }
-      setHint("Posted to X.");
+      setHint(nostrHint || "Posted to X.");
       setLoadedStatus("sent");
       baseline.current = sigOf(blocks, publishAt, freq, interval, ceaseAt, title);
       clearDraft(id ?? "new");
@@ -1409,7 +1457,8 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
                     <span className="truncate text-zinc-500">{handle} · now</span>
                   </div>
                   <div className="mt-1 space-y-3">
-                    {blocks.map((b, idx) => (
+                    {/* Tweet body: nostr blocks never appear inside the X card. */}
+                    {(preview ? blocks.filter((b) => !b.nostr) : blocks).map((b, idx) => (
                       <BlockView
                         key={b.id}
                         block={b}
@@ -1421,6 +1470,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
                         resolved={resolved[b.id]}
                         onResolve={() => resolveDynamic(b)}
                         onToggleDynamic={() => toggleBlockDynamic(b.id)}
+                        onToggleNostr={() => toggleBlockNostr(b.id)}
                         onChangeFallback={(t) => setBlockFallback(b.id, t)}
                         onChangeDomains={(t) => setBlockDomains(b.id, t)}
                         onChangeMaxFetches={(n) => setBlockMaxFetches(b.id, n)}
@@ -1462,6 +1512,35 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
                 </div>
               </div>
             </div>
+
+            {/* Preview-only: companion Nostr notes render in a separate panel below
+                the X card. {{tweet_url}} shows as a placeholder pill. Never hits a relay. */}
+            {preview && blocks.some((b) => b.nostr) && (
+              <div className="mt-4 space-y-2">
+                <div className="font-mono text-[11px] uppercase tracking-widest text-sky-400/80">companion Nostr notes · after the tweet lands</div>
+                {blocks.filter((b) => b.nostr).map((b) => (
+                  <div key={b.id} className="rounded-xl border border-sky-500/40 bg-sky-950/40 p-3 text-sm text-sky-100">
+                    <div className="mb-1.5 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-sky-400">
+                      <Share className="h-3 w-3" /> nostr note
+                    </div>
+                    <p className="whitespace-pre-wrap break-words leading-normal">
+                      {b.text
+                        ? b.text.split(TWEET_URL_TOKEN).map((part, i, arr) => (
+                            <span key={i}>
+                              {part}
+                              {i < arr.length - 1 && (
+                                <span className="mx-0.5 inline-flex items-center rounded-full bg-sky-400/20 px-1.5 py-0.5 font-mono text-[11px] text-sky-300 ring-1 ring-sky-400/40">
+                                  {TWEET_URL_TOKEN}
+                                </span>
+                              )}
+                            </span>
+                          ))
+                        : <span className="italic text-sky-400/60">(empty note)</span>}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {!preview && (
               <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -1571,12 +1650,12 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
 // ── block view ──────────────────────────────────────────────────────────────
 function BlockView({
   block, idx, preview, editing, activeFlagId, overIndex, resolved, onResolve,
-  onToggleDynamic, onChangeFallback, onChangeDomains, onChangeMaxFetches, onChangeRuntimeLimit,
+  onToggleDynamic, onToggleNostr, onChangeFallback, onChangeDomains, onChangeMaxFetches, onChangeRuntimeLimit,
   onMouseUp, onFlagClick, onEdit, onDoneEdit, onChange, onFlagBlock, onDelete, onMoveUp, onMoveDown, canDelete, dragHandlers,
 }: {
   block: Block; idx: number; preview: boolean; editing: boolean; activeFlagId: string | null; overIndex: number | null;
   resolved?: ResolvedState; onResolve: () => void;
-  onToggleDynamic: () => void; onChangeFallback: (t: string) => void;
+  onToggleDynamic: () => void; onToggleNostr: () => void; onChangeFallback: (t: string) => void;
   onChangeDomains: (t: string) => void; onChangeMaxFetches: (n: number) => void;
   onChangeRuntimeLimit: (n: number) => void;
   onMouseUp: (blockId: string, el: HTMLElement | null) => void;
@@ -1591,6 +1670,8 @@ function BlockView({
   const segs = useMemo(() => segmentize(block.text, block.flags), [block.text, block.flags]);
 
   if (preview) {
+    // Nostr blocks are filtered out of the X card by the parent and render in a
+    // separate companion panel — they never appear inside the tweet preview.
     // A dynamic block shows its resolved (dry-run) text. While it resolves we show
     // a spinner WITH the author's time budget, so the wait isn't a mystery. If it
     // FAILS we still show the fallback text — but now with a visible reason, so a
@@ -1718,6 +1799,67 @@ function BlockView({
       </div>
     );
   }
+  // A Nostr block is a self-contained card — static formatted copy that never
+  // enters the tweet. After the tweet lands, its text publishes as a companion
+  // Nostr note with {{tweet_url}} substituted. One-click insert for the token;
+  // no flags / refine (same as dynamic).
+  if (block.nostr) {
+    const insertTweetUrl = () => {
+      const ta = document.getElementById(`nostr-ta-${block.id}`) as HTMLTextAreaElement | null;
+      const pos = ta ? ta.selectionStart : block.text.length;
+      onChange(block.text.slice(0, pos) + TWEET_URL_TOKEN + block.text.slice(pos));
+      requestAnimationFrame(() => {
+        if (ta) {
+          ta.focus();
+          ta.selectionStart = ta.selectionEnd = pos + TWEET_URL_TOKEN.length;
+        }
+      });
+    };
+    return (
+      <div className={`group relative -ml-7 rounded-md pl-7 ${overIndex === idx ? "ring-1 ring-amber-300" : ""}`} draggable {...dragHandlers}>
+        <div className="absolute left-0 top-0 flex flex-col items-center opacity-0 transition-opacity group-hover:opacity-100">
+          <GripVertical className="h-4 w-4 cursor-grab text-zinc-300" />
+          <button onClick={onMoveUp} className="text-zinc-300 hover:text-amber-500"><ChevronUp className="h-3.5 w-3.5" /></button>
+          <button onClick={onMoveDown} className="text-zinc-300 hover:text-amber-500"><ChevronDown className="h-3.5 w-3.5" /></button>
+        </div>
+        <div className="rounded-md border border-dashed border-sky-400 bg-sky-50 p-2">
+          <div className="mb-1.5 flex items-center justify-between gap-2">
+            <span className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-sky-700">
+              <Share className="h-3 w-3" /> nostr note · posts after the tweet lands
+            </span>
+            <button
+              onClick={onToggleNostr}
+              title="Turn this back into a normal text block"
+              className="font-mono text-[10px] uppercase tracking-widest text-sky-400 hover:text-sky-700"
+            >
+              make static
+            </button>
+          </div>
+          <textarea
+            id={`nostr-ta-${block.id}`}
+            value={block.text}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder="Companion note text. Use {{tweet_url}} for the live X link."
+            rows={Math.max(2, Math.ceil(block.text.length / 42))}
+            className="w-full resize-none rounded border border-sky-300 bg-white p-2 text-[13px] leading-snug text-sky-900 placeholder:text-sky-300 outline-none focus:border-sky-500"
+          />
+          <div className="mt-1.5 flex flex-wrap items-center gap-2">
+            <button
+              onClick={insertTweetUrl}
+              title={`Insert ${TWEET_URL_TOKEN} at the cursor`}
+              className="rounded-md bg-sky-500 px-3 py-2 font-mono text-[11px] font-medium text-white hover:bg-sky-400"
+            >
+              {TWEET_URL_TOKEN}
+            </button>
+            <span className="font-mono text-[10px] text-sky-500">never enters the tweet</span>
+            <span className="flex-1" />
+            <button onClick={onToggleNostr} title="Turn this back into a plain text block" className="flex items-center gap-1.5 rounded-md px-2.5 py-2 text-[13px] font-medium text-sky-600 hover:bg-sky-100 transition-colors"><Share className="h-4 w-4" /> Make static</button>
+            {canDelete && <button onClick={onDelete} title="Delete block" className="flex items-center gap-1.5 rounded-md px-2.5 py-2 text-[13px] font-medium text-zinc-500 hover:bg-rose-50 hover:text-rose-600 transition-colors"><Trash2 className="h-4 w-4" /> Delete</button>}
+          </div>
+        </div>
+      </div>
+    );
+  }
   if (editing) {
     const applyStyle = (style: UnicodeStyle) => {
       const ta = editRef.current;
@@ -1825,6 +1967,7 @@ function BlockView({
       <div className="flex flex-wrap items-center gap-0.5 border-t border-zinc-100 pt-1">
         <button onClick={onEdit} title="Edit text" className={tBtn}><Pencil className="h-4 w-4" /> Edit</button>
         <button onClick={onToggleDynamic} title="Make dynamic — turn this block's text into a prompt that runs at post time" className={`${tBtn} hover:text-violet-600`}><Wand2 className="h-4 w-4" /> Dynamic</button>
+        <button onClick={onToggleNostr} title="Make Nostr — companion note that posts after the tweet lands" className={`${tBtn} hover:text-sky-600`}><Share className="h-4 w-4" /> Nostr</button>
         <button onClick={onFlagBlock} title="Flag this whole block for AI review" className={`${tBtn} hover:text-amber-600`}><Flag className="h-4 w-4" /> Flag</button>
         {canDelete && <button onClick={onDelete} title="Delete block" className={`${tBtn} hover:text-rose-600`}><Trash2 className="h-4 w-4" /> Delete</button>}
         <span className="flex-1" />
