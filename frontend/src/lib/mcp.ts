@@ -704,6 +704,27 @@ export async function postTweet(text: string): Promise<PostTweetResult> {
   return callTool<PostTweetResult>("post_tweet", { text });
 }
 
+// ─── Post a companion Nostr note (paid) ──────────────────────────────────────
+
+export interface PostNostrMessageResult {
+  success?: boolean;
+  event_id?: string;
+  note_id?: string;
+  accepted?: number;
+  attempted?: number;
+  relays?: unknown;
+  error?: string;
+  error_code?: string;
+  message?: string;
+}
+
+/// Publish a public Nostr note (kind 1) on behalf of the proven session npub via
+/// an ephemeral scribe key. The tool takes the author from the proven session;
+/// do not pass a free-form author. Paid tool (npub/proof envelope injected).
+export async function postNostrMessage(message: string): Promise<PostNostrMessageResult> {
+  return callTool<PostNostrMessageResult>("post_nostr_message", { message });
+}
+
 // ─── Refine with Claude (server-side; the operator's key never leaves the BE) ──
 
 export interface RefineResult {
