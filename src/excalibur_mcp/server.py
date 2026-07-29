@@ -22,6 +22,8 @@ from tollbooth.credential_templates import (
     FieldSpec,
 )
 from tollbooth.credential_validators import validate_btcpay_creds, validate_required
+from tollbooth.llm_route import error_message as llm_error_message
+from tollbooth.llm_route import llm_failure_situation
 from tollbooth.oauth_config import OAuthProviderConfig
 from tollbooth.runtime import OperatorRuntime, register_standard_tools
 from tollbooth.tool_identity import STANDARD_IDENTITIES, ToolIdentity, capability_uuid
@@ -51,8 +53,8 @@ mcp = FastMCP(
         "Use `check_balance` to see your balance. Top up via `purchase_credits`."
     ),
 )
-# Structured onboarding guidance — included in error responses so Claude
-# can self-guide a first-time user through Secure Courier registration
+# Structured onboarding guidance — included in error responses so a calling
+# agent can self-guide a first-time user through Secure Courier registration
 # without the user needing to explain the process.
 _ONBOARDING_NEXT_STEPS = {
     "action": "oauth2_authorization",
@@ -90,20 +92,20 @@ _DOMAIN_TOOLS = [
                  intent="Archive or delete a stored post", pricing_hint_type="flat", pricing_hint_value=3),
     ToolIdentity(tool_id=capability_uuid("create_post"), capability="create_post", category="write",
                  intent="Store a new draft/scheduled post", pricing_hint_type="flat", pricing_hint_value=5),
-    # Server-side "Refine with Claude": the editor sends a flagged region +
-    # context; the MCP calls Anthropic with the operator's vaulted key (never
+    # Server-side refinement: the editor sends a flagged region + context; the
+    # MCP calls the operator's model router with their vaulted key (never
     # exposed to the browser) and returns suggestions. Paid — the AI cost is a
     # metered tollbooth fare (refunded on no-key / upstream failure).
     ToolIdentity(tool_id=capability_uuid("refine_post_region"), capability="refine_post_region",
-                 category="heavy", intent="Refine a flagged post region with Claude (server-side, metered)",
+                 category="heavy", intent="Refine a flagged post region with an LLM (server-side, metered)",
                  pricing_hint_type="flat", pricing_hint_value=25),
-    # Resolve a *dynamic* post block: its text is a runnable prompt that Claude
+    # Resolve a *dynamic* post block: its text is a runnable prompt the model
     # executes (with web search) at post time / preview, weaving a fresh answer
     # into the surrounding tweet. Same posture as refine — operator's vaulted key,
     # metered as a paid fare, refunded on no-key / upstream failure. The scheduler
     # bills the owner for this per fire when a due post carries dynamic blocks.
     ToolIdentity(tool_id=capability_uuid("resolve_dynamic_block"), capability="resolve_dynamic_block",
-                 category="heavy", intent="Resolve a dynamic post block's prompt with Claude (server-side, metered)",
+                 category="heavy", intent="Resolve a dynamic post block's prompt with an LLM (server-side, metered)",
                  pricing_hint_type="flat", pricing_hint_value=25),
     # Free companion that redeems a resolve_dynamic_block claim check — polling is
     # free (the fare was charged on the start call).
@@ -225,9 +227,9 @@ runtime = OperatorRuntime(
                 required=True, sensitive=True,
                 description="X OAuth2 Client Secret (from X Developer Portal).",
             ),
-            "anthropic_api_key": FieldSpec(
+            "llm_api_key": FieldSpec(
                 required=False, sensitive=True,
-                description="Anthropic API key for the editor's FE-direct 'Refine with Claude'. Optional — posting works without it.",
+                description="Model-router API key (OpenRouter by default) used to refine post regions and resolve dynamic blocks. Optional — posting works without it.",
             ),
             # Durable long-runner secrets (optional): when present, the 90–210s
             # dynamic-block resolve offloads to detached Prefect compute instead
@@ -589,7 +591,7 @@ async def create_post(
                 ``{"start": int, "end": int, "note": str, "colorIdx": int}``
                 (char offsets into ``text``) — pass ``[]`` when there are none.
               - ``dynamic`` (bool, optional): when true ``text`` is a prompt the
-                server resolves with Claude at post time; ``fallback`` (str) is
+                server resolves with an LLM at post time; ``fallback`` (str) is
                 posted if it fails, and ``domains``/``maxFetches``/``runtimeLimit``
                 bound its web access.
             Voice/bans live in your separate Voice profile and the schedule in
@@ -835,7 +837,7 @@ async def save_voice(
 
 
 # ---------------------------------------------------------------------------
-# FE-direct Claude refine (TaxSort tactic)
+# FE-direct refine (TaxSort tactic)
 # ---------------------------------------------------------------------------
 
 
@@ -850,16 +852,16 @@ async def refine_post_region(
     npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "",
     dpop_token: str = "",
 ) -> dict:
-    """Refine a flagged region of a post with Claude — server-side.
+    """Refine a flagged region of a post with an LLM — server-side.
 
-    The operator's Anthropic key stays in the vault and never leaves the
+    The operator's LLM key stays in the vault and never leaves the
     server. Send the flagged ``region``, the surrounding ``full_text``, an
     optional ``instruction`` (what to change), and the editor's ``voice``
     profile + ``bans`` (JSON array or comma list of banned constructions).
     Returns ``{"success": true, "suggestions": [...3 strings...]}``.
 
     Paid: the AI cost is metered as a tollbooth fare. The fare is refunded if
-    no Anthropic key is configured or the upstream call returns nothing.
+    no LLM key is configured or the upstream call returns nothing.
 
     Args:
         region: The flagged span to rewrite.
@@ -875,8 +877,8 @@ async def refine_post_region(
         return {"success": False, "error_code": "tool_input_invalid", "error": "region is required."}
 
     try:
-        creds = await runtime.load_credentials(["anthropic_api_key"])
-        key = creds.get("anthropic_api_key")
+        creds = await runtime.load_credentials(["llm_api_key"])
+        key = creds.get("llm_api_key")
     except Exception:
         key = None
     if not key:
@@ -886,7 +888,7 @@ async def refine_post_region(
             "error_code": "operator_llm_unconfigured",
             "message": (
                 "Refine is unavailable — the operator hasn't configured an "
-                "Anthropic key yet. No fare was charged."
+                "LLM key yet. No fare was charged."
             ),
         }
 
@@ -908,10 +910,22 @@ async def refine_post_region(
     except Exception as exc:
         await runtime.rollback_debit(tool_id, npub)
         logger.warning("refine_post_region upstream failed: %s: %s", type(exc).__name__, exc)
+        # An empty provider account used to read here as "try again shortly",
+        # which is advice that can never come true and which told the operator
+        # nothing. Curate it the way the dynamic-block path does, and wake the
+        # operator when the cause is theirs to fix.
+        situation = _llm_situation_from_exception(
+            exc,
+            fallback_code="llm_upstream_error",
+            fallback_message="The refine request failed upstream — your fare was "
+                             "refunded. Try again shortly.",
+        )
+        if not situation.transient:
+            await _alert_operator_provider_down(situation, capability="refine a post region")
         return {
             "success": False,
-            "error_code": "llm_upstream_error",
-            "message": "The refine request failed upstream — your fare was refunded. Try again shortly.",
+            "error_code": situation.error_code,
+            "message": situation.message,
         }
 
     if not suggestions:
@@ -956,12 +970,12 @@ async def resolve_dynamic_block(
     npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "",
     dpop_token: str = "",
 ) -> dict:
-    """Start resolving a dynamic post block with Claude — returns a CLAIM CHECK.
+    """Start resolving a dynamic post block with an LLM — returns a CLAIM CHECK.
 
-    A dynamic block's ``prompt`` is run by Claude (with web search + web fetch for
+    A dynamic block's ``prompt`` is run by the model (with web search + web fetch for
     live data) and woven into the surrounding post ``context`` in the author's
     ``voice``. The author's instruction governs length — there is no character cap
-    (X supports long-form posts). The operator's Anthropic key stays in the vault
+    (X supports long-form posts). The operator's LLM key stays in the vault
     and never leaves the server.
 
     Because that work (paginated fetches + generation) can outlast a client
@@ -973,7 +987,7 @@ async def resolve_dynamic_block(
     time and does not use this tool.)
 
     Paid: the AI cost is metered as a tollbooth fare on THIS start call, refunded
-    if no Anthropic key is configured or the job ultimately fails.
+    if no LLM key is configured or the job ultimately fails.
 
     Args:
         prompt: The dynamic block's prompt to run.
@@ -995,8 +1009,8 @@ async def resolve_dynamic_block(
 
     # Fast-fail before spinning a job: no operator key → refund, don't start.
     try:
-        creds = await runtime.load_credentials(["anthropic_api_key"])
-        key = creds.get("anthropic_api_key")
+        creds = await runtime.load_credentials(["llm_api_key"])
+        key = creds.get("llm_api_key")
     except Exception:
         key = None
     if not key:
@@ -1006,26 +1020,26 @@ async def resolve_dynamic_block(
             "error_code": "operator_llm_unconfigured",
             "message": (
                 "Dynamic blocks are unavailable — the operator hasn't configured "
-                "an Anthropic key yet. No fare was charged."
+                "an LLM key yet. No fare was charged."
             ),
         }
 
     # Fast-fail on a definitively-down AI provider (almost always an unfunded
-    # Anthropic account). The funding 400 is instant upstream, but the async job
+    # provider account). The funding refusal is instant upstream, but the async job
     # only runs when polled — so without this the patron waits ~90s to learn the
     # provider is out of funds. A cheap synchronous probe returns "aborted, fee
     # refunded" in ~1s instead, and DMs the operator to "feed me". A 400 "credit
     # balance too low" bills nothing. Transient blips (429/5xx) fall through to
     # the real attempt; a probe transport error never blocks it.
     try:
-        from excalibur_mcp.resolve import preflight_anthropic
+        from excalibur_mcp.resolve import preflight_llm
 
-        probe = await preflight_anthropic(key)
+        probe = await preflight_llm(key)
     except Exception:  # noqa: BLE001 — the probe is an optimization, not a gate
         probe = None
     if probe is not None:
         status, body = probe
-        situation = _resolve_failure_situation(status, _anthropic_error_message(body))
+        situation = _resolve_failure_situation(status, llm_error_message(body))
         if not situation.transient:
             await runtime.rollback_debit(tool_id, npub)
             await _alert_operator_provider_down(situation)
@@ -1088,56 +1102,52 @@ async def fetch_dynamic_block(
     return await runtime.fetch_async_job(claim_check, npub)
 
 
-def _anthropic_error_message(body: object) -> str:
-    """Pull Anthropic's ``error.message`` from a response body, if present."""
-    if isinstance(body, dict):
-        err = body.get("error")
-        if isinstance(err, dict):
-            return str(err.get("message") or "")
-    return ""
+def _llm_situation_from_exception(
+    exc: Exception, *, fallback_code: str, fallback_message: str,
+) -> AsyncJobSituation:
+    """Curate a raised provider error into a situation.
+
+    An ``HTTPStatusError`` still carries the status and body the wheel classifies
+    best from; anything else (transport, client library) leaves only the exception
+    text, which the wheel also reads. Either way the patron gets curated copy —
+    the raw upstream body never reaches them.
+    """
+    status: int | None = None
+    message = str(exc)
+    response = getattr(exc, "response", None)
+    if response is not None:
+        status = getattr(response, "status_code", None)
+        try:
+            message = llm_error_message(response.json()) or message
+        except Exception:  # noqa: BLE001 — a non-JSON body still carries a status
+            pass
+    return llm_failure_situation(
+        status=status,
+        message=message,
+        fallback_code=fallback_code,
+        fallback_message=fallback_message,
+    )
 
 
 def _resolve_failure_situation(status: int | None, upstream_msg: str) -> AsyncJobSituation:
-    """Curate a non-2xx Anthropic response into a frontend-facing situation.
+    """Curate a non-2xx provider response into a frontend-facing situation.
 
-    The raw status + body stay operator-side (Prefect run logs / wheel logs).
-    The patron's frontend gets only a machine ``error_code`` (to branch UX), safe
-    human copy, and a ``transient`` flag. Anthropic reports billing exhaustion as
-    a 400 with a "credit balance too low" message — not a 402 — so we match on the
-    message; genuine 402s are handled by the SDK's upstream-payment path elsewhere.
+    The raw status + body stay operator-side (Prefect run logs / wheel logs). The
+    patron's frontend gets only a machine ``error_code`` (to branch UX), safe human
+    copy, and a ``transient`` flag.
+
+    The provider-specific reading lives in the wheel, which knows that different
+    providers announce an empty account differently — a lab as a 400 naming the
+    credit balance, a model router as a 402 reading "Insufficient credits". This
+    module only supplies the fallback wording for a failure the wheel can't name,
+    because "the dynamic block" is language only eXcalibur can use.
     """
-    low = (upstream_msg or "").lower()
-    if status in (400, 402) and any(
-        s in low for s in ("credit balance", "purchase credits", "plans & billing", "billing")
-    ):
-        return AsyncJobSituation(
-            error_code="operator_llm_unfunded",
-            message="This service's AI provider is temporarily unavailable, so the "
-                    "dynamic block couldn't be resolved. No fare was charged.",
-            next_steps="Please try again later.",
-            transient=False,
-        )
-    if status in (401, 403):
-        return AsyncJobSituation(
-            error_code="operator_llm_auth",
-            message="This service's AI access is misconfigured, so the dynamic block "
-                    "couldn't be resolved. No fare was charged.",
-            next_steps="Please try again later.",
-            transient=False,
-        )
-    if status == 429:
-        return AsyncJobSituation(
-            error_code="upstream_rate_limited",
-            message="The AI provider is busy right now, so the dynamic block couldn't "
-                    "be resolved. No fare was charged.",
-            next_steps="Try again in a minute.",
-            transient=True,
-        )
-    return AsyncJobSituation(
-        error_code="dynamic_block_unresolved",
-        message="The dynamic block couldn't be resolved right now. No fare was charged.",
-        next_steps="Please try again.",
-        transient=True,
+    return llm_failure_situation(
+        status=status,
+        message=upstream_msg,
+        fallback_code="dynamic_block_unresolved",
+        fallback_message="The dynamic block couldn't be resolved right now. "
+                         "No fare was charged.",
     )
 
 
@@ -1151,11 +1161,17 @@ def _empty_result_situation() -> AsyncJobSituation:
     )
 
 
-async def _alert_operator_provider_down(situation: AsyncJobSituation) -> None:
-    """DM the operator (from the operator npub) that dynamic-block resolution is
-    down because the AI provider rejected the call — almost always an unfunded
-    Anthropic account. A self-DM Pricing Studio surfaces, so the human running the
-    operator sees "feed me" without watching logs.
+async def _alert_operator_provider_down(
+    situation: AsyncJobSituation, capability: str = "resolve dynamic post blocks",
+) -> None:
+    """DM the operator (from the operator npub) that an AI capability is down
+    because the provider rejected the call — almost always an unfunded provider
+    account. A self-DM Pricing Studio surfaces, so the human running the operator
+    sees "feed me" without watching logs.
+
+    ``capability`` names what the patron was denied, because both AI tools reach
+    here and "dynamic blocks are falling back" is a confusing thing to read after
+    a refine failed.
 
     Best-effort: relay I/O runs on a daemon thread so the patron's fast-fail
     response is never delayed, and any failure is swallowed. Only definitive
@@ -1171,21 +1187,31 @@ async def _alert_operator_provider_down(situation: AsyncJobSituation) -> None:
     if not operator_npub or exchange is None:
         return
 
+    # No vendor console is named: which provider the key belongs to is the
+    # operator's configuration, and naming last year's lab would send them to the
+    # wrong billing page.
     if situation.error_code == "operator_llm_unfunded":
         body = (
-            "⚡ eXcalibur can't resolve dynamic post blocks\n\n"
-            "Your Anthropic account is out of credits, so every dynamic block is "
-            "falling back to its static text. Add credit at console.anthropic.com "
-            "and resolution resumes automatically — no redeploy needed.\n\n"
-            "A patron just hit this previewing or scheduling a post. No fare was charged."
+            f"⚡ eXcalibur can't {capability}\n\n"
+            "The account behind the operator's llm_api_key is out of credits. Top it "
+            "up with your model router and service resumes automatically — no "
+            "redeploy needed.\n\n"
+            "A patron just hit this. No fare was charged."
+        )
+    elif situation.error_code == "operator_llm_model_unknown":
+        body = (
+            f"⚡ eXcalibur can't {capability}\n\n"
+            "The provider no longer offers the model this service is configured for — "
+            "usually a marketplace renaming or retiring it. Point TOLLBOOTH_LLM_MODEL_* "
+            "at a current slug and restart. Retrying will not clear this on its own.\n\n"
+            "A patron just hit this. No fare was charged."
         )
     else:
         body = (
-            "⚡ eXcalibur can't resolve dynamic post blocks\n\n"
-            "Your Anthropic API access was rejected (auth / misconfiguration), so "
-            "dynamic blocks can't resolve. Check the operator's Anthropic key, then "
-            "dynamic posts resume.\n\n"
-            "A patron just hit this previewing or scheduling a post. No fare was charged."
+            f"⚡ eXcalibur can't {capability}\n\n"
+            "Your AI provider rejected this service's access (auth / misconfiguration). "
+            "Check the operator's llm_api_key, then service resumes.\n\n"
+            "A patron just hit this. No fare was charged."
         )
 
     def _run() -> None:
@@ -1212,7 +1238,7 @@ async def _resolve_dynamic_runner(
 ) -> dict:
     """Background job runner for ``resolve_dynamic_block`` (in-process path).
 
-    Loads the operator's vaulted Anthropic key (never stored in the job params)
+    Loads the operator's vaulted LLM key (never stored in the job params)
     and resolves the fragment via the shared ``resolve_block`` core — the same
     code the scheduler calls directly. On failure it raises an ``AsyncJobSituation``
     so the wheel refunds AND the frontend gets a curated reason (mirrors the
@@ -1221,10 +1247,10 @@ async def _resolve_dynamic_runner(
     """
     import httpx
 
-    creds = await runtime.load_credentials(["anthropic_api_key"])
-    key = creds.get("anthropic_api_key")
+    creds = await runtime.load_credentials(["llm_api_key"])
+    key = creds.get("llm_api_key")
     if not key:
-        raise RuntimeError("operator anthropic_api_key not configured")
+        raise RuntimeError("operator llm_api_key not configured")
 
     from excalibur_mcp.resolve import clamp_fetches, resolve_block
 
@@ -1238,7 +1264,7 @@ async def _resolve_dynamic_runner(
     except httpx.HTTPStatusError as exc:
         msg = ""
         try:
-            msg = _anthropic_error_message(exc.response.json())
+            msg = llm_error_message(exc.response.json())
         except Exception:
             pass
         raise _resolve_failure_situation(exc.response.status_code, msg) from exc
@@ -1279,23 +1305,23 @@ async def _resolve_build_closure(
 ) -> dict:
     """Build the sealed-closure job spec for the durable long-runner path.
 
-    Runs in-process with full vault access: loads the operator's Anthropic key
-    and bakes a fully-formed Anthropic request into a declarative ``http_request``
+    Runs in-process with full vault access: loads the operator's LLM key
+    and bakes a fully-formed provider request into a declarative ``http_request``
     spec. The wheel seals this (AES-256-GCM) before it leaves the process, so the
     key reaches detached compute only as ciphertext. Uses the same
-    ``build_anthropic_request`` the in-process runner does, so both paths issue an
+    ``build_resolve_request`` the in-process runner does, so both paths issue an
     identical call.
     """
-    creds = await runtime.load_credentials(["anthropic_api_key"])
-    key = creds.get("anthropic_api_key")
+    creds = await runtime.load_credentials(["llm_api_key"])
+    key = creds.get("llm_api_key")
     if not key:
-        raise RuntimeError("operator anthropic_api_key not configured")
+        raise RuntimeError("operator llm_api_key not configured")
 
-    from excalibur_mcp.resolve import build_anthropic_request
+    from excalibur_mcp.resolve import build_resolve_request
 
     return {
         "op": "http_request",
-        "request": build_anthropic_request(
+        "request": build_resolve_request(
             api_key=key, prompt=prompt, context=context, voice=voice,
             bans=bans or [], allowed_domains=allowed_domains or [],
             max_fetches=max_fetches, timeout_seconds=runtime_limit_seconds,
@@ -1325,7 +1351,7 @@ def _resolve_shape_result(raw: dict | None, params: dict | None = None) -> dict:
             return {"text": extract_resolved_text(raw.get("json", {}))}
         except ValueError as exc:
             raise _empty_result_situation() from exc
-    raise _resolve_failure_situation(status, _anthropic_error_message(raw.get("json")))
+    raise _resolve_failure_situation(status, llm_error_message(raw.get("json")))
 
 
 # Register the closure (detached) path for the same kind. The wheel auto-installs

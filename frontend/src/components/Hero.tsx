@@ -53,7 +53,7 @@ export default function Hero() {
           editorial fine-tuning first.
         </p>
         <p className="mt-3 max-w-2xl text-base leading-relaxed text-stone-600 dark:text-zinc-400">
-          Draft in a block editor, refine flagged passages with Claude, schedule and repost, and
+          Draft in a block editor, refine flagged passages with AI, schedule and repost, and
           keep a reusable snippet library. Sign in with a Nostr key and pay per use in Bitcoin
           Lightning — your posts, schedule, and snippets live with your npub, not a login.
         </p>
@@ -66,7 +66,7 @@ export default function Hero() {
           />
           <Feature
             icon={<Sparkles className="h-5 w-5" />}
-            title="Refine with Claude"
+            title="Refine a passage"
             body="Flag a region and the server rewrites it. The AI key stays vaulted — it never reaches your browser."
           />
           <Feature

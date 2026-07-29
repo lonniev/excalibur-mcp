@@ -26,6 +26,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from tollbooth.llm_route import clamp_timeout, classify_llm_failure
+
 from excalibur_mcp.db import posts as posts_db
 from excalibur_mcp.db import scheduler_runs
 from excalibur_mcp.formatter import markdown_to_unicode
@@ -233,14 +235,11 @@ def _fallback_reason(exc: Exception, budget_s: float) -> str:
     name = type(exc).__name__
     if "Timeout" in name or isinstance(exc, TimeoutError):
         return f"resolve_timed_out_at_{int(budget_s)}s"
-    text = str(exc).lower()
-    if "credit balance" in text or "quota" in text:
-        return "operator_llm_unfunded"
-    if "401" in text or "authentication" in text:
-        return "operator_llm_auth"
-    if "429" in text or "rate" in text:
-        return "upstream_rate_limited"
-    return f"resolve_failed:{name}"
+    # All this path ever holds is a client library's exception text — no status
+    # code survived. The wheel classifies on the message alone so the audit ring
+    # names an empty provider account the same way the patron-facing path does,
+    # whichever provider phrased the refusal.
+    return classify_llm_failure(message=str(exc)) or f"resolve_failed:{name}"
 
 
 async def _resolve_post_text(
@@ -259,17 +258,12 @@ async def _resolve_post_text(
     ``fallbacks`` names any block whose prompt didn't make it into the tweet.
     Returns ``(None, None, reason, fallbacks)`` when a block failed AND carried
     no fallback — the caller holds the post and never posts a gap. ``api_key`` is
-    None when the operator has no Anthropic key, so every dynamic block falls
+    None when the operator has no LLM key, so every dynamic block falls
     back.
     """
     import asyncio
 
-    from excalibur_mcp.resolve import (
-        INSERT_MARKER,
-        clamp_fetches,
-        clamp_timeout,
-        resolve_block,
-    )
+    from excalibur_mcp.resolve import INSERT_MARKER, clamp_fetches, resolve_block
 
     def _domains(b: dict[str, Any]) -> list[str]:
         raw = b.get("domains")
@@ -446,8 +440,8 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
         resolve_charged = True
 
         try:
-            creds = await runtime.load_credentials(["anthropic_api_key"])
-            key = creds.get("anthropic_api_key")
+            creds = await runtime.load_credentials(["llm_api_key"])
+            key = creds.get("llm_api_key")
         except Exception:  # noqa: BLE001 — no key → blocks fall back
             key = None
         voice, bans = await _owner_voice(owner)

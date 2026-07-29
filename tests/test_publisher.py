@@ -106,7 +106,7 @@ def _runtime(*, billing=5, pricing=(5, None)):
 
 def _dynamic_runtime():
     rt = _runtime()
-    rt.load_credentials = AsyncMock(return_value={"anthropic_api_key": "k"})
+    rt.load_credentials = AsyncMock(return_value={"llm_api_key": "k"})
     return rt
 
 
@@ -439,7 +439,7 @@ async def test_dynamic_recurring_snapshots_static_keeps_template_dynamic():
 @pytest.mark.asyncio
 async def test_dynamic_insufficient_balance_for_resolve_holds(_stub_mark_attempt):
     rt = _runtime(billing={"success": False, "error_code": "insufficient_balance"})
-    rt.load_credentials = AsyncMock(return_value={"anthropic_api_key": "k"})
+    rt.load_credentials = AsyncMock(return_value={"llm_api_key": "k"})
     client = SimpleNamespace(post_tweet=AsyncMock())
     with _claimed(doc=_DYNAMIC_DOC), \
          patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
@@ -453,6 +453,17 @@ def test_fallback_reason_separates_the_blocks_budget_from_an_outage():
     assert publisher._fallback_reason(Exception("credit balance too low"), 60) == "operator_llm_unfunded"
     assert publisher._fallback_reason(Exception("429 rate limited"), 60) == "upstream_rate_limited"
     assert publisher._fallback_reason(ValueError("boom"), 60) == "resolve_failed:ValueError"
+
+
+def test_fallback_reason_names_an_empty_account_whoever_phrased_it():
+    """This path holds only an exception string — no status code survives it — so
+    an empty account here is recognised by wording alone. It read only the lab's
+    phrasing before the wheel took over, which left a model router's exhausted
+    account recorded in the audit ring as an anonymous failure."""
+    assert publisher._fallback_reason(Exception("Insufficient credits"), 60) == "operator_llm_unfunded"
+    assert publisher._fallback_reason(
+        Exception("This request requires more credits than are available"), 60,
+    ) == "operator_llm_unfunded"
 
 
 # -- a hold always says why --------------------------------------------------

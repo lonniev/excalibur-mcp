@@ -22,7 +22,7 @@ export interface Block {
   text: string;
   flags: Flag[];
   // A dynamic block's `text` IS a runnable prompt: at post time (and in Preview)
-  // the server runs it with Claude and weaves a fresh answer into the tweet.
+  // the server runs it with an LLM and weaves a fresh answer into the tweet.
   // `fallback` is posted instead if resolution fails. Static blocks omit these.
   dynamic?: boolean;
   fallback?: string;

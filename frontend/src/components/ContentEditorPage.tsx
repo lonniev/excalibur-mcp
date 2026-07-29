@@ -566,7 +566,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
       b.id === blockId ? { ...b, flags: b.flags.map((f) => (f.id === flagId ? { ...f, ...patch } : f)) } : b));
   }
 
-  // ── refine (server-side: MCP calls Claude with the operator's vaulted key) ──
+  // ── refine (server-side: MCP calls the model with the operator's vaulted key) ──
   async function refine(blockId: string, flag: FlagT) {
     // The region is ONE context: for a multi-block flag, join every part (in
     // block order) with the paragraph break the reader sees; otherwise this
@@ -2037,7 +2037,7 @@ function FlagsTab({
             <button onClick={(e) => { e.stopPropagation(); onRefine(f.blockId, f); }} disabled={f.loading}
               className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-md bg-amber-400 px-3 py-1.5 text-sm font-medium text-zinc-950 hover:bg-amber-300 disabled:opacity-60 transition-colors">
               {f.loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
-              {f.loading ? "Refining…" : "Refine with Claude"}
+              {f.loading ? "Refining…" : "Refine"}
             </button>
             {f.error && <p className="mt-2 text-xs text-rose-400">{f.error}</p>}
             {f.suggestions.length > 0 && (
@@ -2197,7 +2197,7 @@ function VoiceTab({
         <textarea value={voice} onChange={(e) => setVoice(e.target.value)} rows={5} disabled={!loaded}
           className="w-full resize-none rounded-md border border-zinc-700 bg-zinc-900 p-2 text-sm text-zinc-200 outline-none focus:border-amber-400 disabled:opacity-50"
           placeholder="Paste a few sentences in your own voice…" />
-        <p className="mt-1.5 text-xs text-zinc-500">Fed to Claude on every refinement so rewrites sound like you, not like a model.</p>
+        <p className="mt-1.5 text-xs text-zinc-500">Sent with every refinement so rewrites sound like you, not like a model.</p>
       </div>
       <div>
         <label className="mb-2 block font-mono text-[11px] uppercase tracking-widest text-zinc-500">Banned constructions</label>

@@ -44,3 +44,47 @@ def test_prompt_default_instruction_when_blank():
     # No voice/bans clauses when absent.
     assert "voice profile" not in system.lower()
     assert "hard constraints" not in system.lower()
+
+
+# -- the route, and what an upstream refusal turns into ----------------------
+
+def test_refine_draws_the_cheaper_reader_tier():
+    """Three short rewrites are judgement, not authorship — unlike resolve.py,
+    which composes copy the owner publishes under their own name."""
+    from tollbooth.llm_route import TIER_READER, model_for
+
+    from excalibur_mcp.refine import _TIER
+    assert _TIER == TIER_READER
+    assert model_for(_TIER) != model_for("writer")
+
+
+def test_an_empty_provider_account_is_not_answered_with_try_again():
+    """An unfunded account used to read here as a transient 'try again shortly' —
+    advice that can never come true, and which told the operator nothing."""
+    import httpx
+
+    from excalibur_mcp.server import _llm_situation_from_exception
+
+    req = httpx.Request("POST", "https://openrouter.ai/api/v1/messages")
+    resp = httpx.Response(402, json={"error": {"message": "Insufficient credits"}}, request=req)
+    exc = httpx.HTTPStatusError("402", request=req, response=resp)
+
+    situation = _llm_situation_from_exception(
+        exc, fallback_code="llm_upstream_error", fallback_message="fallback",
+    )
+    assert situation.error_code == "operator_llm_unfunded"
+    assert situation.transient is False
+    assert "Insufficient credits" not in situation.message  # raw body stays operator-side
+
+
+def test_a_transport_failure_still_takes_the_callers_fallback():
+    """No response, no status — only an exception string the wheel can't name."""
+    from excalibur_mcp.server import _llm_situation_from_exception
+
+    situation = _llm_situation_from_exception(
+        TimeoutError("read timeout"),
+        fallback_code="llm_upstream_error",
+        fallback_message="The refine request failed upstream.",
+    )
+    assert situation.error_code == "llm_upstream_error"
+    assert situation.transient is True

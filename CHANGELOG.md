@@ -11,6 +11,65 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — LLM calls route through a model router, and the wheel decides which
+
+Both AI paths — composing a dynamic block and refining a flagged region — pinned
+`https://api.anthropic.com/v1/messages` in their own module, alongside their own copy of
+the web-tool declarations and a `clamp_timeout` byte-identical to optionality-mcp's. That
+is a wheel concern, and it now lives in `tollbooth.llm_route` (SDK 0.74.0). What stays
+here is what makes a *post* good: the prompt, the `<post>` tag extraction, the author's
+web-lookup budget.
+
+Composing draws the **writer** tier and refining the **reader** tier, since one writes
+copy the owner publishes under their own name and the other suggests three short
+rewrites. Changing either model is an environment variable and a restart, not a release.
+
+The operator's key now names a *provider account*, which is why it is passed to every
+call rather than read from module state: giving composition and refinement separate
+accounts later is a second credential, not a redesign.
+
+**The vaulted credential is renamed `anthropic_api_key` → `llm_api_key`, with no
+compatibility shim.** The operator must redeliver it via Secure Courier — which was
+already required to change providers, so the rename costs nothing extra. Until it is
+delivered, dynamic blocks fall back to their fallback text and refine refunds its fare;
+neither posts a gap.
+
+### Fixed — an exhausted AI account was reported as a passing blip
+
+Three separate places decided whether the AI provider had run out of money, and all three
+matched only Anthropic's wording (`credit balance`, `purchase credits`, `plans &
+billing`) because Anthropic reports an empty account as a **400**. A model router reports
+it as a **402** reading *"Insufficient credits"*, which matches none of those.
+
+An exhausted account therefore read as a generic transient failure: the operator's "feed
+me" DM never fired, the scheduler kept retrying an endpoint that could not recover, and
+patrons were told to try again later — indefinitely. `publisher.py`'s audit-ring reason
+had the same blind spot from the other direction, holding only an exception string with
+no status code at all.
+
+All three now defer to the wheel's classifier, which reads both providers' wording, takes
+a bare 402 from a metered LLM provider as unfunded, and classifies from a message alone
+when no status survived. A model slug the provider no longer recognises is newly
+distinguished as permanent rather than retryable — the signature of a marketplace
+retiring a model under a running deployment.
+
+`refine_post_region` had the defect in its plainest form: *every* upstream failure became
+`llm_upstream_error` with "Try again shortly", so an empty account produced advice that
+could never come true and no operator alert at all. It now curates the same way the
+dynamic-block path does and wakes the operator when the cause is theirs to fix.
+
+The operator's "feed me" DM was also telling them to add credit at `console.anthropic.com`
+regardless of which provider the key belonged to, and always claimed dynamic blocks were
+what broke — even when a refine had failed. It now names the capability the patron was
+actually denied and points at the account behind `llm_api_key` without naming a vendor
+console the operator may not have.
+
+### Changed — the editor stopped naming a vendor it may not be calling
+
+"Refine with Claude" was accurate when one lab was hardwired. With the model now a
+configuration choice, the button, its hero card, the voice-profile hint, and `llms.txt`
+would have been quietly false. The copy names the action instead: **Refine**.
+
 ### Added — a `none` chiclet on the Posts filters
 
 `all` had been doing double duty: it selected every status, unless everything

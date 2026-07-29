@@ -1,10 +1,15 @@
-"""Server-side 'Refine with Claude' for the editorial editor.
+"""Server-side editorial refinement for the post editor.
 
-The operator's Anthropic key stays in the vault and never leaves the server.
-The editor sends a flagged region + the surrounding tweet + the editor's
-voice/bans, and gets back 3 alternative phrasings. The wheel meters the call
-as a paid tollbooth fare — so the AI usage is billed in sats, not handed out
-as a raw key (no browser exposure, no un-tolled usage).
+The operator's LLM key stays in the vault and never leaves the server. The
+editor sends a flagged region + the surrounding tweet + the editor's voice/bans,
+and gets back 3 alternative phrasings. The wheel meters the call as a paid
+tollbooth fare — so the AI usage is billed in sats, not handed out as a raw key
+(no browser exposure, no un-tolled usage).
+
+Which provider and model answer is ``tollbooth.llm_route``'s decision. Suggesting
+three short rewrites is judgement rather than authorship, so this draws the
+cheaper reader tier — unlike ``resolve.py``, which composes copy the owner
+publishes under their own name.
 """
 
 from __future__ import annotations
@@ -13,11 +18,11 @@ import json
 import logging
 
 import httpx
+from tollbooth.llm_route import TIER_READER, build_messages_request, resolve_route
 
 logger = logging.getLogger(__name__)
 
-_MODEL = "claude-sonnet-4-6"
-_ENDPOINT = "https://api.anthropic.com/v1/messages"
+_TIER = TIER_READER
 _TIMEOUT = 60.0
 _MAX_TOKENS = 1000
 
@@ -48,7 +53,7 @@ def _build_prompt(
 
 
 def _parse_suggestions(raw: str) -> list[str]:
-    """Parse Claude's reply into up to 3 strings — JSON array first, then lines."""
+    """Parse the model's reply into up to 3 strings — JSON array first, then lines."""
     t = (raw or "").replace("```json", "").replace("```", "").strip()
     try:
         arr = json.loads(t)
@@ -73,25 +78,25 @@ async def refine_region(
     voice: str = "",
     bans: list[str] | None = None,
 ) -> list[str]:
-    """Call Anthropic server-side with the operator's key. Returns ≤3 suggestions.
+    """Call the provider server-side with the operator's key. Returns ≤3 suggestions.
+
+    The caller supplies ``api_key``, which is what names the provider ACCOUNT this
+    work bills to — so giving refinement its own account later is a different key
+    at the call site, not a change here.
 
     Raises on transport/HTTP errors so the caller can refund the fare.
     """
     system, user = _build_prompt(region, full_text, instruction, voice, bans or [])
+    req = build_messages_request(
+        resolve_route(api_key=api_key, tier=_TIER),
+        system=system,
+        user=user,
+        max_tokens=_MAX_TOKENS,
+        timeout_seconds=_TIMEOUT,
+    )
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
         resp = await client.post(
-            _ENDPOINT,
-            headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": _MODEL,
-                "max_tokens": _MAX_TOKENS,
-                "system": system,
-                "messages": [{"role": "user", "content": user}],
-            },
+            req["url"], headers=req["headers"], json=req["json"],
         )
     resp.raise_for_status()
     data = resp.json()

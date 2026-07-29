@@ -10,7 +10,7 @@ from excalibur_mcp.resolve import (
     _build_tools,
     _clean,
     _extract_answer,
-    build_anthropic_request,
+    build_resolve_request,
     clamp_fetches,
     extract_resolved_text,
     resolve_block,
@@ -64,6 +64,32 @@ def test_extract_answer_no_tools_keeps_the_text():
     assert _extract_answer(data) == "just this"
 
 
+def test_extract_answer_survives_a_reasoning_models_block_sequence():
+    """A reasoning model interleaves ``thinking`` / ``redacted_thinking`` blocks
+    between its searches — the real shape observed from x-ai/grok-4.3. Reasoning
+    must never reach the tweet, whether or not the model closed its ``<post>``
+    tags, and a ``redacted_thinking`` block carries no ``text`` key at all."""
+    data = {"content": [
+        {"type": "thinking", "text": "I should search for the current price"},
+        {"type": "redacted_thinking"},
+        {"type": "server_tool_use", "name": "web_search"},
+        {"type": "text", "text": "narration between the searches"},
+        {"type": "thinking", "text": "now I have enough to write it"},
+        {"type": "redacted_thinking"},
+        {"type": "text", "text": "BTC is at $64k this morning"},
+    ]}
+    assert _extract_answer(data) == "BTC is at $64k this morning"
+
+
+def test_extract_answer_prefers_the_tag_over_reasoning_blocks():
+    data = {"content": [
+        {"type": "thinking", "text": "<post>this is only me thinking</post>"},
+        {"type": "server_tool_use", "name": "web_search"},
+        {"type": "text", "text": "<post>sunny, 72°F</post>"},
+    ]}
+    assert _extract_answer(data) == "sunny, 72°F"
+
+
 def test_clamp_fetches_bounds():
     assert clamp_fetches(0) == 1          # floor
     assert clamp_fetches(999) == 25       # cap
@@ -86,10 +112,10 @@ def test_build_tools_with_domains_restricts_fetch():
     assert fetch["max_uses"] == 9
 
 
-# --- build_anthropic_request: the half sealed into the durable closure --------
+# --- build_resolve_request: the half sealed into the durable closure --------
 
-def test_build_anthropic_request_bakes_key_tools_and_body():
-    req = build_anthropic_request(
+def test_build_resolve_request_bakes_key_tools_and_body():
+    req = build_resolve_request(
         api_key="k", prompt="p", allowed_domains=["a.com"], max_fetches=3,
     )
     assert req["method"] == "POST"
@@ -104,17 +130,35 @@ def test_build_anthropic_request_bakes_key_tools_and_body():
     _json.dumps(req)
 
 
-def test_build_anthropic_request_empty_prompt_raises():
+def test_build_resolve_request_empty_prompt_raises():
     with pytest.raises(ValueError):
-        build_anthropic_request(api_key="k", prompt="   ")
+        build_resolve_request(api_key="k", prompt="   ")
 
 
-def test_build_anthropic_request_timeout_follows_budget_clamped():
-    from excalibur_mcp.resolve import _TIMEOUT, clamp_timeout
+def test_default_timeout_stays_under_the_frontend_client_budget():
+    """A coupling the wheel cannot see.
+
+    The bounds moved to ``tollbooth.llm_route`` because two operators had grown
+    identical numbers. But the reason eXcalibur's default is 210s and not more is
+    local: the FE's MCP client gives up at 240s, and a resolve that outlives that
+    surfaces as an opaque -32001 in the browser instead of the clean refundable
+    error this module raises. Raising the wheel's default past 240 would break
+    that silently, in a repo whose tests never ran.
+    """
+    from tollbooth.llm_route import clamp_timeout
+
+    from excalibur_mcp.resolve import _FE_CLIENT_TIMEOUT_S
+    assert clamp_timeout(None) < _FE_CLIENT_TIMEOUT_S
+
+
+def test_build_resolve_request_timeout_follows_budget_clamped():
+    # The bounds live in the wheel now — two operators had grown the same numbers.
+    from tollbooth.llm_route import clamp_timeout
+    default = clamp_timeout(None)
     # Unset → the default; a declared budget drives the LLM timeout; bounds clamp.
-    assert build_anthropic_request(api_key="k", prompt="p")["timeout"] == _TIMEOUT
-    assert build_anthropic_request(api_key="k", prompt="p", timeout_seconds=420)["timeout"] == 420.0
-    assert clamp_timeout(0) == _TIMEOUT and clamp_timeout(None) == _TIMEOUT
+    assert build_resolve_request(api_key="k", prompt="p")["timeout"] == default
+    assert build_resolve_request(api_key="k", prompt="p", timeout_seconds=420)["timeout"] == 420.0
+    assert clamp_timeout(0) == default
     assert clamp_timeout(5) == 30.0 and clamp_timeout(99999) == 900.0
 
 
@@ -160,7 +204,7 @@ async def test_resolve_block_recomposes_build_and_extract():
             return body
 
     async def fake_post(self, url, **kwargs):
-        # the request was built by build_anthropic_request → carries the key
+        # the request was built by build_resolve_request → carries the key
         assert kwargs["headers"]["x-api-key"] == "k"
         return _Resp()
 
@@ -187,32 +231,32 @@ class _ProbeResp:
 
 
 @pytest.mark.asyncio
-async def test_preflight_anthropic_healthy_returns_none():
+async def test_preflight_llm_healthy_returns_none():
     async def fake_post(self, url, **kwargs):
         assert kwargs["json"]["max_tokens"] == 1  # cheap 1-token probe
         return _ProbeResp(200)
 
     with patch.object(resolve.httpx.AsyncClient, "post", fake_post):
-        assert await resolve.preflight_anthropic("k") is None
+        assert await resolve.preflight_llm("k") is None
 
 
 @pytest.mark.asyncio
-async def test_preflight_anthropic_unfunded_returns_status_and_body():
+async def test_preflight_llm_unfunded_returns_status_and_body():
     body = {"error": {"message": "Your credit balance is too low to run this request."}}
 
     async def fake_post(self, url, **kwargs):
         return _ProbeResp(400, body)
 
     with patch.object(resolve.httpx.AsyncClient, "post", fake_post):
-        probe = await resolve.preflight_anthropic("k")
+        probe = await resolve.preflight_llm("k")
     assert probe == (400, body)
 
 
 @pytest.mark.asyncio
-async def test_preflight_anthropic_nonjson_error_body_still_yields_status():
+async def test_preflight_llm_nonjson_error_body_still_yields_status():
     async def fake_post(self, url, **kwargs):
         return _ProbeResp(401)  # .json() raises → body is None, status preserved
 
     with patch.object(resolve.httpx.AsyncClient, "post", fake_post):
-        probe = await resolve.preflight_anthropic("k")
+        probe = await resolve.preflight_llm("k")
     assert probe == (401, None)
