@@ -2,7 +2,7 @@
 
 > An AI-assisted Content Management System for your X (Twitter) posts, built on
 > eXcalibur MCP — the monetized MCP for X posting. Write block-structured
-> drafts, refine flagged passages with Claude server-side, schedule and repost,
+> drafts, refine flagged passages with AI server-side, schedule and repost,
 > and keep a reusable snippet library — then publish to X. Identity is a Nostr
 > keypair (npub); usage is metered in Bitcoin Lightning satoshis — no account,
 > no email, no subscription, no KYC.
@@ -20,10 +20,10 @@ keys.
   Unicode Mathematical Alphanumeric Symbols, dividers as box-drawing rules,
   and an emoji/symbol picker inserts glyphs at the cursor. What you see is
   what posts.
-- **Refine with Claude** — flag a region of a draft and the server rewrites
-  it against your voice profile and banned constructions. The operator's
-  Anthropic key stays vaulted and never reaches the browser; the AI cost is
-  metered as a Lightning fare.
+- **Refine** — flag a region of a draft and the server rewrites it against
+  your voice profile and banned constructions. The operator's model-router
+  key stays vaulted and never reaches the browser; the AI cost is metered as
+  a Lightning fare.
 - **Posts** — drafts, scheduled, sent, and archived. Repost a sent post in
   one click.
 - **Snippet library** — save reusable openings, footers, and CTAs under your

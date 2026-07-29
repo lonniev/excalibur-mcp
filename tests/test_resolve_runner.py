@@ -15,7 +15,7 @@ from excalibur_mcp import server
 @pytest.mark.asyncio
 async def test_runner_loads_key_and_resolves():
     with patch.object(server.runtime, "load_credentials",
-                      AsyncMock(return_value={"anthropic_api_key": "k"})), \
+                      AsyncMock(return_value={"llm_api_key": "k"})), \
          patch("excalibur_mcp.resolve.resolve_block", AsyncMock(return_value="the copy")) as rb:
         out = await server._resolve_dynamic_runner(
             npub="np", prompt="p", context="c", voice="v",
@@ -48,30 +48,69 @@ import httpx  # noqa: E402
 from tollbooth import AsyncJobSituation  # noqa: E402
 
 
-def _anthropic_resp(status, message):
-    req = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+def _provider_resp(status, message):
+    req = httpx.Request("POST", "https://openrouter.ai/api/v1/messages")
     return httpx.Response(status, json={"error": {"message": message}}, request=req)
 
 
 @pytest.mark.asyncio
 async def test_runner_maps_billing_400_to_unfunded_situation():
-    resp = _anthropic_resp(400, "Your credit balance is too low to access the Anthropic API.")
+    resp = _provider_resp(400, "Your credit balance is too low to access the Anthropic API.")
     err = httpx.HTTPStatusError("400", request=resp.request, response=resp)
     with patch.object(server.runtime, "load_credentials",
-                      AsyncMock(return_value={"anthropic_api_key": "k"})), \
+                      AsyncMock(return_value={"llm_api_key": "k"})), \
          patch("excalibur_mcp.resolve.resolve_block", AsyncMock(side_effect=err)):
         with pytest.raises(AsyncJobSituation) as ei:
             await server._resolve_dynamic_runner(prompt="p")
     assert ei.value.error_code == "operator_llm_unfunded"
     assert ei.value.transient is False
-    # the raw Anthropic wording does not become the patron message
+    # the raw provider wording does not become the patron message
     assert "credit balance" not in ei.value.message.lower()
+
+
+@pytest.mark.asyncio
+async def test_runner_maps_router_402_to_unfunded_situation():
+    """The regression this whole route exists to prevent.
+
+    A model router reports an empty account as a 402 reading "Insufficient
+    credits" — sharing no wording with the lab's 400. Matching only the lab, as
+    this did before the wheel took over the reading, curated an exhausted account
+    as a generic transient blip: the operator was never told to feed it, and
+    patrons were told to retry forever.
+    """
+    resp = _provider_resp(402, "Insufficient credits. Add more using https://openrouter.ai/credits")
+    err = httpx.HTTPStatusError("402", request=resp.request, response=resp)
+    with patch.object(server.runtime, "load_credentials",
+                      AsyncMock(return_value={"llm_api_key": "k"})), \
+         patch("excalibur_mcp.resolve.resolve_block", AsyncMock(side_effect=err)):
+        with pytest.raises(AsyncJobSituation) as ei:
+            await server._resolve_dynamic_runner(prompt="p")
+    assert ei.value.error_code == "operator_llm_unfunded"
+    assert ei.value.transient is False
+
+
+def test_shape_result_router_402_to_unfunded_situation():
+    raw = {"status": 402, "json": {"error": {"message": "Insufficient credits"}}}
+    with pytest.raises(AsyncJobSituation) as ei:
+        server._resolve_shape_result(raw)
+    assert ei.value.error_code == "operator_llm_unfunded"
+    assert ei.value.transient is False
+
+
+def test_shape_result_retired_model_slug_is_permanent():
+    """A marketplace renaming a model under a running deployment. Retrying can
+    never clear it, so the patron must not be told to keep trying."""
+    raw = {"status": 400, "json": {"error": {"message": "x-ai/grok-9 is not a valid model ID"}}}
+    with pytest.raises(AsyncJobSituation) as ei:
+        server._resolve_shape_result(raw)
+    assert ei.value.error_code == "operator_llm_model_unknown"
+    assert ei.value.transient is False
 
 
 @pytest.mark.asyncio
 async def test_runner_maps_empty_output_to_situation():
     with patch.object(server.runtime, "load_credentials",
-                      AsyncMock(return_value={"anthropic_api_key": "k"})), \
+                      AsyncMock(return_value={"llm_api_key": "k"})), \
          patch("excalibur_mcp.resolve.resolve_block", AsyncMock(side_effect=ValueError("no text"))):
         with pytest.raises(AsyncJobSituation) as ei:
             await server._resolve_dynamic_runner(prompt="p")

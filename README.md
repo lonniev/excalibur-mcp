@@ -119,7 +119,7 @@ call with `check_price`. Read and auth tools are free.
 
 | Tool | Description |
 |------|-------------|
-| `refine_post_region` | Refine a flagged region of a post with Claude, server-side |
+| `refine_post_region` | Refine a flagged region of a post with an LLM, server-side |
 | `resolve_dynamic_block` | Start resolving a dynamic (prompt-backed) post block; returns a claim check |
 | `fetch_dynamic_block` | Redeem a `resolve_dynamic_block` claim check (free, proof-gated) |
 
@@ -162,7 +162,7 @@ src/excalibur_mcp/
   oauth_flow.py    X-specific OAuth2 Authorization Code + PKCE wrapper
   x_client.py      X API v2 client with OAuth 2.0 Bearer token auth
   formatter.py     Markdown -> Unicode rich text (bold, italic, headers)
-  refine.py        Server-side "Refine with Claude" for the editorial editor
+  refine.py        Server-side editorial refinement for the post editor
   resolve.py       Server-side resolution of dynamic (prompt-backed) post blocks
   scheduler.py     Scheduled-post firing (publishes due posts on the owner's behalf)
   tools/           Domain storage handlers (posts, snippets, voices)

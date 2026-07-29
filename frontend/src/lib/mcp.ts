@@ -725,7 +725,7 @@ export async function postNostrMessage(message: string): Promise<PostNostrMessag
   return callTool<PostNostrMessageResult>("post_nostr_message", { message });
 }
 
-// ─── Refine with Claude (server-side; the operator's key never leaves the BE) ──
+// ─── Refine a region (server-side; the operator's key never leaves the BE) ──
 
 export interface RefineResult {
   success: boolean;
@@ -735,7 +735,7 @@ export interface RefineResult {
   message?: string;
 }
 
-/// Ask the MCP to refine a flagged region. The wheel calls Anthropic with the
+/// Ask the MCP to refine a flagged region. The wheel calls the model with the
 /// operator's vaulted key and meters the call as a paid fare — the browser
 /// never sees a key. Paid tool (npub/proof envelope injected by callTool).
 export async function refinePostRegion(args: {
@@ -754,7 +754,7 @@ export async function refinePostRegion(args: {
   });
 }
 
-// ─── Resolve a dynamic block (server-side; operator's vaulted Claude key) ──
+// ─── Resolve a dynamic block (server-side; operator's vaulted LLM key) ──
 
 export interface ResolveDynamicResult {
   success: boolean;

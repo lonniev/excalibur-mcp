@@ -2,7 +2,7 @@
 
 A dynamic block's text IS a runnable prompt ("…the current weather and the
 BTC/USD price now"). At post time — or in the editor's Preview dry-run — the
-operator's vaulted Anthropic key runs that prompt, with Claude's server-side
+operator's vaulted LLM key runs that prompt, with the provider's server-side
 ``web_search`` + ``web_fetch`` tools for live data, and returns one post-ready
 fragment woven into the surrounding copy in the author's voice. The author's
 instruction governs length (X is long-form; no character cap), and the finished
@@ -13,6 +13,10 @@ Same posture as ``refine.py``: the operator's key stays in the vault and never
 leaves the server, and the call is metered as a paid tollbooth fare. This module
 is pure resolution — it ``raise``s on transport/HTTP error or empty output so the
 caller (the dry-run tool or the scheduler) can refund / fall back.
+
+Which provider, which model, and which account pays are ``tollbooth.llm_route``'s
+concern, not this module's. What stays here is what makes a *post* good: the
+prompt, the tag extraction, and the author's web-lookup budget.
 """
 
 from __future__ import annotations
@@ -22,6 +26,14 @@ import re
 from typing import Any
 
 import httpx
+from tollbooth.llm_route import (
+    TIER_WRITER,
+    LlmRoute,
+    build_messages_request,
+    resolve_route,
+    web_fetch_tool,
+    web_search_tool,
+)
 
 from excalibur_mcp.formatter import to_x_text
 
@@ -32,25 +44,22 @@ logger = logging.getLogger(__name__)
 # stays OUTSIDE and is discarded — we extract only what's inside.
 _FRAGMENT_RE = re.compile(r"<post>(.*?)</post>", re.S | re.I)
 
-_MODEL = "claude-sonnet-4-6"
-_ENDPOINT = "https://api.anthropic.com/v1/messages"
-# Web search + fetch + generation can run long. Generous, but kept BELOW the FE
-# MCP client timeout (240s) so a too-slow call returns a clean refundable error
-# here instead of surfacing as an MCP -32001 on the client.
-_TIMEOUT = 210.0
+# Composing a fragment the owner publishes under their own name is authorial work,
+# so it draws the writer tier. Which model that names — and which provider account
+# pays for it — is the wheel's decision, not this module's.
+_TIER = TIER_WRITER
+
+# The FE's MCP client gives up at 240s. A resolve that outlives that budget
+# surfaces as an opaque MCP -32001 in the browser instead of the clean, refundable
+# error this module raises — so the request timeout must stay BELOW it. The bound
+# itself is the wheel's (two operators had grown the same numbers), which means
+# this ceiling is a coupling the wheel cannot see; ``test_resolve`` asserts it.
+_FE_CLIENT_TIMEOUT_S = 240.0
+
 # Generation ceiling, not a content limit — X supports long-form posts, so the
 # author's instruction governs length. Generous enough for long prose while
 # bounding latency/cost (and staying under the FE's per-call timeout).
 _MAX_TOKENS = 4000
-
-# Claude's server-side web tools (dynamic-filtering variants — supported on
-# claude-sonnet-4-6). web_search queries the indexed web (no URL needed);
-# web_fetch retrieves a specific URL already present in the conversation (the
-# prompt, or a link a prior search/fetch surfaced). Anthropic runs both server
-# side and folds the findings into the final answer, so a single request still
-# returns finished text. allowed_domains/max_uses are author-controlled per block.
-_WEB_SEARCH_TYPE = "web_search_20260209"
-_WEB_FETCH_TYPE = "web_fetch_20260209"
 
 # Per-block web-lookup budget. The author may raise it; we cap it so a runaway
 # prompt can't fan out indefinitely (each lookup costs the post owner).
@@ -70,14 +79,11 @@ def clamp_fetches(value: int) -> int:
 def _build_tools(allowed_domains: list[str] | None, max_fetches: int) -> list[dict[str, Any]]:
     """Web tools for one resolution: search (always) + fetch (always). When the
     author listed domains, web_fetch is restricted to them; otherwise it may
-    fetch any URL the prompt references (Anthropic gates fetch to URLs already in
-    the conversation). ``max_fetches`` bounds uses of each tool."""
-    fetch: dict[str, Any] = {"type": _WEB_FETCH_TYPE, "name": "web_fetch", "max_uses": max_fetches}
-    if allowed_domains:
-        fetch["allowed_domains"] = allowed_domains
+    fetch any URL the prompt references (the provider gates fetch to URLs already
+    in the conversation). ``max_fetches`` bounds uses of each tool."""
     return [
-        {"type": _WEB_SEARCH_TYPE, "name": "web_search", "max_uses": max_fetches},
-        fetch,
+        web_search_tool(max_fetches),
+        web_fetch_tool(max_fetches, allowed_domains),
     ]
 
 
@@ -163,15 +169,17 @@ def _clean(text: str) -> str:
     return t
 
 
-def clamp_timeout(seconds: float | int | None) -> float:
-    """Bound the LLM request timeout to a sane range (the author's runtime budget
-    drives it; default ``_TIMEOUT`` when unset)."""
-    if not seconds or seconds <= 0:
-        return _TIMEOUT
-    return float(max(30, min(int(seconds), 900)))
+def route_for(api_key: str) -> LlmRoute:
+    """The route one composition runs on.
+
+    The caller supplies the key, which is what names the provider ACCOUNT this
+    work bills to — so giving composition its own account later is a different
+    key at the call site, not a change here.
+    """
+    return resolve_route(api_key=api_key, tier=_TIER)
 
 
-def build_anthropic_request(
+def build_resolve_request(
     *,
     api_key: str,
     prompt: str,
@@ -180,9 +188,9 @@ def build_anthropic_request(
     bans: list[str] | None = None,
     allowed_domains: list[str] | None = None,
     max_fetches: int = _MAX_FETCHES_DEFAULT,
-    timeout_seconds: float | int | None = None,
+    timeout_seconds: float | None = None,
 ) -> dict[str, Any]:
-    """Build the fully-formed Anthropic messages request for one dynamic block.
+    """Build the fully-formed messages request for one dynamic block.
 
     Returns a declarative, JSON-serializable request envelope (method, url,
     headers, json body, timeout) — exactly the shape the durable long-runner's
@@ -195,29 +203,19 @@ def build_anthropic_request(
     if not prompt.strip():
         raise ValueError("empty prompt")
 
-    tools = _build_tools(allowed_domains, clamp_fetches(max_fetches))
     system, user = _build_prompt(prompt, context, voice, bans)
-    return {
-        "method": "POST",
-        "url": _ENDPOINT,
-        "headers": {
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        },
-        "json": {
-            "model": _MODEL,
-            "max_tokens": _MAX_TOKENS,
-            "system": system,
-            "tools": tools,
-            "messages": [{"role": "user", "content": user}],
-        },
-        "timeout": clamp_timeout(timeout_seconds),
-    }
+    return build_messages_request(
+        route_for(api_key),
+        system=system,
+        user=user,
+        max_tokens=_MAX_TOKENS,
+        tools=_build_tools(allowed_domains, clamp_fetches(max_fetches)),
+        timeout_seconds=timeout_seconds,
+    )
 
 
 def extract_resolved_text(raw_json: dict[str, Any]) -> str:
-    """Turn a raw Anthropic messages response into the final X-ready fragment.
+    """Turn a raw messages response into the final X-ready fragment.
 
     Pulls the ``<post>…</post>`` deliverable and down-formats it to X plain text +
     Unicode styling (a safety net in case the model emitted HTML/CSS/JSX/markdown
@@ -230,29 +228,29 @@ def extract_resolved_text(raw_json: dict[str, Any]) -> str:
     return text
 
 
-async def preflight_anthropic(
+async def preflight_llm(
     api_key: str, timeout_seconds: float = 12.0,
 ) -> tuple[int, Any] | None:
     """Cheap synchronous funding/auth probe, run before deferring a resolve to a job.
 
     Fires a minimal 1-token generation. Returns ``None`` when the account is
     healthy (HTTP 200); otherwise ``(status_code, body_json_or_None)`` so the
-    caller can curate the situation. A 400 "credit balance too low" bills nothing,
-    so this is a free way to fail fast when the operator's Anthropic account is
-    unfunded, instead of handing back a claim check that the patron polls for ~90s
-    before it fails. Propagates transport errors (timeout / connection) so the
-    caller can fall through to the real attempt rather than block on a probe.
+    caller can curate the situation. A refusal for want of funds bills nothing, so
+    this is a free way to fail fast when the operator's provider account is empty,
+    instead of handing back a claim check that the patron polls for ~90s before it
+    fails. Propagates transport errors (timeout / connection) so the caller can
+    fall through to the real attempt rather than block on a probe.
+
+    A reasoning model answers a 1-token ceiling with ``stop_reason: max_tokens``
+    and an empty or thinking-only body — still a 200, which is all this asks.
     """
+    route = route_for(api_key)
     async with httpx.AsyncClient(timeout=timeout_seconds) as client:
         resp = await client.post(
-            _ENDPOINT,
-            headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
+            route.endpoint,
+            headers=route.headers(),
             json={
-                "model": _MODEL,
+                "model": route.model,
                 "max_tokens": 1,
                 "messages": [{"role": "user", "content": "ping"}],
             },
@@ -275,13 +273,13 @@ async def resolve_block(
     bans: list[str] | None = None,
     allowed_domains: list[str] | None = None,
     max_fetches: int = _MAX_FETCHES_DEFAULT,
-    timeout_seconds: float | int | None = None,
+    timeout_seconds: float | None = None,
 ) -> str:
     """Resolve one dynamic block to its final, post-ready fragment text.
 
-    The in-process / scheduler path: build the request, call Anthropic, extract.
+    The in-process / scheduler path: build the request, call the provider, extract.
     The durable long-runner path uses the same two halves separately
-    (``build_anthropic_request`` is sealed into the closure; ``extract_resolved_text``
+    (``build_resolve_request`` is sealed into the closure; ``extract_resolved_text``
     shapes the detached result) so both paths produce identical output.
 
     ``context`` is the surrounding composed post (optionally with
@@ -292,7 +290,7 @@ async def resolve_block(
     ``ValueError`` on empty input/output and propagates transport/HTTP errors so
     the caller can refund / fall back.
     """
-    req = build_anthropic_request(
+    req = build_resolve_request(
         api_key=api_key, prompt=prompt, context=context, voice=voice,
         bans=bans, allowed_domains=allowed_domains, max_fetches=max_fetches,
         timeout_seconds=timeout_seconds,
