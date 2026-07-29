@@ -444,7 +444,25 @@ async def test_dynamic_insufficient_balance_for_resolve_holds(_stub_mark_attempt
     with _claimed(doc=_DYNAMIC_DOC), \
          patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
         out = await publisher.publish_one(rt, "p1")
-    assert out["reason"] == "insufficient_balance_resolve"
+    assert out["reason"] == "insufficient_balance"
+    assert out["stage"] == "resolve"  # which charge refused, without faking the reason
+    client.post_tweet.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_unreadable_ledger_is_not_reported_as_an_empty_wallet(_stub_mark_attempt):
+    """``_apply_billing`` returns ``vault_unavailable`` when it could not read the
+    ledger — charging nothing, precisely so a funded patron is never told they are
+    broke. The publisher used to relabel it ``insufficient_balance``, which sent an
+    owner holding 844 sats to go top up."""
+    rt = _runtime(billing={"success": False, "error_code": "vault_unavailable"})
+    rt.load_credentials = AsyncMock(return_value={"llm_api_key": "k"})
+    client = SimpleNamespace(post_tweet=AsyncMock())
+    with _claimed(doc=_DYNAMIC_DOC), \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        out = await publisher.publish_one(rt, "p1")
+    assert out["reason"] == "vault_unavailable"
+    assert out["outcome"] == "held"
     client.post_tweet.assert_not_awaited()
 
 
