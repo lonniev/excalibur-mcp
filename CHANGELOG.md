@@ -11,6 +11,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — a held post named a cause that wasn't the cause
+
+Post `844c6b64` sat unpublished from 2026-07-27 to 2026-07-29. Every 30-minute tick held
+it and stamped a reason: `oauth_not_yet_authorized`, `oauth_token_expired`, or
+`insufficient_balance_resolve`. X was connected the whole time (`get_x_profile` returning
+`@lonniev`) and the owner held 844 sats. Every reason was false, and each one sent the
+owner to fix something that wasn't broken.
+
+Most of that is a wheel bug (tollbooth-dpyc 0.75.0 teaches the vault read to say why it
+couldn't answer). One half was ours: `_apply_billing` already distinguishes a patron who
+is short of sats from a ledger it could not read — the second returns `vault_unavailable`,
+charges nothing, and carries the comment *"never tell a funded patron 'insufficient
+balance'"*. The publisher threw that away and hardcoded `insufficient_balance_resolve`,
+undoing the distinction at the last step. It now propagates the real `error_code`, exactly
+as it already did four lines earlier for a pricing denial, and carries which charge refused
+as its own `stage` field rather than baking it into the reason string.
+
+`attemptLabel` was missing the codes that actually occur — `oauth_not_yet_authorized` and
+`insufficient_balance_resolve` both rendered raw. It now covers the real set, with the
+wording checked against what it tells the human to *do*: a service still warming up must
+not read as the owner's problem, and a database over quota must not read as something that
+will clear if they wait.
+
 ### Changed — LLM calls route through a model router, and the wheel decides which
 
 Both AI paths — composing a dynamic block and refining a flagged region — pinned

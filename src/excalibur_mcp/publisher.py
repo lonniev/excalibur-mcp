@@ -384,6 +384,18 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
         return await _record({"post_id": post_id, "outcome": "gone"})
     owner = row["npub"]
 
+    def _billing_reason(billing: dict[str, Any], fallback: str) -> str:
+        """The reason a billing call refused, as IT stated it.
+
+        ``_apply_billing`` distinguishes a patron who is genuinely short of sats
+        from a ledger it could not read — the second returns ``vault_unavailable``
+        and charges nothing, and its own comment explains why: *never tell a
+        funded patron "insufficient balance"*. Flattening both to
+        ``insufficient_balance`` here undid that at the last step, and sent an
+        owner with 844 sats to top up their account.
+        """
+        return str(billing.get("error_code") or fallback)
+
     async def _hold(reason: str, **extra: Any) -> dict[str, Any]:
         """Leave the post ``scheduled`` for a later tick and say why — the
         situation is stamped on the post so it never sits silently."""
@@ -436,7 +448,10 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
             return await _hold(rdenial.get("error_code") or "pricing_unavailable")
         rbilling = await runtime._apply_billing(owner, "resolve_dynamic_block", rcost, [])
         if isinstance(rbilling, dict):  # finance reason
-            return await _hold("insufficient_balance_resolve", cost_sats=rcost)
+            return await _hold(
+                _billing_reason(rbilling, "insufficient_balance"),
+                stage="resolve", cost_sats=rcost,
+            )
         resolve_charged = True
 
         try:
@@ -462,10 +477,14 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
         return await _hold(denial.get("error_code") or "pricing_unavailable")
     billing = await runtime._apply_billing(owner, "post_tweet", cost, [])
     if isinstance(billing, dict):
-        # Insufficient / expired balance — leave it scheduled, report it. — finance reason
+        # Short balance, expired tranche, or an unreadable ledger — leave it
+        # scheduled and report which. — finance reason
         if resolve_charged:
             await runtime.rollback_debit(resolve_id, owner)
-        return await _hold("insufficient_balance", cost_sats=cost)
+        return await _hold(
+            _billing_reason(billing, "insufficient_balance"),
+            stage="post", cost_sats=cost,
+        )
 
     # 4. Post. On failure, refund the owner and leave the post scheduled. — network reason
     try:

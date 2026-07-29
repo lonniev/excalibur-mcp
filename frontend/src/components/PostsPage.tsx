@@ -58,10 +58,25 @@ function attemptLabel(reason: string): string {
   return (
     {
       insufficient_balance: "out of credits",
+      insufficient_balance_resolve: "out of credits",
       oauth_token_expired: "X access expired",
       oauth_unavailable: "X not connected",
+      oauth_not_yet_authorized: "X not connected",
       empty_text_cache: "empty content",
       pricing_unavailable: "pricing unavailable",
+      // Situations where the service couldn't answer — NOT the owner's doing.
+      // Each of these once arrived labelled as a dead X login or an empty
+      // wallet, sending the owner to fix something that was never broken. The
+      // wording has one job: make it obvious no action is wanted here.
+      warming_up: "service warming up",
+      vault_bootstrapping: "service warming up",
+      secure_courier_unavailable: "service warming up",
+      vault_unavailable: "balance unconfirmed — retrying",
+      operator_credentials_missing: "operator setup pending",
+      // …and these two will not clear on their own, so they must not read as a
+      // wait. Naming the operator is the actionable part.
+      persistence_quota_exceeded: "operator database over quota",
+      persistence_misconfigured: "operator database needs repair",
     } as Record<string, string>
   )[reason] ?? reason;
 }
