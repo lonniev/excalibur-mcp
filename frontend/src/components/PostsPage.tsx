@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Plus, RefreshCw } from "lucide-react";
 import {
   createPost, deletePost, getPost, listPosts, postTweet, updatePost,
   type PostSummary, type Recurrence, type SortDir,
@@ -376,9 +377,11 @@ export default function PostsPage() {
         <SchedulerHealth />
         <Link
           to="/new"
-          className="ml-auto bg-amber-600 hover:bg-amber-500 text-white text-sm px-4 py-2 rounded-lg transition-colors"
+          className="ml-auto inline-flex items-center gap-1.5 bg-green-600 hover:bg-green-500 text-white text-sm px-4 py-2 rounded-lg transition-colors"
+          aria-label="Compose"
         >
-          + Compose
+          <Plus className="h-6 w-6" aria-hidden />
+          Compose
         </Link>
       </div>
 
@@ -454,12 +457,14 @@ export default function PostsPage() {
           );
         })}
         <button
+          type="button"
           onClick={refresh}
           disabled={loading}
-          className="ml-auto px-2.5 py-1 rounded-lg text-stone-400 hover:bg-stone-100 dark:text-zinc-500 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="ml-auto inline-flex h-12 w-12 items-center justify-center rounded-lg text-stone-400 hover:bg-stone-100 dark:text-zinc-500 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           title="Refresh"
+          aria-label="Refresh"
         >
-          <span className={loading ? "inline-block animate-spin" : ""}>↻</span>
+          <RefreshCw className={`h-6 w-6 ${loading ? "animate-spin" : ""}`} aria-hidden />
         </button>
       </div>
 
