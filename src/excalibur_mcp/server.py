@@ -344,13 +344,24 @@ async def _prepare_x_client(
     return (client, "")
 
 
-def _x_api_error_to_response(exc: Any) -> dict[str, Any]:
+async def _x_api_error_to_response(exc: Any, npub: str = "") -> dict[str, Any]:
     """Map an X API error to a structured response.
 
-    A 401/403 from X means the access token was rejected upstream
-    even though our records considered it fresh — the patron must
-    re-authorize.  Routes to ``oauth_refresh_needed`` for symmetry
-    with the SDK helper's standard situations.
+    A 401/403 from X means the *access* token was rejected even though our
+    records considered it fresh.  That is the short-lived half of the grant and
+    the refresh token is untouched, so this is a renewal — not the
+    re-authorization it used to be reported as.  ``publisher.py`` has always
+    known this (``_X_NON_TRANSIENT`` holds 402 and nothing else, and a post that
+    401'd at 23:00 posted cleanly an hour later); the interactive path is what
+    kept telling patrons to reconnect a working account.
+
+    Retiring the cached expiry is the part that makes the retry mean anything:
+    without it the stored ``expires_at`` keeps asserting the dead token is good,
+    every subsequent call short-circuits on the cache and fails identically, and
+    the patron is stranded until the real expiry hours later.  With it the next
+    call spends the refresh token — and if the grant genuinely is dead, X says
+    so and ``restore_oauth_session`` reports ``token_expired`` on X's authority
+    rather than ours.
 
     A 402 means the patron's own X developer subscription / access tier
     has lapsed or doesn't cover the request — a billing matter at X, not a
@@ -365,7 +376,9 @@ def _x_api_error_to_response(exc: Any) -> dict[str, Any]:
     }
     status = getattr(exc, "status_code", 0)
     if status in (401, 403):
-        base.update(runtime.oauth_situation_response("token_expired"))
+        if npub:
+            await runtime.invalidate_oauth_access_token(npub)
+        base.update(runtime.oauth_situation_response("token_rejected"))
         # Preserve the upstream detail alongside the structured guidance
         base["status_code"] = exc.status_code
         base["detail"] = getattr(exc, "detail", None)
@@ -421,7 +434,7 @@ async def post_tweet(
     try:
         result = await client.post_tweet(converted)
     except XAPIError as exc:
-        return _x_api_error_to_response(exc)
+        return await _x_api_error_to_response(exc, npub)
 
     return result
 
@@ -446,7 +459,7 @@ async def get_x_profile(
     try:
         me = await client.get_me()
     except XAPIError as exc:
-        return _x_api_error_to_response(exc)
+        return await _x_api_error_to_response(exc, npub)
     return {"connected": True, **me}
 
 
@@ -549,7 +562,7 @@ async def post_tweet_image(
         else:
             result = {"error": "No image provided."}
     except XAPIError as exc:
-        return _x_api_error_to_response(exc)
+        return await _x_api_error_to_response(exc, npub)
 
     return result
 

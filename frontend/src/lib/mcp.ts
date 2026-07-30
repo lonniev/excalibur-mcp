@@ -936,7 +936,21 @@ export async function getXConnection(): Promise<XConnectionState> {
 
 /// Error codes from a paid X tool that mean "the patron must connect/reconnect
 /// their X account" (vs. a transient or operator-side problem).
-export const OAUTH_NEEDED_CODES = new Set(["oauth_not_yet_authorized", "oauth_token_expired"]);
+///
+/// Membership is deliberately narrow, because offering "Connect X" is never
+/// free: on a provider that rotates refresh tokens, re-authorizing to chase a
+/// blip throws away a working grant. Only codes where the provider itself
+/// named the authorization dead — or where there demonstrably isn't one —
+/// belong here. Two near-misses that must stay OUT:
+///   • oauth_refresh_unavailable — the refresh never got an answer; nobody
+///     knows anything yet, and the next tick retries.
+///   • oauth_token_rejected — the short-lived access token was refused; the
+///     wheel has already retired its cached expiry so the next call renews.
+export const OAUTH_NEEDED_CODES = new Set([
+  "oauth_not_yet_authorized",
+  "oauth_token_expired",
+  "oauth_unavailable",
+]);
 
 // ─── Snippet library (Neon-backed, npub-scoped, free + proof-gated) ────────
 

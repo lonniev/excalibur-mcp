@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Plus, RefreshCw } from "lucide-react";
 import {
-  createPost, deletePost, getPost, listPosts, postTweet, updatePost,
+  createPost, deletePost, getPost, listPosts, OAUTH_NEEDED_CODES, postTweet, updatePost,
   type PostSummary, type Recurrence, type SortDir,
 } from "../lib/mcp";
 import { uid } from "../lib/editorDoc";
@@ -67,6 +67,10 @@ function attemptLabel(reason: string): string {
       // lapsed — and the three labels above all read as "go reconnect X". This
       // one must read as a retry, because that is what the next tick does.
       oauth_refresh_unavailable: "X didn't answer — retrying",
+      // X refused the short-lived access token. The wheel has already retired
+      // its cached expiry, so the next tick spends the refresh token and
+      // renews. Same rule as above: this reads as a retry, never as reconnect.
+      oauth_token_rejected: "renewing X access — retrying",
       empty_text_cache: "empty content",
       pricing_unavailable: "pricing unavailable",
       // Situations where the service couldn't answer — NOT the owner's doing.
@@ -556,6 +560,22 @@ export default function PostsPage() {
                       >
                         ⏸ {attemptLabel(p.last_attempt_reason)}
                       </span>
+                    )}
+                    {/* A post held because X genuinely needs (re)connecting is the
+                        one case the owner can fix from here, so say so and offer
+                        the door. Without this the row named the problem and left
+                        the owner to guess that the cure lives under Profile.
+                        Gated on OAUTH_NEEDED_CODES, which deliberately excludes
+                        the self-healing codes — see its definition in lib/mcp. */}
+                    {p.last_attempt_reason && OAUTH_NEEDED_CODES.has(p.last_attempt_reason) && (
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); nav("/profile"); }}
+                        className="mt-1 inline-flex items-center gap-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 transition-colors hover:bg-amber-500/25 dark:text-amber-400"
+                        title="Reconnect your X account — this post reschedules itself once X accepts you again."
+                      >
+                        Reconnect X →
+                      </button>
                     )}
                     {p.status === "sending" && (
                       <span
