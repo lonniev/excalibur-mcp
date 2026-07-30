@@ -10,6 +10,8 @@ import { Link } from "react-router-dom";
 import { getSchedulerStatus, getSchedulerLog, type SchedulerStatus, type SchedulerRun } from "../lib/mcp";
 import SchedulerPendingCard from "./SchedulerPendingCard";
 import RefreshButton from "./RefreshButton";
+import SchedulerStatusLine from "./SchedulerStatusLine";
+import { deriveSchedulerState, schedulerStatusTitle } from "../lib/schedulerState";
 
 const POLL_MS = 60 * 1000;
 
@@ -33,17 +35,6 @@ function until(ms: number): string {
   return `in ${Math.max(1, Math.round(secs / 60))} min`;
 }
 
-// ── health, derived from the newest tick's freshness (mirrors SchedulerHealth) ─
-const FRESH_MS = 40 * 60 * 1000;
-const STALE_MS = 100 * 60 * 1000;
-function health(runs: SchedulerRun[]): { dot: string; label: string } {
-  if (!runs.length) return { dot: "bg-amber-400", label: "No tick logged yet" };
-  const age = Date.now() - new Date(runs[0].run_at).getTime();
-  if (isNaN(age)) return { dot: "bg-zinc-400", label: "Status unknown" };
-  if (age <= FRESH_MS) return { dot: "bg-green-500", label: "Healthy" };
-  if (age <= STALE_MS) return { dot: "bg-amber-400", label: "Quiet" };
-  return { dot: "bg-red-500", label: "Stalled" };
-}
 
 // "47 min" reads fine; "1387 min" does not. Hours and days once it's worth it.
 function untilMins(m: number): string {
@@ -222,16 +213,18 @@ export default function SchedulerPage() {
     };
   }, [refresh]);
 
-  const h = health(runs);
+  const schedState = deriveSchedulerState(runs);
   const workerDown = status?.worker === "unavailable";
 
   return (
     <div className="mx-auto w-[90%] max-w-[1000px] px-4 py-6">
       <div className="mb-4 flex items-center gap-3">
         <h1 className="text-lg font-semibold">Scheduler</h1>
-        <span className="flex items-center gap-1.5 text-xs text-stone-500 dark:text-zinc-400">
-          <span className={`inline-block h-2 w-2 rounded-full ${h.dot}`} />
-          {h.label}
+        <span
+          className="flex items-center gap-1.5 text-xs text-stone-500 dark:text-zinc-400"
+          title={schedulerStatusTitle(schedState)}
+        >
+          <SchedulerStatusLine state={schedState} />
         </span>
         <span className="ml-auto">
           <RefreshButton onClick={() => void refresh()} busy={loading} size="sm" title="Refresh scheduler status" />
