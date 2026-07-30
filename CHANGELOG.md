@@ -11,6 +11,43 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## 0.35.0 — 2026-07-30
+
+Ships everything below, which had been sitting merged-but-unreleased on `main` —
+including the label work that was inert until the wheel bump landed with it.
+
+### Fixed — a rejected X token renews itself, and a held post has somewhere to go
+
+Two halves of the same complaint: the scheduler blamed X for everything, and on the
+occasions it was right about X, the owner had nowhere to click.
+
+`_x_api_error_to_response` mapped an interactive 401/403 straight to
+`oauth_token_expired` and set `needsXConnect` — sending owners to reconnect a working
+account — while `publisher.py`'s `_X_NON_TRANSIENT = {402}` treated the very same 401 as
+transient and self-healing. Both were in this repo, disagreeing, and the interactive one
+was wrong: a post that 401'd at 23:00 posted cleanly an hour later. A 401 now routes
+through the wheel's `invalidate_oauth_access_token`, which retires the cached expiry so
+the next call spends the refresh token, and reports the retryable `oauth_token_rejected`
+instead of a re-authorization demand.
+
+The Posts list labels that one **"renewing X access — retrying"**, joining
+`oauth_refresh_unavailable` in the set of reasons that must read as a wait rather than a
+chore.
+
+And for the reasons that genuinely *are* the owner's to fix, a held post now offers
+**Reconnect X →** beside the reason, routing to the Profile panel that already runs the
+whole OAuth dance. Before this the row named the problem and left the owner to guess
+that the cure lived on another page. It is gated on `OAUTH_NEEDED_CODES` — widened to
+include `oauth_unavailable`, and documented to exclude the two self-healing codes,
+because offering "reconnect" is never free: on a provider that rotates refresh tokens,
+re-authorizing to chase a blip discards a working grant.
+
+### Changed — track tollbooth-dpyc 0.76.0
+
+Bumped the pinned SDK to 0.76.0, which carries the serialized refresh (one refresh at a
+time per patron), the retryable/terminal split, and the `invalidate_oauth_access_token`
+primitive the 401 fix above depends on.
+
 ### Fixed — four posts, one refresh token, four "X access expired"
 
 The 22:30 tick found four posts due, launched four publishers, and held all four for
@@ -30,7 +67,7 @@ which is what the next tick actually does. It is not in `OAUTH_NEEDED_CODES`, so
 raises the "Connect your X account" prompt, and the publisher holds on it rather than
 pausing — a paused post waits for a human, and there is nothing here for a human to do.
 
-Arrives with the next `tollbooth-dpyc` bump; the label is inert until then.
+The label was inert until the wheel bump; both land together in 0.35.0.
 
 ### Fixed — the Scheduler tab said "the token" and meant a different one
 
