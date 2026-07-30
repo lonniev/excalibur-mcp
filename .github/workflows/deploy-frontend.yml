@@ -13,6 +13,7 @@ jobs:
     permissions:
       contents: read
       deployments: write
+      issues: write
 
     steps:
       - uses: actions/checkout@v7
@@ -41,3 +42,31 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy dist --project-name=${{ vars.CLOUDFLARE_PAGES_PROJECT || 'excalibur-app' }}
           workingDirectory: frontend
+
+      # A failed frontend deploy used to be silent. Agentic Deploy Verify probes the MCP
+      # operator's service_status — the PYTHON service — and reports the merge healthy, so
+      # five consecutive frontend build failures over a week produced no signal anywhere.
+      # This is deterministic: file one issue, keep it current, and let the Porter route it.
+      - name: File an issue when the deploy fails
+        if: ${{ failure() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          marker="<!-- fe-deploy-broken -->"
+          existing=$(gh issue list --repo "$REPO" --state open --search "$marker in:body" \
+                       --json number --jq '.[0].number' 2>/dev/null || true)
+          body=$(printf '%s\nThe frontend build or deploy failed on `main`, so whatever merged has NOT reached users.\n\nCommit: `%s`\nRun: %s\n\nThis issue is filed by deploy-frontend.yml itself. Agentic Deploy Verify cannot catch this: it probes the MCP operator, which is a different deployment.\n' "$marker" "$SHA" "$RUN")
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$REPO" --body "Still failing at \`$SHA\` — $RUN"
+            echo "updated existing issue #$existing"
+          else
+            gh label create "area/ci" --repo "$REPO" --color bfd4f2 --description "CI / build / release" --force >/dev/null 2>&1 || true
+            gh issue create --repo "$REPO" \
+              --title "Frontend deploy is failing on main — merges are not reaching users" \
+              --label "type/bug" --label "area/ci" --label "sev/high" \
+              --body "$body"
+          fi

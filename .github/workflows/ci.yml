@@ -42,3 +42,74 @@ jobs:
 
       - name: Test
         run: pytest tests/ -v
+
+  # The frontend had no pre-merge build of any kind, so a dependency PR could take a
+  # MAJOR version, go green on the Python suite, auto-merge on the `frontend/` low-risk
+  # path, and leave the site undeployable for a week before anyone noticed. That is
+  # exactly what #285 did with tailwindcss 3 -> 4. This job is the check that was missing.
+  #
+  # It always runs and carries no `paths:` filter on purpose. A path-filtered job posts no
+  # status on PRs that miss the filter, and a required context that sometimes never posts
+  # leaves merges pending forever. So it always reports, and skips its own expensive steps
+  # when `frontend/` is untouched — which keeps it cheap AND safe to require.
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Did the frontend change?
+        id: touched
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BASE_SHA:-}" ]; then
+            echo "push build — building the frontend."
+            echo "any=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if git diff --name-only --diff-filter=ACMR "$BASE_SHA" "$HEAD_SHA" \
+               | grep -qE '^frontend/|^\.github/workflows/(ci|deploy-frontend)\.yml$'; then
+            echo "any=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "any=false" >> "$GITHUB_OUTPUT"
+            echo "frontend untouched — reporting green without building."
+          fi
+
+      - uses: actions/setup-node@v7
+        if: steps.touched.outputs.any == 'true'
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      # `npm ci` installs strictly from the lockfile, which is what CI and the deploy both
+      # do — so this reproduces the exact resolution that broke, rather than an `npm install`
+      # that might paper over it.
+      - name: Install from the lockfile
+        if: steps.touched.outputs.any == 'true'
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build
+        if: steps.touched.outputs.any == 'true'
+        working-directory: frontend
+        run: npm run build
+        env:
+          VITE_MCP_URL: /mcp
+
+      # A build can "succeed" and emit nothing useful. Tailwind failing to load its plugin
+      # is the failure we just had; a stylesheet of a few hundred bytes is what that looks
+      # like when it degrades rather than throws.
+      - name: The stylesheet is not empty
+        if: steps.touched.outputs.any == 'true'
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          css=$(find dist/assets -name '*.css' | head -1)
+          [ -n "$css" ] || { echo "::error::no stylesheet emitted"; exit 1; }
+          bytes=$(wc -c < "$css")
+          echo "emitted $css ($bytes bytes)"
+          [ "$bytes" -gt 5000 ] || { echo "::error::stylesheet is $bytes bytes — Tailwind almost certainly did not run"; exit 1; }
