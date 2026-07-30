@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { Plus, RefreshCw } from "lucide-react";
+import { Plus } from "lucide-react";
 import {
   createPost, deletePost, getPost, listPosts, OAUTH_NEEDED_CODES, postTweet, updatePost,
   type PostSummary, type Recurrence, type SortDir,
@@ -12,6 +12,7 @@ import TableFilter from "./TableFilter";
 import QuoteScroller from "./QuoteScroller";
 import SchedulerHealth from "./SchedulerHealth";
 import SchedulerPendingCard from "./SchedulerPendingCard";
+import RefreshButton from "./RefreshButton";
 
 // The status toggle-chiclets. Each is an independent include filter: toggled ON
 // means "show posts with this status", OFF means "exclude them" — together they
@@ -464,16 +465,9 @@ export default function PostsPage() {
             </button>
           );
         })}
-        <button
-          type="button"
-          onClick={refresh}
-          disabled={loading}
-          className="ml-auto inline-flex h-12 w-12 items-center justify-center rounded-lg text-stone-400 hover:bg-stone-100 dark:text-zinc-500 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          title="Refresh"
-          aria-label="Refresh"
-        >
-          <RefreshCw className={`h-6 w-6 ${loading ? "animate-spin" : ""}`} aria-hidden />
-        </button>
+        <span className="ml-auto">
+          <RefreshButton onClick={refresh} busy={loading} title="Refresh posts" />
+        </span>
       </div>
 
       {hasLoaded && (

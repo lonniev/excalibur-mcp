@@ -46,6 +46,12 @@ export default function SchedulerHealth() {
   // Posts launched whose publisher hasn't reported back — the ones showing as
   // Sending. This is the "in progress" the dot should mean.
   const [publishing, setPublishing] = useState<string[]>([]);
+  // How many posts are queued ahead, straight off the newest tick's own forecast
+  // (`upcoming.count`) — the Scheduler tab already renders it per row. Taken from
+  // the log we are ALREADY reading, because the obvious alternative, counting
+  // Scheduled posts via list_posts, is a paid tool and this component polls every
+  // five minutes: that would bill the owner on a timer, forever, for a badge.
+  const [soon, setSoon] = useState(0);
   const timer = useRef<number | null>(null);
 
   const refresh = useCallback(async () => {
@@ -62,6 +68,7 @@ export default function SchedulerHealth() {
         setLastRun(null);
         setStuck([]);
         setPublishing([]);
+        setSoon(0);
         return;
       }
       setLastRun(newest.run_at);
@@ -101,6 +108,7 @@ export default function SchedulerHealth() {
       }
       setStuck(unposted);
       setPublishing(inFlight);
+      setSoon(newest.summary?.upcoming?.count ?? 0);
       const age = Date.now() - new Date(newest.run_at).getTime();
       // A stall always outranks activity: publishers can be mid-flight while the
       // cron behind them has died, and the dead cron is the thing worth saying.
@@ -170,10 +178,18 @@ export default function SchedulerHealth() {
     unknown: "Scheduler status unknown",
   }[health];
   // A Post is only ever one of six things: Draft, Scheduled, Sending, Sent,
-  // Paused, Archived. Anything describing a Post says one of those words, so
-  // every badge here maps to a filter that already exists on the Posts tab —
+  // Paused, Archived, and every badge here must land you on a Posts filter —
   // "publishing" and "not posted" were this component's own inventions, and a
   // name with nowhere to click is what makes a post hard to track down.
+  //
+  // The held badge is the one deliberate exception. It counted a SUBSET of
+  // Scheduled — the ones that tried and were held — so labelling it "Scheduled"
+  // read as the whole rotation and undercounted it: "3 Scheduled" next to a
+  // dozen scheduled posts looks like a bug in the badge. It says "Retrying"
+  // instead, which is what those posts are actually doing and matches the words
+  // the Posts list already uses for the same situations ("X didn't answer —
+  // retrying"). Its tooltip still names the Scheduled filter, so the click-
+  // through the rule protects is intact.
   const held = stuck.filter((p) => !p.paused);   // attempt held → back to Scheduled
   const paused = stuck.filter((p) => p.paused);  // stopped → Paused, needs a human
   const stuckNote = stuck.length
@@ -213,7 +229,20 @@ export default function SchedulerHealth() {
             .map((p) => `${p.id} (${p.reason})`)
             .join("; ")}. Filter Posts by Scheduled — each one carries the same ⚠ marker.`}
         >
-          ⚠ {held.length} Scheduled
+          ⚠ Retrying {held.length}
+        </span>
+      )}
+      {/* The calm-state counterpart to the warning badges: when nothing is wrong
+          there is still something worth knowing, and "Scheduler healthy" alone
+          never said whether anything was actually queued. Suppressed while the
+          scheduler is quiet/stalled/cut off, because a forecast read off a tick
+          that may not run is a promise the badge cannot keep. */}
+      {health === "healthy" && soon > 0 && (
+        <span
+          className="rounded-full bg-stone-500/10 px-1.5 text-[10px] text-stone-600 dark:bg-zinc-400/15 dark:text-zinc-300"
+          title={`${soon} post${soon === 1 ? "" : "s"} queued ahead, as of the last tick. Filter Posts by Scheduled to see them.`}
+        >
+          ⓘ {soon} Soon
         </span>
       )}
       {paused.length > 0 && (

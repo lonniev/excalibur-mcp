@@ -9,6 +9,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { getSchedulerStatus, getSchedulerLog, type SchedulerStatus, type SchedulerRun } from "../lib/mcp";
 import SchedulerPendingCard from "./SchedulerPendingCard";
+import RefreshButton from "./RefreshButton";
 
 const POLL_MS = 60 * 1000;
 
@@ -175,12 +176,21 @@ export default function SchedulerPage() {
   const [status, setStatus] = useState<SchedulerStatus | null>(null);
   const [runs, setRuns] = useState<SchedulerRun[]>([]);
   const [loaded, setLoaded] = useState(false);
+  // Distinct from `loaded`: that one is "have we ever answered", this one is
+  // "are we answering right now". The refresh control spins on it, so a click
+  // is visibly doing something — the old text button gave no sign either way.
+  const [loading, setLoading] = useState(false);
 
   const refresh = useCallback(async () => {
-    const [s, r] = await Promise.all([getSchedulerStatus(), getSchedulerLog(25)]);
-    setStatus(s);
-    setRuns(r);
-    setLoaded(true);
+    setLoading(true);
+    try {
+      const [s, r] = await Promise.all([getSchedulerStatus(), getSchedulerLog(25)]);
+      setStatus(s);
+      setRuns(r);
+      setLoaded(true);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -223,12 +233,9 @@ export default function SchedulerPage() {
           <span className={`inline-block h-2 w-2 rounded-full ${h.dot}`} />
           {h.label}
         </span>
-        <button
-          onClick={() => void refresh()}
-          className="ml-auto rounded-lg px-2 py-1 text-xs text-stone-500 hover:bg-stone-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
-        >
-          Refresh
-        </button>
+        <span className="ml-auto">
+          <RefreshButton onClick={() => void refresh()} busy={loading} size="sm" title="Refresh scheduler status" />
+        </span>
       </div>
 
       <p className="mb-4 text-sm text-stone-500 dark:text-zinc-400">
