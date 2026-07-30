@@ -243,7 +243,7 @@ export default function SchedulerPage() {
 
       <div className="grid gap-4 md:grid-cols-2">
         <Card title="Status">
-          <Row label="Authorization">{authorizationLine(status)}</Row>
+          <Row label="npub authorization">{authorizationLine(status)}</Row>
           <Row label="Last tick">{runs.length ? relative(new Date(runs[0].run_at).getTime()) : "—"}</Row>
           <Row label="Runs on">{status?.cadence ?? "—"}</Row>
           {workerDown && (
@@ -260,14 +260,18 @@ export default function SchedulerPage() {
             </span>
           </Row>
           <Row label="Cadence">{status?.cadence ?? "—"}</Row>
-          <Row label="Renewal">
+          {/* "the token" used to stand alone here, one card away from the X
+              connection panel — so a monthly npub renewal read as X access
+              expiring every 30 minutes. Both rows now name whose credential
+              they mean. Nothing on this page describes the X OAuth token. */}
+          <Row label="npub renewal">
             {status?.renewsBeforeExpiryHours != null
-              ? `re-requests ${status.renewsBeforeExpiryHours} h before the token expires`
+              ? `re-requests this worker's npub authorization ${status.renewsBeforeExpiryHours} h before it expires (not your X connection)`
               : "—"}
           </Row>
-          <Row label="Re-nudge">
+          <Row label="npub re-nudge">
             {status?.rerequestAfterHours != null
-              ? `resends the DM if unanswered for ${status.rerequestAfterHours} h`
+              ? `resends the npub-approval DM if unanswered for ${status.rerequestAfterHours} h`
               : "—"}
           </Row>
           <Row label="Worker version">{status?.version ?? "—"}</Row>

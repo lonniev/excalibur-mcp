@@ -195,13 +195,20 @@ async def test_insufficient_balance_holds_without_posting(_stub_mark_attempt):
 
 
 @pytest.mark.asyncio
-async def test_oauth_unavailable_holds_without_billing():
+@pytest.mark.parametrize("code", [
+    "oauth_token_expired",
+    # X didn't answer the token refresh, so nothing is known about the session.
+    # It must hold (a later tick retries) and never pause — a paused post waits
+    # for a human, and there is nothing here for a human to do.
+    "oauth_refresh_unavailable",
+])
+async def test_oauth_unavailable_holds_without_billing(code):
     rt = _runtime()
-    situation = {"success": False, "error_code": "oauth_token_expired"}
+    situation = {"success": False, "error_code": code}
     with _claimed(), \
          patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(None, situation))):
         out = await publisher.publish_one(rt, "p1")
-    assert out["outcome"] == "held" and out["reason"] == "oauth_token_expired"
+    assert out["outcome"] == "held" and out["reason"] == code
     rt._apply_billing.assert_not_awaited()  # never charged for work we can't do
 
 
