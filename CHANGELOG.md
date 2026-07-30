@@ -11,6 +11,32 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## 0.36.1 — 2026-07-30
+
+### Fixed — the Scheduler page said less about the scheduler than Posts did
+
+Both pages answer the same question from the same `get_scheduler_log` rows, but
+with two bodies of code. `SchedulerPage` kept its own copy of the freshness
+thresholds and a `health()` that produced only a dot and a label — under a
+comment reading *"mirrors SchedulerHealth"*, which is the tell. A mirror drifts,
+and this one had: going to the **primary** Scheduler page showed strictly less
+than the Posts toolbar, with no Sending / Retrying / Soon / Paused badges at all.
+
+Meaning now lives in `lib/schedulerState`, rendering in `SchedulerStatusLine`. A
+page supplies rows; it does not get to decide what they mean. The line renders as
+a fragment rather than a box, so each surface keeps its own container — Posts a
+button that refreshes on click, Scheduler a plain span beside the title — and
+that container is the only thing the two are still allowed to differ on.
+
+Adopting the shared derivation also fixes a real defect the Scheduler page had:
+it read freshness from `runs[0].run_at`, the newest row of **any** kind. A
+publication lands minutes after the tick that launched it, so one arriving could
+refresh the timestamp and make a dying cron look alive. Freshness comes from the
+newest *tick* now, which is why that logic existed in the first place.
+
+An empty log reads "Scheduler quiet" rather than the page's own "No tick logged
+yet" — one vocabulary instead of two; the tooltip still says no run is logged.
+
 ## 0.36.0 — 2026-07-30
 
 Three controls and labels that didn't mean what they said.
