@@ -11,6 +11,45 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## 0.36.0 — 2026-07-30
+
+Three controls and labels that didn't mean what they said.
+
+### Fixed — "3 Scheduled" counted a subset and read as the whole rotation
+
+The scheduler badge counted posts *held on the last run* — a subset of Scheduled —
+but wore the status name, so beside a dozen scheduled posts "3 Scheduled" looked
+like a broken count rather than a warning about three of them.
+
+It says **"Retrying 3"** now, which is what those posts are doing, and matches the
+words the Posts list already uses for the same situations ("X didn't answer —
+retrying"). The tooltip still names the Scheduled filter, so the click-through
+survives. This is a deliberate exception to the rule that every badge word is one
+of the six Post statuses, and the rule's comment now records why.
+
+### Added — a healthy scheduler says what's coming
+
+"Scheduler healthy" never said whether anything was actually queued. A new
+**"ⓘ 9 Soon"** carries the forecast, read from `upcoming.count` on the newest
+tick — which `get_scheduler_log` already returns and the Scheduler tab already
+renders per row.
+
+Deliberately NOT counted by listing Scheduled posts: `list_posts` is a paid tool
+and this component polls every five minutes, so that would have billed the owner
+on a timer, forever, to render a badge. It appears only while the scheduler is
+healthy — a forecast read off a tick that may not run is a promise the badge
+cannot keep.
+
+### Fixed — one Refresh control instead of two
+
+Posts had a 48px icon button that spun while loading; Scheduler had a small text
+button that neither spun nor disabled. Same verb, same job, two affordances to
+learn, and only one of them admitted it was working.
+
+Both now use `RefreshButton`, which fixes the glyph, the spin, the disabled state
+and the accessible name in one place so they cannot drift again; `size` is the
+only knob. SchedulerPage gains the busy state it never had.
+
 ## 0.35.0 — 2026-07-30
 
 Ships everything below, which had been sitting merged-but-unreleased on `main` —
