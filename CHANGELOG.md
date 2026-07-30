@@ -11,6 +11,49 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## 0.36.2 — 2026-07-30
+
+### Fixed — one scheduled slot published two tweets
+
+Template `844c6b64` tweeted the same scheduled occurrence twice on 2026-07-30,
+41 minutes apart. Both snapshots carried the identical `publish_at`
+(`11:40:25.129589`) and two different tweet URLs.
+
+It was invisible in the scheduler log. The publication row is written *after*
+the state writes, so the death that causes this bug also erases its own
+evidence — the log showed each post publishing exactly once, and only the post
+rows disagreed. A log that cannot record a failure is not evidence of its
+absence.
+
+What happened: `post_tweet` succeeded, `create_sent_occurrence` succeeded, and
+`mark_sent` never ran. The template stayed `sending`, still carrying the
+`last_attempt_at` from its claim. Twenty-eight minutes later the next tick asked
+"is this claim older than 20 minutes?", found that it was, re-claimed the post,
+and published it again.
+
+Three layers, none of them sufficient alone:
+
+- **Atomic.** `record_occurrence_and_advance` writes the occurrence snapshot and
+  advances the template in ONE data-modifying CTE. Either both land or neither
+  does; there is no longer a state in which the tweet is recorded but the
+  template still looks unpublished.
+- **Fenced.** That same UPDATE is the test-and-set. It matches only while the
+  publisher still holds the claim it was handed — `claim_due_post` already
+  stamps `last_attempt_at` on every claim, which makes it a fencing token with
+  no new column. A re-claim moves the stamp, the CTE yields nothing, and the
+  publisher reports `posted_claim_lost` rather than overwriting the new owner.
+  Nothing can un-send a tweet; the least it can do is say so out loud.
+- **Bounded.** `_CLAIM_LEASE` 20 → 45 minutes. A lease shorter than the
+  30-minute cron is not crash recovery — it guarantees every in-flight publisher
+  is declared dead by the very next tick. A test now reads
+  `scheduler-worker/wrangler.toml` and asserts lease > cron, so the arithmetic
+  cannot regress silently.
+
+Plus a unique index on `(template_id, publish_at)` — the natural idempotency key
+for a scheduled occurrence — as the backstop for any path the above misses. It
+will refuse to create while a duplicate pair already exists in the table; that
+logged failure is the finding, not noise.
+
 ## 0.36.1 — 2026-07-30
 
 ### Fixed — the Scheduler page said less about the scheduler than Posts did
