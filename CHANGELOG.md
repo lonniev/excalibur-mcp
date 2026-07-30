@@ -11,6 +11,39 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — four posts, one refresh token, four "X access expired"
+
+The 22:30 tick found four posts due, launched four publishers, and held all four for
+`oauth_token_expired` inside 24 seconds. X was connected and nothing had expired.
+
+The cause is upstream in the wheel and is fixed there: publishers run together, so four of
+them refreshed the **same** single-use X refresh token simultaneously — one won, three were
+told `invalid_grant`, and each of those three told its owner to reconnect an account that
+was never disconnected. Separately, the refresh POST ran on httpx's bare 5-second default
+against `api.x.com` — the very host this repo already gave a 10s/30s budget after watching
+it time out on connect — and every failure of it, timeout or refusal alike, was reported as
+an expired session.
+
+What changes here is what the owner reads. A refresh that never completed now arrives as
+`oauth_refresh_unavailable` and the Posts list labels it **"X didn't answer — retrying"**,
+which is what the next tick actually does. It is not in `OAUTH_NEEDED_CODES`, so it never
+raises the "Connect your X account" prompt, and the publisher holds on it rather than
+pausing — a paused post waits for a human, and there is nothing here for a human to do.
+
+Arrives with the next `tollbooth-dpyc` bump; the label is inert until then.
+
+### Fixed — the Scheduler tab said "the token" and meant a different one
+
+`scheduler_status` reports `renewsBeforeExpiryHours: 24` and `rerequestAfterHours: 1`, and
+the Configuration card rendered the first as *"re-requests 24 h before the token expires"*.
+Both numbers describe the **worker's own npub authorization** — the Device-Grant proof it
+renews roughly monthly — and neither has anything to do with X OAuth2. Read one card away
+from the X connection panel, with "the token" standing alone, they invite exactly the wrong
+conclusion: that X access is lapsing on a scheduler's cadence.
+
+Every row that describes the npub credential now says so, and the renewal row says outright
+that it is not the X connection. Nothing on this page describes the X OAuth token.
+
 ### Fixed — a held post named a cause that wasn't the cause
 
 Post `844c6b64` sat unpublished from 2026-07-27 to 2026-07-29. Every 30-minute tick held

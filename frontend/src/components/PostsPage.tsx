@@ -63,6 +63,10 @@ function attemptLabel(reason: string): string {
       oauth_token_expired: "X access expired",
       oauth_unavailable: "X not connected",
       oauth_not_yet_authorized: "X not connected",
+      // X never answered the token refresh, so nobody knows whether the session
+      // lapsed — and the three labels above all read as "go reconnect X". This
+      // one must read as a retry, because that is what the next tick does.
+      oauth_refresh_unavailable: "X didn't answer — retrying",
       empty_text_cache: "empty content",
       pricing_unavailable: "pricing unavailable",
       // Situations where the service couldn't answer — NOT the owner's doing.
