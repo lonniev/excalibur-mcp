@@ -133,22 +133,23 @@ async def test_recurring_publication_snapshots_occurrence_and_advances(_stub_rec
     rt = _runtime()
     url = "https://x.com/i/status/tw1"
     client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "tw1", "tweet_url": url}))
-    with _claimed(doc={"blocks": []}), \
-         patch.object(publisher.posts_db, "mark_sent", AsyncMock()) as mark, \
-         patch.object(publisher.posts_db, "create_sent_occurrence", AsyncMock()) as occ, \
+    with _claimed(doc={"blocks": []}, last_attempt_at="2026-07-30 20:30:20+00"), \
+         patch.object(publisher.posts_db, "record_occurrence_and_advance",
+                      AsyncMock(return_value=True)) as occ, \
          patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
         out = await publisher.publish_one(rt, "p1")
 
     assert out["outcome"] == "posted" and out["tweet_url"] == url
     rt._apply_billing.assert_awaited_once()
-    # recurring → a Sent occurrence is snapshotted WITH the url, back-linked …
+    # recurring → occurrence snapshot AND template advance, in ONE call. Two
+    # awaits here is the bug: a publisher died between them and the post was
+    # re-fired, tweeting the same slot twice.
     occ.assert_awaited_once()
     assert occ.await_args.kwargs["tweet_url"] == url
     assert occ.await_args.kwargs["npub"] == NPUB
     assert occ.await_args.kwargs["template_id"] == "p1"
-    # … and the template just advances (url NOT overwritten on it)
-    assert mark.await_args.args[2] == "scheduled"
-    assert mark.await_args.args[4] is None
+    # …fenced by the claim we were handed, so a re-claim invalidates our write.
+    assert occ.await_args.kwargs["claim_stamp"] == "2026-07-30 20:30:20+00"
     rt.rollback_debit.assert_not_awaited()
     # the publication records its own outcome — nothing else has to
     _stub_record.assert_awaited_once()
@@ -161,14 +162,79 @@ async def test_one_shot_publication_marks_row_sent_with_url():
     url = "https://x.com/i/status/tw2"
     client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "tw2", "tweet_url": url}))
     with _claimed(recurrence=None, cease_at=None), \
-         patch.object(publisher.posts_db, "mark_sent", AsyncMock()) as mark, \
-         patch.object(publisher.posts_db, "create_sent_occurrence", AsyncMock()) as occ, \
+         patch.object(publisher.posts_db, "mark_sent", AsyncMock(return_value=True)) as mark, \
+         patch.object(publisher.posts_db, "record_occurrence_and_advance", AsyncMock()) as occ, \
          patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
         out = await publisher.publish_one(rt, "p1")
     assert out["outcome"] == "posted"
     occ.assert_not_called()  # one-shot leaves no separate occurrence
     assert mark.await_args.args[2] == "sent"
     assert mark.await_args.args[4] == url
+
+
+# ---------------------------------------------------------------------------
+# The claim fence — a publisher that lost its claim must not pretend otherwise
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_recurring_publication_that_lost_its_claim_says_so(_stub_record):
+    """The 2026-07-30 shape: we tweeted, but another tick owns the post now.
+
+    Nothing can un-send a tweet, so the only honest outcome is to refuse to write
+    over the new owner and report it. Reporting "posted" here is exactly how the
+    duplicate went unnoticed — the second firing looked like the only firing.
+    """
+    rt = _runtime()
+    url = "https://x.com/i/status/tw3"
+    client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "tw3", "tweet_url": url}))
+    with _claimed(doc={"blocks": []}), \
+         patch.object(publisher.posts_db, "record_occurrence_and_advance",
+                      AsyncMock(return_value=False)), \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        out = await publisher.publish_one(rt, "p1")
+
+    assert out["outcome"] == "posted_claim_lost"
+    assert out["tweet_url"] == url          # the tweet is real; don't hide it
+    assert out["reason"] == "claim_reassigned_mid_publish"
+    rt.rollback_debit.assert_not_awaited()  # the post DID go out — no refund
+
+
+@pytest.mark.asyncio
+async def test_one_shot_publication_that_lost_its_claim_says_so(_stub_record):
+    """Same rule on the one-shot path — the fence is not recurring-only."""
+    rt = _runtime()
+    client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "t", "tweet_url": "u"}))
+    with _claimed(recurrence=None, cease_at=None), \
+         patch.object(publisher.posts_db, "mark_sent", AsyncMock(return_value=False)), \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        out = await publisher.publish_one(rt, "p1")
+
+    assert out["outcome"] == "posted_claim_lost"
+
+
+def test_claim_lease_outlives_the_cron_period():
+    """The arithmetic that caused the double-post, asserted so it cannot return.
+
+    A lease shorter than the cron period is not crash recovery — it guarantees
+    every in-flight publisher is declared dead by the very next tick. At 20
+    minutes against a 30-minute cron there was no margin whatsoever.
+    """
+    import re
+    from pathlib import Path
+
+    from excalibur_mcp.db import posts as posts_db
+
+    lease_min = int(re.search(r"(\d+) minutes", posts_db._CLAIM_LEASE).group(1))
+
+    wrangler = Path(__file__).resolve().parent.parent / "scheduler-worker" / "wrangler.toml"
+    crons = re.search(r'crons\s*=\s*\["\*/(\d+) ', wrangler.read_text()).group(1)
+    cron_min = int(crons)
+
+    assert lease_min > cron_min, (
+        f"claim lease ({lease_min} min) must exceed the cron period ({cron_min} min); "
+        "otherwise every tick re-fires posts whose publishers are still working"
+    )
 
 
 @pytest.mark.asyncio
@@ -428,8 +494,8 @@ async def test_dynamic_recurring_snapshots_static_keeps_template_dynamic():
     rt = _dynamic_runtime()
     client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "twd", "tweet_url": "u"}))
     with _claimed(doc=_DYNAMIC_DOC, publish_at="2026-07-10T12:00:00+00:00"), \
-         patch.object(publisher.posts_db, "mark_sent", AsyncMock()) as mark, \
-         patch.object(publisher.posts_db, "create_sent_occurrence", AsyncMock()) as occ, \
+         patch.object(publisher.posts_db, "record_occurrence_and_advance",
+                      AsyncMock(return_value=True)) as occ, \
          patch.object(publisher, "_owner_voice", AsyncMock(return_value=("", []))), \
          patch("excalibur_mcp.resolve.resolve_block", AsyncMock(return_value="BTC at $64,000")), \
          patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
@@ -439,8 +505,10 @@ async def test_dynamic_recurring_snapshots_static_keeps_template_dynamic():
     assert not any(b.get("dynamic") for b in snap_blocks)
     assert occ.await_args.kwargs["text_cache"] == "Markets update.\n\nBTC at $64,000"
     assert occ.await_args.kwargs["template_id"] == "p1"
-    assert mark.await_args.args[2] == "scheduled"
-    assert len(mark.await_args.args) == 5  # no doc param — template preserved by construction
+    # The template advances inside the SAME call — it is not passed a doc, so the
+    # dynamic original is preserved by construction rather than by care.
+    assert "doc" not in {k for k in occ.await_args.kwargs if k == "template_doc"}
+    assert occ.await_args.kwargs["next_publish_at"] is not None
 
 
 @pytest.mark.asyncio
@@ -616,8 +684,8 @@ async def test_recurring_occurrence_snapshot_carries_substituted_note():
     client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "twc", "tweet_url": url}))
     pub = Mock(return_value={"success": True})
     with _claimed(doc=_NOSTR_DOC, text_cache="Fresh drop."), \
-         patch.object(publisher.posts_db, "mark_sent", AsyncMock()), \
-         patch.object(publisher.posts_db, "create_sent_occurrence", AsyncMock()) as occ, \
+         patch.object(publisher.posts_db, "record_occurrence_and_advance",
+                      AsyncMock(return_value=True)) as occ, \
          patch("excalibur_mcp.nostr_note.publish_note", pub), \
          patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
         out = await publisher.publish_one(rt, "p1")

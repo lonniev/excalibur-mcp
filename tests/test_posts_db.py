@@ -86,20 +86,91 @@ async def test_update_post_to_sent_stamps_last_sent_at_and_stores_tweet_url():
 async def test_mark_sent_persists_tweet_url():
     captured = {}
 
-    async def fake_execute(query, *args):
+    async def fake_fetchrow(query, *args):
         captured["query"] = query
         captured["args"] = args
-        return {"rowCount": 1}
+        return {"id": PID}
 
-    with patch.object(posts_db, "execute", fake_execute):
-        await posts_db.mark_sent(
+    with patch.object(posts_db, "fetchrow", fake_fetchrow):
+        held = await posts_db.mark_sent(
             PID, "2026-06-21T03:20:00+00:00", "sent", None,
             "https://x.com/i/status/456",
         )
+    assert held is True
     assert "tweet_url            = COALESCE($5, tweet_url)" in captured["query"]
     assert "https://x.com/i/status/456" in captured["args"]
     # a successful fire clears any prior held-attempt reason
     assert "last_attempt_reason  = NULL" in captured["query"]
+
+
+@pytest.mark.asyncio
+async def test_mark_sent_is_fenced_by_the_claim_it_was_given():
+    """A publisher may only advance the post it still owns.
+
+    Without the fence a publisher that had been declared dead and re-claimed
+    would happily overwrite the new owner's state — which is how one scheduled
+    slot ended up with two tweets on 2026-07-30.
+    """
+    captured = {}
+
+    async def fake_fetchrow(query, *args):
+        captured["query"] = query
+        captured["args"] = args
+        return None  # the WHERE matched nothing: someone else owns it now
+
+    with patch.object(posts_db, "fetchrow", fake_fetchrow):
+        held = await posts_db.mark_sent(
+            PID, "2026-06-21T03:20:00+00:00", "sent", None, "url",
+            claim_stamp="2026-07-30 20:30:20+00",
+        )
+    assert held is False
+    assert "status = 'sending' AND last_attempt_at = $6::timestamptz" in captured["query"]
+    assert "2026-07-30 20:30:20+00" in captured["args"]
+
+
+@pytest.mark.asyncio
+async def test_occurrence_and_advance_are_one_statement():
+    """The snapshot and the template advance must not be separable.
+
+    They were two awaits, and a publisher died between them: the occurrence was
+    written, the template stayed `sending`, and the next tick re-fired it. One
+    data-modifying CTE means either both land or neither does.
+    """
+    captured = {}
+
+    async def fake_fetchrow(query, *args):
+        captured["query"] = query
+        captured["args"] = args
+        return {"id": "occ-1"}
+
+    with patch.object(posts_db, "fetchrow", fake_fetchrow):
+        held = await posts_db.record_occurrence_and_advance(
+            template_id=PID, npub="npub1x", doc={"blocks": []}, text_cache="hi",
+            tweet_url="https://x.com/i/status/9", sent_at="2026-07-30T20:32:22+00:00",
+            occurrence_publish_at="2026-07-30T11:40:25+00:00",
+            next_publish_at="2026-07-31T11:40:25+00:00",
+            claim_stamp="2026-07-30 20:30:20+00",
+        )
+    assert held is True
+    q = captured["query"]
+    # ONE statement: the UPDATE is a CTE the INSERT selects from.
+    assert q.count(";") == 0
+    assert "WITH advanced AS (" in q and "INSERT INTO posts" in q
+    assert "FROM advanced" in q
+    # …and it is fenced on the claim, so a stolen post yields no row at all.
+    assert "status = 'sending' AND last_attempt_at = $9::timestamptz" in q
+
+
+@pytest.mark.asyncio
+async def test_occurrence_and_advance_reports_a_lost_claim():
+    with patch.object(posts_db, "fetchrow", AsyncMock(return_value=None)):
+        held = await posts_db.record_occurrence_and_advance(
+            template_id=PID, npub="npub1x", doc={}, text_cache=None,
+            tweet_url="u", sent_at="2026-07-30T20:32:22+00:00",
+            occurrence_publish_at=None, next_publish_at=None,
+            claim_stamp="2026-07-30 20:30:20+00",
+        )
+    assert held is False
 
 
 @pytest.mark.asyncio

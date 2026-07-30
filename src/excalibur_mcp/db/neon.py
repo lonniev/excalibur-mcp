@@ -107,6 +107,20 @@ async def _ensure_domain_schema(vault: Any) -> None:
         f"CREATE INDEX IF NOT EXISTS posts_template_idx ON {t('posts')} (npub, template_id) "
         "WHERE template_id IS NOT NULL",
 
+        # One occurrence per (template, scheduled slot) — the idempotency key for
+        # a recurring firing. `record_occurrence_and_advance` already makes the
+        # snapshot and the template advance atomic, so a publisher can no longer
+        # die between them; this is the backstop for every other way a second
+        # firing could be attempted. A duplicate now raises instead of quietly
+        # tweeting twice, which is the failure that hid for a whole afternoon on
+        # 2026-07-30: two rows, two tweets, one publish_at, and no complaint.
+        #
+        # NOTE: if the table already holds a duplicate pair, this DDL fails and is
+        # logged (schema bootstrap is non-fatal by design). That log naming this
+        # index IS the finding — resolve the older occurrence and it takes.
+        f"CREATE UNIQUE INDEX IF NOT EXISTS posts_occurrence_slot_uniq ON {t('posts')} "
+        "(template_id, publish_at) WHERE template_id IS NOT NULL",
+
         # Reusable post snippets (openings/footers/CTAs), npub-scoped. Favorites
         # surface as one-click chiclets in the editor. ``doc`` carries the same
         # block/flag document a post does, so the editor is identical for both.

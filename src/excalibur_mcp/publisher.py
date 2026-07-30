@@ -383,6 +383,12 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
     if row is None:
         return await _record({"post_id": post_id, "outcome": "gone"})
     owner = row["npub"]
+    # The fencing token for every write we make about this post. `claim_due_post`
+    # stamps `last_attempt_at = NOW()` on each claim, so it identifies OUR claim
+    # specifically: if a later tick decides we died and re-claims, the stamp moves
+    # and our writes stop matching. Captured once, here, rather than re-read later
+    # — a value re-read after the theft would be the thief's, not ours.
+    claim_stamp = str(row.get("last_attempt_at")) if row.get("last_attempt_at") else None
 
     def _billing_reason(billing: dict[str, Any], fallback: str) -> str:
         """The reason a billing call refused, as IT stated it.
@@ -528,23 +534,40 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
 
     if next_status == "scheduled":
         # Recurring: snapshot THIS occurrence as its own Sent post (with the X
-        # URL), then advance the recurring template — so every posting stays
-        # visible instead of collapsing into a row that silently reschedules. For
-        # a dynamic post the snapshot carries the RESOLVED text + a static
-        # rendered doc, so history shows exactly what went out, not the prompt.
-        await posts_db.create_sent_occurrence(
-            npub=owner, doc=occurrence_doc, text_cache=text,
-            tweet_url=tweet_url, sent_at=sent_at.isoformat(), template_id=post_id,
-            publish_at=str(row.get("publish_at")) if row.get("publish_at") else None,
-        )
-        await posts_db.mark_sent(
-            post_id, sent_at.isoformat(), "scheduled",
-            next_publish.isoformat() if next_publish else None,
-            None,  # the occurrence carries the URL; the template just advances
+        # URL) AND advance the recurring template — one statement, so every
+        # posting stays visible instead of collapsing into a row that silently
+        # reschedules, and so the two can never come apart. For a dynamic post the
+        # snapshot carries the RESOLVED text + a static rendered doc, so history
+        # shows exactly what went out, not the prompt.
+        held = await posts_db.record_occurrence_and_advance(
+            template_id=post_id, npub=owner, doc=occurrence_doc, text_cache=text,
+            tweet_url=tweet_url, sent_at=sent_at.isoformat(),
+            occurrence_publish_at=str(row.get("publish_at")) if row.get("publish_at") else None,
+            next_publish_at=next_publish.isoformat() if next_publish else None,
+            claim_stamp=claim_stamp,
         )
     else:
         # One-shot: the row itself becomes the Sent record.
-        await posts_db.mark_sent(post_id, sent_at.isoformat(), "sent", None, tweet_url)
+        held = await posts_db.mark_sent(
+            post_id, sent_at.isoformat(), "sent", None, tweet_url,
+            claim_stamp=claim_stamp,
+        )
+
+    if not held:
+        # The tweet is live and we are not the owner of record — another tick
+        # re-claimed this post while we worked. Nothing here can un-send a tweet,
+        # so the only honest move is to refuse to write over the new owner's state
+        # and say plainly that a duplicate is likely already out. Silence here is
+        # how the 2026-07-30 double-post went unnoticed for an afternoon.
+        logger.error(
+            "publisher: posted %s (%s) but the claim had been taken — a duplicate "
+            "tweet is likely. Expected claim stamp %s.",
+            post_id, tweet_url or "no url", claim_stamp,
+        )
+        return await _record({
+            "post_id": post_id, "owner": owner, "outcome": "posted_claim_lost",
+            "tweet_url": tweet_url, "reason": "claim_reassigned_mid_publish",
+        })
 
     # Publish the Nostr companion notes LAST — the send is already recorded, so a
     # slow relay never delays it and a relay miss never un-sends the live tweet.

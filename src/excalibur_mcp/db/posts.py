@@ -324,7 +324,14 @@ async def hard_delete(npub: str, post_id: str) -> bool:
 # and is eligible for reclaim. Must exceed the longest possible resolve (the max
 # runtime budget, 900s) so a still-running resolve is never reclaimed → no
 # double-post.
-_CLAIM_LEASE = "interval '20 minutes'"
+# How long a claim survives before another tick may treat the publisher as dead
+# and re-fire the post. This MUST exceed the cron period (currently every 30
+# minutes, see scheduler-worker/wrangler.toml) or the lease is guaranteed to be
+# stale by the time the next tick looks — which is not "recovery after a crash",
+# it is "re-fire everything still in flight". At 20 minutes against a 30-minute
+# cron there was no margin at all, and on 2026-07-30 a publisher that had already
+# tweeted was re-claimed 28 minutes later and tweeted the same post a second time.
+_CLAIM_LEASE = "interval '45 minutes'"
 
 
 async def list_due(now_iso: str, limit: int = 100) -> list[dict[str, Any]]:
@@ -417,11 +424,20 @@ async def mark_sent(
     next_status: str,
     next_publish_at: str | None,
     tweet_url: str | None = None,
-) -> None:
+    claim_stamp: str | None = None,
+) -> bool:
     """Record a fire: stamp last_sent_at, set the next status/publish_at, and
     store the posted tweet's URL (COALESCE keeps a prior URL on recurrence).
-    A successful fire clears any prior ``last_attempt_reason`` (the hold is over)."""
-    await execute(
+    A successful fire clears any prior ``last_attempt_reason`` (the hold is over).
+
+    Test-and-set on the caller's claim. ``claim_stamp`` is the ``last_attempt_at``
+    the publisher read when it picked the post up — ``claim_due_post`` sets that to
+    NOW() on every claim, so it doubles as a fencing token: if a later tick decided
+    this publisher was dead and re-claimed the post, the stamp has moved and this
+    write matches nothing. Returns whether the row was ours to advance; ``False``
+    means we lost the claim and must not pretend otherwise.
+    """
+    row = await fetchrow(
         """
         UPDATE posts
         SET last_sent_at         = $2::timestamptz,
@@ -432,13 +448,18 @@ async def mark_sent(
             last_attempt_reason  = NULL,
             updated_at           = NOW()
         WHERE id = $1::uuid
+          AND ($6::timestamptz IS NULL OR
+               (status = 'sending' AND last_attempt_at = $6::timestamptz))
+        RETURNING id
         """,
         post_id,
         last_sent_at,
         next_status,
         next_publish_at,
         tweet_url or None,
+        claim_stamp,
     )
+    return row is not None
 
 
 async def create_sent_occurrence(
@@ -473,6 +494,75 @@ async def create_sent_occurrence(
         tweet_url or None,
         template_id,
     )
+
+
+async def record_occurrence_and_advance(
+    *,
+    template_id: str,
+    npub: str,
+    doc: dict[str, Any],
+    text_cache: str | None,
+    tweet_url: str | None,
+    sent_at: str,
+    occurrence_publish_at: str | None,
+    next_publish_at: str | None,
+    claim_stamp: str | None,
+) -> bool:
+    """Snapshot this occurrence AND advance its template — in ONE statement.
+
+    These used to be two awaits, and on 2026-07-30 a publisher died between them:
+    the occurrence row was written, the template never advanced, so it stayed
+    ``sending`` with a stale claim. The next tick re-claimed it and tweeted the
+    same scheduled occurrence a second time. Two rows, two tweets, one slot — and
+    invisible in the scheduler log, because the log row is written *after* both,
+    so the death that causes the bug also erases its own evidence.
+
+    One statement removes the window entirely: Postgres executes a data-modifying
+    CTE and the INSERT that selects from it as a single atomic unit, so either the
+    template advanced and the occurrence exists, or neither happened. There is no
+    state in which the tweet is recorded but the template still looks unpublished.
+
+    The UPDATE is also the test-and-set: it matches only while we still hold the
+    claim we were handed (``claim_stamp`` is the ``last_attempt_at`` stamped by
+    ``claim_due_post``). If a later tick re-claimed this post, the stamp moved, the
+    CTE yields no row, the INSERT selects from an empty relation, and we return
+    ``False`` rather than writing a second occurrence over someone else's work.
+
+    Returns whether this publisher was still the owner. ``False`` means the tweet
+    went out but the claim was lost — the caller must say so loudly, never silently.
+    """
+    row = await fetchrow(
+        """
+        WITH advanced AS (
+            UPDATE posts
+            SET last_sent_at         = $6::timestamptz,
+                status               = 'scheduled',
+                publish_at           = $8::timestamptz,
+                last_attempt_at      = $6::timestamptz,
+                last_attempt_reason  = NULL,
+                updated_at           = NOW()
+            WHERE id = $1::uuid
+              AND ($9::timestamptz IS NULL OR
+                   (status = 'sending' AND last_attempt_at = $9::timestamptz))
+            RETURNING id
+        )
+        INSERT INTO posts
+            (npub, status, doc, text_cache, publish_at, last_sent_at, tweet_url, template_id)
+        SELECT $2, 'sent', $3::jsonb, $4, $7::timestamptz, $6::timestamptz, $5, advanced.id
+        FROM advanced
+        RETURNING id
+        """,
+        template_id,
+        npub,
+        json.dumps(doc),
+        text_cache,
+        tweet_url or None,
+        sent_at,
+        occurrence_publish_at,
+        next_publish_at,
+        claim_stamp,
+    )
+    return row is not None
 
 
 async def mark_attempt(post_id: str, at_iso: str, reason: str) -> None:
