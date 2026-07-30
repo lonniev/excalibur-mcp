@@ -130,28 +130,43 @@ async def test_success_returns_xclient_tuple():
     assert situation == ""
 
 
-def test_x_api_error_401_routes_to_oauth_token_expired():
-    """A 401/403 from X (token rejected upstream) maps to oauth_token_expired —
-    the patron's session existed but the upstream now rejects it."""
+@pytest.mark.asyncio
+async def test_x_api_error_401_renews_instead_of_re_authorizing():
+    """A 401 from X is the ACCESS token being refused, not the grant.
+
+    This used to answer ``oauth_token_expired`` and set ``needsXConnect``,
+    sending patrons to reconnect an account that was working — while
+    ``publisher.py`` simultaneously treated the same 401 as transient
+    (``_X_NON_TRANSIENT`` holds 402 alone) and retried it successfully an hour
+    later. The two paths now agree: renew, don't re-authorize.
+    """
     import excalibur_mcp.server as srv
     from excalibur_mcp.x_client import XAPIError
 
     exc = XAPIError(401, "Unauthorized", raw={"title": "Unauthorized"})
-    result = srv._x_api_error_to_response(exc)
+    with patch.object(
+        srv.runtime, "invalidate_oauth_access_token",
+        new=AsyncMock(return_value=True),
+    ) as invalidate:
+        result = await srv._x_api_error_to_response(exc, VALID_NPUB)
 
-    assert result["error_code"] == "oauth_token_expired"
-    assert any("excalibur_begin_oauth" in step for step in result["next_steps"])
+    assert result["error_code"] == "oauth_token_rejected"
+    # The cached expiry MUST be retired, or the retry we advise short-circuits
+    # on the cache and fails identically until the token's real expiry.
+    invalidate.assert_awaited_once_with(VALID_NPUB)
+    assert not any("begin_oauth" in step for step in result["next_steps"])
     # Upstream context preserved for debugging
     assert result["status_code"] == 401
 
 
-def test_x_api_error_500_passes_through_without_oauth_recipe():
+@pytest.mark.asyncio
+async def test_x_api_error_500_passes_through_without_oauth_recipe():
     """Non-auth upstream errors don't get the begin_oauth recipe."""
     import excalibur_mcp.server as srv
     from excalibur_mcp.x_client import XAPIError
 
     exc = XAPIError(500, "Internal Server Error", raw={})
-    result = srv._x_api_error_to_response(exc)
+    result = await srv._x_api_error_to_response(exc, VALID_NPUB)
 
     assert result["status_code"] == 500
     # No misleading begin_oauth recipe attached
