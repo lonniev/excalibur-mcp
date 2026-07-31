@@ -11,6 +11,32 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## 0.37.1 — 2026-07-31
+
+### Fixed — a reconnected X account was still being told to reconnect
+
+A post reading `Sending · Reconnect X · working…` — three states that cannot all
+be true at once, on an account that had just been reauthorized.
+
+`last_attempt_reason` records what was true at the LAST attempt and nothing
+rewrites it afterwards. The row rendered it as a live instruction:
+
+- The **Reconnect X** button was gated on the reason alone — not on the post's
+  status, so it showed while a publisher was mid-flight (`claim_due_post` moves
+  `scheduled → sending` without clearing the reason, deliberately: if that
+  attempt then dies silently, the old reason is the only trace left), and not on
+  whether X was currently connected, so it survived the reconnect that fixed it.
+- The warning chiclet likewise kept saying "X access expired" about an account
+  that had been working for hours.
+
+The button now additionally requires `scheduled`/`paused` **and** that
+`getXConnection()` does not report `connected`. Only a definite `connected`
+suppresses it — `indeterminate` still offers the door, since a warming vault is
+not evidence the account is fine.
+
+When X *is* connected, an OAuth reason renders as history rather than a warning:
+muted, and prefixed `last attempt:` instead of the warning glyph.
+
 ## 0.37.0 — 2026-07-31
 
 ### Fixed — a held post says why, in the words of whatever refused

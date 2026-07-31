@@ -2,8 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Plus } from "lucide-react";
 import {
-  createPost, deletePost, getPost, listPosts, OAUTH_NEEDED_CODES, postTweet, updatePost,
-  type PostSummary, type Recurrence, type SortDir,
+  createPost, deletePost, getPost, getXConnection, listPosts, OAUTH_NEEDED_CODES,
+  postTweet, updatePost,
+  type PostSummary, type Recurrence, type SortDir, type XConnectionState,
 } from "../lib/mcp";
 import { uid } from "../lib/editorDoc";
 import TweetPreviewModal from "./TweetPreviewModal";
@@ -212,6 +213,12 @@ export default function PostsPage() {
   const [returningToDraft, setReturningToDraft] = useState<string | null>(null);
   const [duplicating, setDuplicating] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ url: string; text: string } | null>(null);
+  // Whether X is connected RIGHT NOW. `last_attempt_reason` is a record of the
+  // last attempt, not a live diagnosis — after a reconnect it still says the
+  // account was expired, because that is what was true when it was written.
+  // Rendering it as a live instruction told an owner with a working X account
+  // to go reconnect it.
+  const [xConn, setXConn] = useState<XConnectionState | null>(null);
 
   const refresh = useCallback(async () => {
     // An empty include-set matches nothing by definition — render the empty state
@@ -245,6 +252,9 @@ export default function PostsPage() {
       setHasLoaded(true);
       setLoading(false);
     }
+    // Best-effort and non-blocking: a row's OAuth affordance is suppressed only
+    // on a definite "connected", so a failure here just leaves the old behaviour.
+    void getXConnection().then(setXConn).catch(() => setXConn(null));
   }, [selected, sortCol, sortDir, page, search, dateFrom, dateTo, dateField, templateFilter]);
 
   useEffect(() => {
@@ -550,7 +560,16 @@ export default function PostsPage() {
               </tr>
             </thead>
             <tbody>
-              {posts.map((p) => (
+              {posts.map((p) => {
+              // The recorded reason is history, and X may have been reconnected
+              // since. When it has been, an OAuth reason describes a cause that
+              // is now fixed — so the row shows it as a past attempt rather than
+              // a standing warning about an account that currently works.
+              const oauthResolved =
+                !!p.last_attempt_reason
+                && OAUTH_NEEDED_CODES.has(p.last_attempt_reason)
+                && xConn?.kind === "connected";
+              return (
                 <tr
                   key={p.post_id}
                   onClick={() => nav(`/post/${p.post_id}`)}
@@ -562,10 +581,16 @@ export default function PostsPage() {
                     </span>
                     {p.status === "scheduled" && p.last_attempt_reason && (
                       <span
-                        className="mt-1 flex items-center gap-1 text-[11px] text-rose-600 dark:text-rose-400"
-                        title={`Scheduler tried to post${p.last_attempt_at ? ` at ${fmt(p.last_attempt_at)}` : ""} but held it back: ${p.last_attempt_reason}.${p.last_attempt_detail ? `\n\n${p.last_attempt_detail}` : ""}\n\nIt will retry on the next tick.`}
+                        className={`mt-1 flex items-center gap-1 text-[11px] ${
+                          oauthResolved
+                            ? "text-stone-500 dark:text-zinc-400"
+                            : "text-rose-600 dark:text-rose-400"
+                        }`}
+                        title={`Scheduler tried to post${p.last_attempt_at ? ` at ${fmt(p.last_attempt_at)}` : ""} but held it back: ${p.last_attempt_reason}.${p.last_attempt_detail ? `\n\n${p.last_attempt_detail}` : ""}\n\n${oauthResolved ? "X has been reconnected since, so this cause is resolved. It will retry on the next tick." : "It will retry on the next tick."}`}
                       >
-                        ⚠ {attemptLabel(p.last_attempt_reason)}
+                        {oauthResolved
+                          ? `↺ last attempt: ${attemptLabel(p.last_attempt_reason)}`
+                          : `⚠ ${attemptLabel(p.last_attempt_reason)}`}
                       </span>
                     )}
                     {p.status === "paused" && p.last_attempt_reason && (
@@ -581,8 +606,26 @@ export default function PostsPage() {
                         the door. Without this the row named the problem and left
                         the owner to guess that the cure lives under Profile.
                         Gated on OAUTH_NEEDED_CODES, which deliberately excludes
-                        the self-healing codes — see its definition in lib/mcp. */}
-                    {p.last_attempt_reason && OAUTH_NEEDED_CODES.has(p.last_attempt_reason) && (
+                        the self-healing codes — see its definition in lib/mcp.
+
+                        Two further gates, because `last_attempt_reason` records
+                        what was true at the LAST attempt and nothing rewrites it
+                        afterwards:
+
+                        • not while `sending` — a publisher is working this post
+                          right now, so the previous attempt's reason is already
+                          superseded and the row would read "Sending · Reconnect
+                          X · working…", three states that cannot all be true.
+                        • not when X is connected — after a reconnect the stale
+                          reason still says the account expired, which sent an
+                          owner with a working X account back to reconnect it
+                          again. Only a definite `connected` suppresses the
+                          button; `indeterminate` still offers it, since a warming
+                          vault is not evidence the account is fine. */}
+                    {p.last_attempt_reason
+                      && OAUTH_NEEDED_CODES.has(p.last_attempt_reason)
+                      && (p.status === "scheduled" || p.status === "paused")
+                      && xConn?.kind !== "connected" && (
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); nav("/profile"); }}
@@ -722,7 +765,8 @@ export default function PostsPage() {
                     </span>
                   </td>
                 </tr>
-              ))}
+              );
+              })}
             </tbody>
           </TableShell>
           <PageControls page={page} pageSize={PAGE_SIZE} total={total} onPage={setPage} />
