@@ -30,6 +30,8 @@ export type Health = "loading" | "healthy" | "cutoff" | "quiet" | "stalled" | "u
 export interface StuckPost {
   id: string;
   reason: string;
+  /** Why, in the words of whatever refused — absent for older rows. */
+  detail: string;
   paused: boolean;
 }
 
@@ -89,6 +91,7 @@ export function deriveSchedulerState(runs: SchedulerRun[]): SchedulerState {
         stuck.push({
           id: row.post_id.slice(0, 8),
           reason: row.reason ?? "unreported",
+          detail: row.detail ?? "",
           paused: row.outcome === "paused",
         });
       }
@@ -132,7 +135,7 @@ export function schedulerStatusTitle(
 ): string {
   const stuckNote = stuck.length
     ? ` · didn't post: ${stuck
-        .map((p) => `${p.id} (${p.reason}${p.paused ? ", Paused" : ", Scheduled — retries next run"})`)
+        .map((p) => `${p.id} (${p.reason}${p.paused ? ", Paused" : ", Scheduled — retries next run"})${p.detail ? ` — ${p.detail}` : ""}`)
         .join("; ")}`
     : "";
   if (health === "unknown") {

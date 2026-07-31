@@ -25,6 +25,7 @@ from tollbooth.credential_validators import validate_btcpay_creds, validate_requ
 from tollbooth.llm_route import error_message as llm_error_message
 from tollbooth.llm_route import llm_failure_situation
 from tollbooth.oauth_config import OAuthProviderConfig
+from tollbooth.oauth_situation import OAuthSituation
 from tollbooth.runtime import OperatorRuntime, register_standard_tools
 from tollbooth.tool_identity import STANDARD_IDENTITIES, ToolIdentity, capability_uuid
 from tollbooth.upstream_payment import upstream_payment_situation
@@ -321,7 +322,7 @@ async def _resolve_x_client(npub: str) -> tuple[Any | None, dict | None]:
 
     access_token = creds.get("access_token", "")
     if not access_token:
-        return None, runtime.oauth_situation_response("no_credentials")
+        return None, runtime.oauth_situation_response(OAuthSituation("no_credentials"))
 
     return XClient(XCredentials(bearer_token=access_token)), None
 
@@ -378,7 +379,7 @@ async def _x_api_error_to_response(exc: Any, npub: str = "") -> dict[str, Any]:
     if status in (401, 403):
         if npub:
             await runtime.invalidate_oauth_access_token(npub)
-        base.update(runtime.oauth_situation_response("token_rejected"))
+        base.update(runtime.oauth_situation_response(OAuthSituation("token_rejected")))
         # Preserve the upstream detail alongside the structured guidance
         base["status_code"] = exc.status_code
         base["detail"] = getattr(exc, "detail", None)

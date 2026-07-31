@@ -187,8 +187,11 @@ async def test_mark_attempt_stamps_reason_and_time():
     q = captured["query"]
     assert "last_attempt_at     = $2::timestamptz" in q
     assert "last_attempt_reason = $3" in q
+    assert "last_attempt_detail = $4" in q
     assert "WHERE id = $1::uuid" in q
-    assert captured["args"] == (PID, "2026-06-21T20:00:00+00:00", "insufficient_balance")
+    assert captured["args"] == (
+        PID, "2026-06-21T20:00:00+00:00", "insufficient_balance", None,
+    )
 
 
 @pytest.mark.asyncio

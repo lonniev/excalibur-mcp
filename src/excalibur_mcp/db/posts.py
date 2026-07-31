@@ -25,7 +25,8 @@ logger = logging.getLogger(__name__)
 _FULL_COLS = (
     "id::text AS post_id, npub, status, title, doc, text_cache, "
     "publish_at, recurrence, cease_at, last_sent_at, tweet_url, "
-    "last_attempt_at, last_attempt_reason, template_id::text AS template_id, "
+    "last_attempt_at, last_attempt_reason, last_attempt_detail, "
+    "template_id::text AS template_id, "
     "created_at, updated_at"
 )
 
@@ -211,7 +212,7 @@ async def list_posts(
         f"""
         SELECT id::text AS post_id, status, title, left(text_cache, 120) AS excerpt,
                publish_at, updated_at, created_at, tweet_url, last_sent_at,
-               last_attempt_at, last_attempt_reason,
+               last_attempt_at, last_attempt_reason, last_attempt_detail,
                template_id::text AS template_id,
                (recurrence IS NOT NULL) AS is_recurring,
                COALESCE(doc->'blocks' @> '[{{"dynamic":true}}]'::jsonb, false) AS has_dynamic
@@ -235,6 +236,7 @@ async def list_posts(
             "last_sent_at": str(r["last_sent_at"]) if r.get("last_sent_at") else None,
             "last_attempt_at": str(r["last_attempt_at"]) if r.get("last_attempt_at") else None,
             "last_attempt_reason": r.get("last_attempt_reason") or None,
+            "last_attempt_detail": r.get("last_attempt_detail") or None,
             "template_id": r.get("template_id") or None,
             "is_recurring": bool(r.get("is_recurring")),
             "has_dynamic": bool(r.get("has_dynamic")),
@@ -446,6 +448,7 @@ async def mark_sent(
             tweet_url            = COALESCE($5, tweet_url),
             last_attempt_at      = $2::timestamptz,
             last_attempt_reason  = NULL,
+            last_attempt_detail  = NULL,
             updated_at           = NOW()
         WHERE id = $1::uuid
           AND ($6::timestamptz IS NULL OR
@@ -540,6 +543,7 @@ async def record_occurrence_and_advance(
                 publish_at           = $8::timestamptz,
                 last_attempt_at      = $6::timestamptz,
                 last_attempt_reason  = NULL,
+                last_attempt_detail  = NULL,
                 updated_at           = NOW()
             WHERE id = $1::uuid
               AND ($9::timestamptz IS NULL OR
@@ -565,7 +569,9 @@ async def record_occurrence_and_advance(
     return row is not None
 
 
-async def mark_attempt(post_id: str, at_iso: str, reason: str) -> None:
+async def mark_attempt(
+    post_id: str, at_iso: str, reason: str, detail: str | None = None,
+) -> None:
     """Stamp a scheduled post the scheduler TRIED to fire but held back.
 
     Records when and why (the skip/error reason — access/finance/network/content)
@@ -577,6 +583,7 @@ async def mark_attempt(post_id: str, at_iso: str, reason: str) -> None:
         UPDATE posts
         SET last_attempt_at     = $2::timestamptz,
             last_attempt_reason = $3,
+            last_attempt_detail = $4,
             status              = CASE WHEN status = 'sending' THEN 'scheduled' ELSE status END,
             updated_at          = NOW()
         WHERE id = $1::uuid
@@ -584,10 +591,13 @@ async def mark_attempt(post_id: str, at_iso: str, reason: str) -> None:
         post_id,
         at_iso,
         reason,
+        detail,
     )
 
 
-async def mark_paused(post_id: str, at_iso: str, reason: str) -> None:
+async def mark_paused(
+    post_id: str, at_iso: str, reason: str, detail: str | None = None,
+) -> None:
     """Pause a scheduled post the scheduler can't fire without human action.
 
     For non-transient situations the next tick can't resolve — e.g. the owner's
@@ -601,10 +611,12 @@ async def mark_paused(post_id: str, at_iso: str, reason: str) -> None:
         SET status              = 'paused',
             last_attempt_at     = $2::timestamptz,
             last_attempt_reason = $3,
+            last_attempt_detail = $4,
             updated_at          = NOW()
         WHERE id = $1::uuid
         """,
         post_id,
         at_iso,
         reason,
+        detail,
     )

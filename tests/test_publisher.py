@@ -794,6 +794,102 @@ async def test_situation_with_a_null_error_code_still_names_a_reason():
 
 
 @pytest.mark.asyncio
+async def test_a_held_post_carries_the_situations_own_words(
+    _stub_record, _stub_mark_attempt,
+):
+    """The reason is a code a machine reads; the detail is why, for a human.
+
+    Recording only the code is how a grant killed by a lost renewal, an
+    operator's rotated app secret, and a genuine expiry all reached the owner
+    as the same four words — answered, every time, with a reconnect that could
+    not have helped.
+    """
+    rt = _runtime()
+    situation = {
+        "success": False,
+        "error_code": "oauth_refresh_token_lost",
+        "detail": "A token renewal at 2026-07-31T15:14:58+00:00 was cut off.",
+    }
+    with _claimed(), \
+         patch("excalibur_mcp.server._resolve_x_client",
+               AsyncMock(return_value=(None, situation))):
+        out = await publisher.publish_one(rt, "p1")
+
+    assert out["outcome"] == "held"
+    assert out["reason"] == "oauth_refresh_token_lost"
+    assert "15:14:58" in out["detail"]
+    # Stamped on the post row too, so the Posts tab can say it even if the
+    # audit ring row is lost.
+    assert _stub_mark_attempt.await_args.args[3] == situation["detail"]
+    assert _stub_record.await_args.args[0]["detail"] == situation["detail"]
+
+
+@pytest.mark.asyncio
+async def test_a_situation_with_no_detail_falls_back_to_its_prose(
+    _stub_mark_attempt,
+):
+    """Not every situation carries provider words; the recipe's own sentence is
+    still better than a bare code."""
+    rt = _runtime()
+    situation = {
+        "success": False,
+        "error_code": "warming_up",
+        "error": "The server is establishing its connection to the vault.",
+    }
+    with _claimed(), \
+         patch("excalibur_mcp.server._resolve_x_client",
+               AsyncMock(return_value=(None, situation))):
+        out = await publisher.publish_one(rt, "p1")
+
+    assert out["detail"] == situation["error"]
+
+
+@pytest.mark.asyncio
+async def test_a_bare_reason_records_no_empty_detail(_stub_mark_attempt):
+    """An absent detail must not become an empty string in the log."""
+    rt = _runtime()
+    with _claimed(), \
+         patch("excalibur_mcp.server._resolve_x_client",
+               AsyncMock(return_value=(None, {"error_code": "oauth_unavailable"}))):
+        out = await publisher.publish_one(rt, "p1")
+
+    assert "detail" not in out
+    assert _stub_mark_attempt.await_args.args[3] is None
+
+
+@pytest.mark.asyncio
+async def test_a_flaky_audit_write_is_retried_rather_than_lost(_stub_record):
+    """On 2026-07-31 three ticks launched a publisher for the same post and the
+    log showed only the launches. The posts were released correctly — it was the
+    audit INSERT that failed, and it was swallowed, so a tick that dispatched
+    work it never heard back from was indistinguishable from a dead publisher.
+    """
+    rt = _runtime()
+    _stub_record.side_effect = [RuntimeError("neon hiccup"), None]
+    with _claimed(), \
+         patch("excalibur_mcp.server._resolve_x_client",
+               AsyncMock(return_value=(None, {"error_code": "warming_up"}))):
+        out = await publisher.publish_one(rt, "p1")
+
+    assert _stub_record.await_count == 2, "the write is retried once"
+    assert out["outcome"] == "held", "and the outcome still reaches the caller"
+
+
+@pytest.mark.asyncio
+async def test_an_audit_row_lost_twice_never_fails_the_publication(_stub_record):
+    """Audit is a witness, not a gate. Losing it must not undo the work."""
+    rt = _runtime()
+    _stub_record.side_effect = RuntimeError("neon down")
+    with _claimed(), \
+         patch("excalibur_mcp.server._resolve_x_client",
+               AsyncMock(return_value=(None, {"error_code": "warming_up"}))):
+        out = await publisher.publish_one(rt, "p1")
+
+    assert _stub_record.await_count == 2
+    assert out["outcome"] == "held"
+
+
+@pytest.mark.asyncio
 async def test_exception_with_an_empty_message_is_named_by_its_type():
     """`str(RuntimeError())` is legitimately empty; the type still identifies it."""
     rt = _runtime()

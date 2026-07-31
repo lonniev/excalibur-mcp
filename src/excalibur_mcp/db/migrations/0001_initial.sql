@@ -23,6 +23,10 @@ CREATE TABLE IF NOT EXISTS posts (
     recurrence    JSONB,                       -- {"freq": "...", "interval": n} | null
     cease_at      TIMESTAMPTZ,                 -- stop republishing after; null = open
     last_sent_at  TIMESTAMPTZ,                 -- set by scheduler on each post_tweet
+    tweet_url     TEXT,                        -- the live X URL of the last successful fire
+    last_attempt_at     TIMESTAMPTZ,           -- when a fire was last tried
+    last_attempt_reason TEXT,                  -- why it didn't post (machine code)
+    last_attempt_detail TEXT,                  -- ...in the words of whatever refused
     template_id   UUID,                        -- sent occurrence → its recurring template's id
     client_req_id TEXT,                        -- idempotency: create dedup + last-applied update id
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
