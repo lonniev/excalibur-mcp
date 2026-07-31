@@ -26,6 +26,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import httpx
 from tollbooth.llm_route import clamp_timeout, classify_llm_failure
 
 from excalibur_mcp.db import posts as posts_db
@@ -44,6 +45,18 @@ logger = logging.getLogger(__name__)
 # that 401'd at 23:00 posted cleanly an hour later with no human involved.
 # Pausing on 401 would have stranded it awaiting a Resume it never needed.
 _X_NON_TRANSIENT = frozenset({402})
+
+# Failures where the request was already on the wire, so X may have made the
+# tweet even though we never read the reply. A ConnectTimeout/ConnectError is
+# deliberately NOT here: nothing was sent, `_post_retrying_connect` already
+# retried the one phase that is safe to retry, and a post that never left is
+# free to try again on the next tick.
+_X_MAYBE_DELIVERED = (
+    httpx.ReadTimeout,
+    httpx.WriteTimeout,
+    httpx.RemoteProtocolError,
+    httpx.ReadError,
+)
 
 
 # -- time / recurrence helpers ----------------------------------------------
@@ -503,6 +516,30 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
         if getattr(exc, "status_code", None) in _X_NON_TRANSIENT:
             return await _pause(reason)
         return await _hold(reason)
+    except _X_MAYBE_DELIVERED as exc:
+        # The request REACHED X and we never saw the answer. `x_client` already
+        # refuses to retry these at the HTTP layer — "the tweet may already be
+        # live" — but that discipline was undone one level up: holding the post
+        # hands it to the next tick, which posts it again.
+        #
+        # It did exactly that on 2026-07-30. X created tweet …0735014637900 at
+        # 20:06:16; the read timed out; the 20:30 tick posted the same thing
+        # again as …7064064160148. eXcalibur only ever recorded the second, so
+        # the first is live on X with no row anywhere.
+        #
+        # A hold is the one thing this must never be, because a hold means "safe
+        # to try again" and that is precisely what is not known. Pausing costs a
+        # delayed post; guessing costs a duplicate public one, and only the human
+        # can look at the timeline and say which happened.
+        await runtime.rollback_debit(post_tweet_id, owner)
+        if resolve_charged:
+            await runtime.rollback_debit(resolve_id, owner)
+        logger.warning(
+            "publisher: post_tweet for %s reached X but never answered (%s); "
+            "pausing — a tweet may already be live.",
+            post_id, type(exc).__name__,
+        )
+        return await _pause("x_post_outcome_unknown")
     except Exception as exc:  # noqa: BLE001 — money path, refund then report
         await runtime.rollback_debit(post_tweet_id, owner)
         if resolve_charged:

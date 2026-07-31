@@ -72,6 +72,11 @@ function attemptLabel(reason: string): string {
       // its cached expiry, so the next tick spends the refresh token and
       // renews. Same rule as above: this reads as a retry, never as reconnect.
       oauth_token_rejected: "renewing X access — retrying",
+      // X took the request and never answered, so nobody knows whether a tweet
+      // exists. This one PAUSES rather than holds — the whole point is that it
+      // must NOT be retried automatically. Only a human looking at the timeline
+      // can say whether it went out, so the label sends them there.
+      x_post_outcome_unknown: "X didn't confirm — check your timeline",
       empty_text_cache: "empty content",
       pricing_unavailable: "pricing unavailable",
       // Situations where the service couldn't answer — NOT the owner's doing.

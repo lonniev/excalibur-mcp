@@ -11,6 +11,33 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## 0.36.3 — 2026-07-31
+
+### Fixed — a post X never confirmed was retried, and went out twice
+
+X created tweet `…0735014637900` at 20:06:16 on 2026-07-30. The read timed out,
+so the answer never came back. The post was **held**, the 20:30 tick published
+the same content again as `…7064064160148`, and eXcalibur recorded only the
+second — leaving the first live on X with no row anywhere. Two tweets, 25
+minutes apart, one of them invisible to the app that sent it.
+
+`x_client` already had this right: `_post_retrying_connect` retries **only** the
+connect phase, and says why — *"A ReadTimeout means the request DID reach X and
+we merely never saw the answer — the tweet may already be live."* That
+discipline was undone one level up, where a read timeout fell into the
+publisher's generic `except Exception` and became an ordinary hold. A hold means
+"safe to try again", which is the one thing nobody knows here.
+
+Failures where the request was already on the wire — `ReadTimeout`,
+`WriteTimeout`, `RemoteProtocolError`, `ReadError` — now **pause** the post with
+`x_post_outcome_unknown`, and the Posts list labels it *"X didn't confirm —
+check your timeline"*. Only a human can look at X and say whether the tweet
+exists, so the label sends them there rather than guessing on their behalf.
+
+A connect failure deliberately still holds: nothing was sent, the one phase
+that is safe to retry has already been retried, and pausing a post for a blip
+would strand it. The rule is about ambiguity, not about timeouts.
+
 ## 0.36.2 — 2026-07-30
 
 ### Fixed — one scheduled slot published two tweets

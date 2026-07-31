@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
+import httpx
 import pytest
 
 from excalibur_mcp import publisher
@@ -287,6 +288,60 @@ async def test_post_failure_refunds_owner():
         out = await publisher.publish_one(rt, "p1")
     assert out["outcome"] == "held"
     rt.rollback_debit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exc", [
+    httpx.ReadTimeout("timed out"),
+    httpx.WriteTimeout("timed out"),
+    httpx.RemoteProtocolError("server disconnected"),
+    httpx.ReadError("connection reset"),
+])
+@pytest.mark.asyncio
+async def test_delivered_but_unanswered_post_pauses_never_holds(
+    exc, _stub_mark_attempt, _stub_mark_paused,
+):
+    """The request reached X; the answer never came. It must NOT be retried.
+
+    Observed 2026-07-30: X created tweet …0735014637900 at 20:06:16, the read
+    timed out, the post was HELD, and the 20:30 tick published the same content
+    again as …7064064160148 — 25 minutes apart, with only the second recorded.
+
+    A hold means "safe to try again", which is exactly what nobody knows here.
+    Pausing costs a delayed post; holding costs a duplicate public one.
+    """
+    rt = _runtime()
+    client = SimpleNamespace(post_tweet=AsyncMock(side_effect=exc))
+    with _claimed(), \
+         patch.object(publisher.posts_db, "mark_sent", AsyncMock()) as mark, \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        out = await publisher.publish_one(rt, "p1")
+
+    assert out["outcome"] == "paused", "a maybe-delivered post must never be held"
+    assert out["reason"] == "x_post_outcome_unknown"
+    _stub_mark_paused.assert_awaited_once()
+    _stub_mark_attempt.assert_not_awaited()  # mark_attempt would leave it scheduled
+    mark.assert_not_called()
+    rt.rollback_debit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_connect_failure_still_holds_because_nothing_was_sent(_stub_mark_attempt):
+    """The counter-case that keeps the rule honest.
+
+    A connect failure means the request never left — `_post_retrying_connect`
+    already retried the one phase that is safe to retry. Nothing is ambiguous, so
+    this stays a hold and the next tick simply tries again. Pausing here would
+    strand a post for a blip.
+    """
+    rt = _runtime()
+    client = SimpleNamespace(post_tweet=AsyncMock(side_effect=httpx.ConnectTimeout("no route")))
+    with _claimed(), \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        out = await publisher.publish_one(rt, "p1")
+
+    assert out["outcome"] == "held"
+    assert out["reason"] != "x_post_outcome_unknown"
 
 
 @pytest.mark.asyncio
