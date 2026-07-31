@@ -34,6 +34,16 @@ jobs:
             done
           fi
 
+      # CI installs from pyproject.toml; Horizon builds with `uv sync --frozen`,
+      # which installs uv.lock VERBATIM. Nothing compared the two, so a pin bumped
+      # in pyproject with a stale lock went green here and died at deploy — on
+      # 2026-07-31 the lock still said tollbooth-dpyc 0.76.0 while the source
+      # imported a module that only exists in 0.77.0, and three builds failed with
+      # ModuleNotFoundError after a fully green PR. This is the missing comparison.
+      - name: Lockfile matches pyproject
+        uses: astral-sh/setup-uv@v7
+      - run: uv lock --check
+
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
