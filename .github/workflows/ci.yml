@@ -34,24 +34,30 @@ jobs:
             done
           fi
 
-      # CI installs from pyproject.toml; Horizon builds with `uv sync --frozen`,
-      # which installs uv.lock VERBATIM. Nothing compared the two, so a pin bumped
-      # in pyproject with a stale lock went green here and died at deploy — on
-      # 2026-07-31 the lock still said tollbooth-dpyc 0.76.0 while the source
-      # imported a module that only exists in 0.77.0, and three builds failed with
-      # ModuleNotFoundError after a fully green PR. This is the missing comparison.
-      - name: Lockfile matches pyproject
-        uses: astral-sh/setup-uv@v7
-      - run: uv lock --check
+      - uses: astral-sh/setup-uv@v7
 
-      - name: Install dependencies
-        run: pip install -e ".[dev]"
+      # Install from uv.lock — the SAME artifact Horizon builds from. Its build
+      # config reads `Dependencies: uv.lock` and runs `uv sync --frozen`, so CI
+      # now tests byte-identical dependencies to the container instead of a
+      # second, independently-resolved set.
+      #
+      # `pip install -e ".[dev]"` resolved pyproject.toml. Two sources, never
+      # compared: on 2026-07-31 pyproject said tollbooth-dpyc 0.77.0 while the
+      # lock still said 0.76.0, 290 tests went green, and three Horizon builds
+      # died on `No module named 'tollbooth.oauth_situation'`. The exposure was
+      # never just that one pin — it covered every locked package, any of which
+      # could resolve differently here than in the image.
+      #
+      # `--locked` also asserts the lock is up to date with pyproject, so drift
+      # fails pre-merge rather than at deploy.
+      - name: Install dependencies (the lockfile Horizon deploys)
+        run: uv sync --locked --extra dev
 
       - name: Lint
-        run: ruff check .
+        run: uv run ruff check .
 
       - name: Test
-        run: pytest tests/ -v
+        run: uv run pytest tests/ -v
 
   # The frontend had no pre-merge build of any kind, so a dependency PR could take a
   # MAJOR version, go green on the Python suite, auto-merge on the `frontend/` low-risk
