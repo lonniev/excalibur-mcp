@@ -533,6 +533,9 @@ export interface PostSummary {
   // and when. The post stays scheduled and retries on the next due tick.
   last_attempt_at?: string | null;
   last_attempt_reason?: string | null;
+  // The evidence behind that reason, stamped on the post row itself — so the
+  // real cause survives even when the audit-ring row doesn't.
+  last_attempt_detail?: string | null;
   // True when the post carries a recurrence cadence (the live recurring template).
   is_recurring?: boolean;
   // True when the post's doc holds at least one dynamic (prompt-driven) block —
@@ -595,6 +598,7 @@ export interface PostRow {
   tweet_url?: string | null;
   last_attempt_at?: string | null;
   last_attempt_reason?: string | null;
+  last_attempt_detail?: string | null;
   // Set on a sent occurrence → the id of the recurring template it fired from.
   template_id?: string | null;
   created_at?: string | null;
@@ -950,6 +954,23 @@ export const OAUTH_NEEDED_CODES = new Set([
   "oauth_not_yet_authorized",
   "oauth_token_expired",
   "oauth_unavailable",
+  // The grant really is dead — but killed by a renewal whose answer was lost,
+  // not by expiry. Reconnecting IS the fix, so it belongs here; what changed is
+  // that the message now says why, instead of blaming a clock.
+  "oauth_refresh_token_lost",
+  // Nothing to renew with. A reconnect helps only if the new grant carries
+  // offline access, which the situation's own next_steps spell out.
+  "oauth_no_refresh_token",
+]);
+
+/// Codes that LOOK like the set above and must never join it. Kept as a named
+/// list rather than a comment, because every one of these has, at some point,
+/// been answered with a "Connect X" button that could not possibly have helped:
+/// two are operator-side faults and one is an outright unknown.
+export const OAUTH_NOT_THE_PATRONS_FAULT = new Set([
+  "operator_app_credentials_rejected",
+  "oauth_refresh_request_malformed",
+  "oauth_refresh_failed_unclassified",
 ]);
 
 // ─── Snippet library (Neon-backed, npub-scoped, free + proof-gated) ────────
@@ -1088,6 +1109,11 @@ export async function saveVoice(opts: { profile: string; bans: VoiceBan[] }): Pr
 export interface SchedulerOutcome {
   post_id?: string;
   reason?: string; // skip/error reason, e.g. insufficient_balance / oauth_token_expired
+  // Why, in the words of whatever refused — the provider's own message, an
+  // exception type, or the moment a lost token renewal killed the grant. The
+  // `reason` alone is a verdict with its evidence stripped, and stripping it is
+  // how five unrelated OAuth failures all read as "X access expired".
+  detail?: string;
   next_status?: string;
   tweet_url?: string | null;
   // Present on a POSTED entry when a dynamic block didn't resolve and the
@@ -1125,6 +1151,9 @@ export interface SchedulerRun {
     owner?: string;
     outcome?: "posted" | "held" | "paused" | "gone";
     reason?: string;
+    // The evidence behind `reason` — see SchedulerOutcome.detail. Absent on
+    // rows written before publishers carried it.
+    detail?: string;
     tweet_url?: string | null;
     fallbacks?: { block?: number; reason?: string; budget_s?: number }[];
   };

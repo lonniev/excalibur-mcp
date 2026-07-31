@@ -75,6 +75,16 @@ function RunCells({ summary: s }: { summary: SchedulerRun["summary"] }) {
         </td>
         <td className={cell}>
           {s.reason && <span className="text-stone-600 dark:text-zinc-300">{s.reason}</span>}
+          {/* The code says WHICH failure; this says why, in the words of
+              whatever refused. Without it every OAuth hold rendered as the same
+              handful of characters, and an operator reading this log could not
+              tell a grant killed by a lost renewal from one that truly aged out
+              — so they reconnected X, daily, on advice that fit neither. */}
+          {s.detail && (
+            <div className="mt-0.5 max-w-[52ch] text-[11px] leading-snug text-stone-500 dark:text-zinc-400">
+              {s.detail}
+            </div>
+          )}
           {fell.length > 0 && (
             <span
               className="ml-1.5 text-amber-600 dark:text-amber-400"

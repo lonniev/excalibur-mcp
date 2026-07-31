@@ -64,6 +64,22 @@ function attemptLabel(reason: string): string {
       oauth_token_expired: "X access expired",
       oauth_unavailable: "X not connected",
       oauth_not_yet_authorized: "X not connected",
+      // The one the operator lived through for days. X retires a refresh token
+      // the moment a renewal ARRIVES, so a renewal whose answer got lost leaves
+      // us holding a spent token — the grant is dead, but of an accident, not
+      // of age. Called "expired", it looked like a session aging out in hours,
+      // and the only response it invited was to reconnect and wait for it again.
+      oauth_refresh_token_lost: "X renewal was cut off — reconnect once",
+      // No refresh token to spend: a scope problem wearing a clock's clothes.
+      oauth_no_refresh_token: "X access can't renew itself",
+      // Operator-side faults. These must never read as something the post's
+      // owner can fix by reconnecting, because reconnecting cannot fix them.
+      operator_app_credentials_rejected: "operator's X app was refused",
+      oauth_refresh_request_malformed: "renewal request rejected — service bug",
+      // Unknown, and honest about it. Retryable: the previous behaviour was to
+      // call an unclassified failure an expiry, which spent a working grant on
+      // a guess.
+      oauth_refresh_failed_unclassified: "renewal failed — retrying",
       // X never answered the token refresh, so nobody knows whether the session
       // lapsed — and the three labels above all read as "go reconnect X". This
       // one must read as a retry, because that is what the next tick does.
@@ -547,7 +563,7 @@ export default function PostsPage() {
                     {p.status === "scheduled" && p.last_attempt_reason && (
                       <span
                         className="mt-1 flex items-center gap-1 text-[11px] text-rose-600 dark:text-rose-400"
-                        title={`Scheduler tried to post${p.last_attempt_at ? ` at ${fmt(p.last_attempt_at)}` : ""} but held it back: ${p.last_attempt_reason}. It will retry on the next tick.`}
+                        title={`Scheduler tried to post${p.last_attempt_at ? ` at ${fmt(p.last_attempt_at)}` : ""} but held it back: ${p.last_attempt_reason}.${p.last_attempt_detail ? `\n\n${p.last_attempt_detail}` : ""}\n\nIt will retry on the next tick.`}
                       >
                         ⚠ {attemptLabel(p.last_attempt_reason)}
                       </span>
@@ -555,7 +571,7 @@ export default function PostsPage() {
                     {p.status === "paused" && p.last_attempt_reason && (
                       <span
                         className="mt-1 flex items-center gap-1 text-[11px] text-rose-600 dark:text-rose-400"
-                        title={`Scheduler paused this post${p.last_attempt_at ? ` at ${fmt(p.last_attempt_at)}` : ""}: ${p.last_attempt_reason}. Fix the cause at the provider, then Resume to reschedule it.`}
+                        title={`Scheduler paused this post${p.last_attempt_at ? ` at ${fmt(p.last_attempt_at)}` : ""}: ${p.last_attempt_reason}.${p.last_attempt_detail ? `\n\n${p.last_attempt_detail}` : ""}\n\nFix the cause at the provider, then Resume to reschedule it.`}
                       >
                         ⏸ {attemptLabel(p.last_attempt_reason)}
                       </span>

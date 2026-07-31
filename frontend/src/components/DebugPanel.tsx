@@ -59,10 +59,14 @@ function pushRun(run: SchedulerRun): void {
       debugPush("error", `  ↳ block ${f.block} fell back: ${f.reason}${f.budget_s ? ` (budget ${f.budget_s}s)` : ""}`);
     }
     const bad = s.outcome === "held" || s.outcome === "paused";
-    const detail = [s.reason, s.tweet_url].filter(Boolean).join(" ");
+    // Its own line, below the header — the reason is a code you skim, the
+    // detail is the sentence that actually explains the hold, and cramming
+    // both into one row buried the half worth reading.
+    if (s.detail) debugPush(bad ? "error" : "result", `  ↳ ${s.detail}`);
+    const summary = [s.reason, s.tweet_url].filter(Boolean).join(" ");
     debugPush(
       bad ? "error" : "result",
-      `publish ${when} · ${short(s.post_id)} ${s.outcome ?? "?"}${detail ? ` · ${detail}` : ""}`,
+      `publish ${when} · ${short(s.post_id)} ${s.outcome ?? "?"}${summary ? ` · ${summary}` : ""}`,
     );
     return;
   }

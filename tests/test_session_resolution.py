@@ -11,6 +11,7 @@ patron.
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from tollbooth.oauth_situation import OAuthSituation
 
 VALID_NPUB = "npub1l94pd4qu4eszrl6ek032ftcnsu3tt9a7xvq2zp7eaxeklp6mrpzssmq8pf"
 
@@ -49,7 +50,7 @@ async def test_token_expired_returns_oauth_token_expired():
     with (
         patch.object(
             srv.runtime, "restore_oauth_session",
-            new=AsyncMock(return_value=(None, "token_expired")),
+            new=AsyncMock(return_value=(None, OAuthSituation("token_expired"))),
         ),
         patch.object(srv.runtime, "rollback_debit", new=AsyncMock()),
     ):
@@ -68,7 +69,7 @@ async def test_no_credentials_returns_oauth_not_yet_authorized():
     with (
         patch.object(
             srv.runtime, "restore_oauth_session",
-            new=AsyncMock(return_value=(None, "no_credentials")),
+            new=AsyncMock(return_value=(None, OAuthSituation("no_credentials"))),
         ),
         patch.object(srv.runtime, "rollback_debit", new=AsyncMock()),
     ):
@@ -85,7 +86,7 @@ async def test_vault_bootstrapping_returns_warming_up():
     with (
         patch.object(
             srv.runtime, "restore_oauth_session",
-            new=AsyncMock(return_value=(None, "vault_bootstrapping")),
+            new=AsyncMock(return_value=(None, OAuthSituation("vault_bootstrapping"))),
         ),
         patch.object(srv.runtime, "rollback_debit", new=AsyncMock()),
     ):
@@ -120,7 +121,7 @@ async def test_success_returns_xclient_tuple():
     creds = {"access_token": "fresh-bearer-tok"}
     with patch.object(
         srv.runtime, "restore_oauth_session",
-        new=AsyncMock(return_value=(creds, "")),
+        new=AsyncMock(return_value=(creds, None)),
     ):
         result = await srv._prepare_x_client("post_tweet", VALID_NPUB)
 

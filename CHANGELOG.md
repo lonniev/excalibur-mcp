@@ -11,6 +11,53 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## 0.37.0 — 2026-07-31
+
+### Fixed — a held post says why, in the words of whatever refused
+
+The scheduler reported `oauth_token_expired` on held posts; the operator
+reconnected X; the grant was dead again within hours. X refresh tokens carrying
+`offline.access` do not age out in hours. On 30 Jul five posts were held for it
+at 18:00, 18:30, 19:00 and 19:30 — and on 31 Jul one post produced four
+different verdicts on the same credentials in three hours (`warming_up`,
+`oauth_refresh_unavailable`, two silences, `oauth_token_expired`).
+
+`publisher._hold` / `_pause` kept only the situation's `error_code`, dropping the
+sentence that said which failure it was. Behind that, the SDK was collapsing five
+unrelated causes into that one code — see tollbooth-dpyc 0.77.0, which splits
+them and adds `refresh_token_lost` for the real culprit here: a token renewal
+that reached X and whose answer was lost, retiring a refresh token X had already
+rotated.
+
+Both now travel. A hold records `reason` (the code a surface switches on) **and**
+`detail` (the provider's own words, redacted), and both are stamped on the post
+row — new `last_attempt_detail` column, added idempotently like its siblings.
+
+### Fixed — a lost audit write no longer erases a publication
+
+On 31 Jul three ticks launched a publisher for post `056c9d73` and the traffic
+log showed only the launches. The posts were released correctly; it was the audit
+INSERT that failed, and `_record` swallowed it — so a tick that dispatched work
+it never heard back from was indistinguishable from a publisher that died with
+its container. The write is retried once, a loss that survives is logged at
+ERROR, and the post row's `last_attempt_reason` / `last_attempt_detail` remain
+the durable record regardless.
+
+### Fixed — the FE stops offering "Connect X" for problems reconnecting can't fix
+
+`attemptLabel` gained the new codes, worded by audience:
+`refresh_token_lost` → "X renewal was cut off — reconnect once";
+`operator_app_credentials_rejected` → "operator's X app was refused";
+`refresh_failed_unclassified` → "renewal failed — retrying". `detail` renders
+under the reason in the Scheduler traffic log, in the Posts chiclet tooltip, and
+on its own line in the debug panel. `OAUTH_NEEDED_CODES` gains the two codes that
+genuinely need a reconnect and pointedly excludes the operator-side faults.
+
+### Changed — track tollbooth-dpyc 0.77.0
+
+Required, not optional: `restore_oauth_session` returns an `OAuthSituation`
+rather than a string.
+
 ## 0.36.3 — 2026-07-31
 
 ### Fixed — a post X never confirmed was retried, and went out twice

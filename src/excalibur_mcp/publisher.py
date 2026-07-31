@@ -415,26 +415,37 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
         """
         return str(billing.get("error_code") or fallback)
 
-    async def _hold(reason: str, **extra: Any) -> dict[str, Any]:
+    async def _hold(reason: str, *, detail: str = "", **extra: Any) -> dict[str, Any]:
         """Leave the post ``scheduled`` for a later tick and say why — the
-        situation is stamped on the post so it never sits silently."""
+        situation is stamped on the post so it never sits silently.
+
+        ``reason`` is the machine code a surface switches on; ``detail`` is the
+        sentence a human needs. Recording only the first is how five unrelated
+        OAuth failures all reached the owner as "X access expired", every one of
+        them answered with a reconnect that did nothing."""
         try:
             reason = _stated(reason, post_id)
-            await posts_db.mark_attempt(post_id, _now().isoformat(), reason)
+            await posts_db.mark_attempt(
+                post_id, _now().isoformat(), reason, detail or None,
+            )
         except Exception:  # noqa: BLE001 — stamping is non-critical
             logger.exception("publisher: failed to stamp attempt on %s", post_id)
         return await _record({"post_id": post_id, "owner": owner, "outcome": "held",
-                              "reason": _stated(reason, post_id), **extra})
+                              "reason": _stated(reason, post_id),
+                              **({"detail": detail} if detail else {}), **extra})
 
-    async def _pause(reason: str, **extra: Any) -> dict[str, Any]:
+    async def _pause(reason: str, *, detail: str = "", **extra: Any) -> dict[str, Any]:
         """Like ``_hold``, but for a situation no later tick can resolve. The
         owner fixes the upstream cause and resumes the post themselves."""
         try:
-            await posts_db.mark_paused(post_id, _now().isoformat(), _stated(reason, post_id))
+            await posts_db.mark_paused(
+                post_id, _now().isoformat(), _stated(reason, post_id), detail or None,
+            )
         except Exception:  # noqa: BLE001 — stamping is non-critical
             logger.exception("publisher: failed to stamp attempt on %s", post_id)
         return await _record({"post_id": post_id, "owner": owner, "outcome": "paused",
-                              "reason": _stated(reason, post_id), **extra})
+                              "reason": _stated(reason, post_id),
+                              **({"detail": detail} if detail else {}), **extra})
 
     doc = _as_dict(row.get("doc"))
     dynamic = _dynamic_blocks(doc)
@@ -448,9 +459,18 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
         return await _hold("empty_text_cache")
 
     # 1. Resolve the owner's X bearer (no billing yet). — access reason
+    #
+    # The situation arrives carrying its evidence: which of the several very
+    # different OAuth failures this was, what the provider actually answered,
+    # and — for a grant killed by a renewal whose answer was lost — the moment
+    # that happened. Keeping only the code is what made "reconnect X" the
+    # standing advice for problems reconnecting could not touch.
     client, situation = await _resolve_x_client(owner)
     if client is None:
-        return await _hold((situation or {}).get("error_code") or "oauth_unavailable")
+        return await _hold(
+            (situation or {}).get("error_code") or "oauth_unavailable",
+            detail=_situation_detail(situation),
+        )
 
     # 2. Dynamic blocks: bill the owner once for resolution, run each prompt, and
     #    compose the final text. A failed block falls back to its author text; a
@@ -464,11 +484,15 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
             resolve_id, "resolve_dynamic_block", "heavy", {},
         )
         if rdenial is not None:
-            return await _hold(rdenial.get("error_code") or "pricing_unavailable")
+            return await _hold(
+                rdenial.get("error_code") or "pricing_unavailable",
+                detail=_situation_detail(rdenial),
+            )
         rbilling = await runtime._apply_billing(owner, "resolve_dynamic_block", rcost, [])
         if isinstance(rbilling, dict):  # finance reason
             return await _hold(
                 _billing_reason(rbilling, "insufficient_balance"),
+                detail=_situation_detail(rbilling),
                 stage="resolve", cost_sats=rcost,
             )
         resolve_charged = True
@@ -493,7 +517,10 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
     if denial is not None:
         if resolve_charged:
             await runtime.rollback_debit(resolve_id, owner)
-        return await _hold(denial.get("error_code") or "pricing_unavailable")
+        return await _hold(
+            denial.get("error_code") or "pricing_unavailable",
+            detail=_situation_detail(denial),
+        )
     billing = await runtime._apply_billing(owner, "post_tweet", cost, [])
     if isinstance(billing, dict):
         # Short balance, expired tranche, or an unreadable ledger — leave it
@@ -502,6 +529,7 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
             await runtime.rollback_debit(resolve_id, owner)
         return await _hold(
             _billing_reason(billing, "insufficient_balance"),
+            detail=_situation_detail(billing),
             stage="post", cost_sats=cost,
         )
 
@@ -629,6 +657,18 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _situation_detail(situation: dict[str, Any] | None) -> str:
+    """The most informative sentence a situation dict carries, or "".
+
+    Prefers ``detail`` — the provider's own words, redacted, set by the wheel
+    for the failures that have any — and falls back to ``error``, the recipe's
+    prose. Both are safe to store and show; neither ever holds a credential.
+    """
+    if not isinstance(situation, dict):
+        return ""
+    return str(situation.get("detail") or situation.get("error") or "").strip()
+
+
 def _stated(reason: Any, post_id: str) -> str:
     """A held post must always say why. This is the backstop that guarantees it.
 
@@ -650,11 +690,35 @@ async def _record(outcome: dict[str, Any]) -> dict[str, Any]:
     """Append this publication to the audit ring and hand the outcome back.
 
     Every exit from ``publish_one`` goes through here, so a publication cannot
-    finish without leaving a trace. Best-effort: an audit-write failure must
-    never undo (or mask) the publishing work that just happened.
+    finish without leaving a trace — provided the write lands. On 2026-07-31
+    three ticks launched a publisher for the same post and the log showed only
+    the launches: the posts were correctly released, but their publication rows
+    never appeared, and a tick that dispatched work it never heard back from
+    reads exactly like a publisher that died. A single Neon hiccup on this
+    INSERT was enough to erase the evidence.
+
+    So the write is retried once, and a loss that survives the retry is logged
+    at ERROR rather than swallowed at exception level. The post row's
+    ``last_attempt_reason`` / ``last_attempt_detail`` remain the durable record
+    either way — they are written before this, by ``_hold``/``_pause``.
     """
-    try:
-        await scheduler_runs.record_run({"kind": "publication", **outcome})
-    except Exception:  # noqa: BLE001 — audit is non-critical
-        logger.exception("publisher: failed to record outcome for %s", outcome.get("post_id"))
+    row = {"kind": "publication", **outcome}
+    for attempt in (1, 2):
+        try:
+            await scheduler_runs.record_run(row)
+            return outcome
+        except Exception:  # noqa: BLE001 — audit must never fail the publication
+            if attempt == 1:
+                logger.warning(
+                    "publisher: audit write for %s failed; retrying once",
+                    outcome.get("post_id"),
+                )
+                continue
+            logger.error(  # noqa: TRY400 — the traceback is in the warning above
+                "publisher: LOST the audit row for %s (outcome=%s, reason=%s). "
+                "The post row still carries the reason; the traffic log will "
+                "show a launch with no publication.",
+                outcome.get("post_id"), outcome.get("outcome"),
+                outcome.get("reason"), exc_info=True,
+            )
     return outcome

@@ -86,6 +86,7 @@ async def _ensure_domain_schema(vault: Any) -> None:
         "tweet_url TEXT, "
         "last_attempt_at TIMESTAMPTZ, "    # when the scheduler last TRIED to fire it
         "last_attempt_reason TEXT, "       # why a try didn't post (skip/error reason)
+        "last_attempt_detail TEXT, "       # ...in the words of whatever refused
         "template_id UUID, "               # sent occurrence → its recurring template's id
         "client_req_id TEXT, "
         "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), "
@@ -96,6 +97,7 @@ async def _ensure_domain_schema(vault: Any) -> None:
         f"ALTER TABLE {t('posts')} ADD COLUMN IF NOT EXISTS tweet_url TEXT",
         f"ALTER TABLE {t('posts')} ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMPTZ",
         f"ALTER TABLE {t('posts')} ADD COLUMN IF NOT EXISTS last_attempt_reason TEXT",
+        f"ALTER TABLE {t('posts')} ADD COLUMN IF NOT EXISTS last_attempt_detail TEXT",
         f"ALTER TABLE {t('posts')} ADD COLUMN IF NOT EXISTS template_id UUID",
 
         f"CREATE INDEX IF NOT EXISTS posts_owner_idx ON {t('posts')} (npub, status)",
