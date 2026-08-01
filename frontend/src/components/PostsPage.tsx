@@ -50,13 +50,18 @@ const statusStyle: Record<string, string> = {
 // Anything unmapped (e.g. a raw x_api_error string) shows verbatim.
 function attemptLabel(reason: string): string {
   if (reason.startsWith("x_api_error")) {
-    // An X 402 is a lapsed developer subscription / access tier — a billing fix
-    // at X, not a transient network blip. Call it out distinctly so the human
-    // knows where to act.
-    if (reason.includes("402") || /subscription|access tier/i.test(reason)) {
-      return "X subscription/tier";
-    }
-    return "X network error";
+    // The reason now carries X's status code and nothing else; X's own sentence
+    // rides in `detail` and reaches the tooltip. So these labels name WHAT
+    // happened and leave WHY to X.
+    //
+    // "X subscription/tier" used to be asserted for every 402 — a guess that
+    // held only when a plan had actually lapsed. On 2026-07-31 a single post
+    // 402'd while a 792-character sibling from the same account posted fine
+    // thirty minutes earlier, so a lapsed plan was exactly what it was not.
+    if (reason.includes("402")) return "X declined it (402)";
+    if (reason.includes("429")) return "X rate limit";
+    if (reason.includes("401") || reason.includes("403")) return "X refused the request";
+    return "X error";
   }
   return (
     {

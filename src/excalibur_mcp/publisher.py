@@ -540,10 +540,18 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
         await runtime.rollback_debit(post_tweet_id, owner)
         if resolve_charged:
             await runtime.rollback_debit(resolve_id, owner)
-        reason = f"x_api_error: {exc}"
-        if getattr(exc, "status_code", None) in _X_NON_TRANSIENT:
-            return await _pause(reason)
-        return await _hold(reason)
+        # `reason` stays a stable, switchable code; X's own words go in `detail`.
+        # They used to be concatenated into one string, so a surface could only
+        # pattern-match prose — and when x_client substituted a canned sentence
+        # for the body, the prose it matched was ours, not X's. An operator
+        # asking "what is wrong with this post?" got a sentence written months
+        # before their post existed.
+        status = getattr(exc, "status_code", None)
+        reason = f"x_api_error: {status}" if status else "x_api_error"
+        detail = str(getattr(exc, "detail", "") or exc)
+        if status in _X_NON_TRANSIENT:
+            return await _pause(reason, detail=detail)
+        return await _hold(reason, detail=detail)
     except _X_MAYBE_DELIVERED as exc:
         # The request REACHED X and we never saw the answer. `x_client` already
         # refuses to retry these at the HTTP layer — "the tweet may already be

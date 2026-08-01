@@ -265,11 +265,19 @@ class TestPostTweet:
             assert exc_info.value.status_code == 403
 
     @pytest.mark.asyncio
-    async def test_payment_required_402(self, client):
-        # A bare 402 (lapsed X subscription/tier) gets a clear detail, not the
-        # generic "Unexpected response: 402" — the server maps it to the SDK's
-        # upstream-subscription situation.
-        mock_resp = _mock_response(402, {"title": "Payment Required"})
+    async def test_payment_required_402_carries_what_x_said(self, client):
+        """A 402 reports X's OWN words, not a sentence we wrote in advance.
+
+        This test used to assert `"subscription" in detail` — the canned string
+        the branch substituted for the response body. That is what made a post
+        refused for its own content indistinguishable from an account whose plan
+        had lapsed: both paused with identical text, and the operator asking
+        "what is wrong with this post?" could not be answered from the record.
+        """
+        mock_resp = _mock_response(402, {
+            "title": "Payment Required",
+            "detail": "Your Basic tier does not permit posts over 280 characters.",
+        })
 
         with patch("excalibur_mcp.x_client.httpx.AsyncClient") as MockClient:
             mock_instance = AsyncMock()
@@ -281,8 +289,46 @@ class TestPostTweet:
             with pytest.raises(XAPIError) as exc_info:
                 await client.post_tweet("test")
             assert exc_info.value.status_code == 402
-            assert "subscription" in exc_info.value.detail
+            assert "over 280 characters" in exc_info.value.detail
             assert "Unexpected response" not in exc_info.value.detail
+            # the full body is kept for anyone who needs more than the sentence
+            assert exc_info.value.raw["title"] == "Payment Required"
+
+    @pytest.mark.asyncio
+    async def test_402_falls_back_only_when_x_says_nothing(self, client):
+        """A body with nothing readable is the ONE case we supply words — and
+        they say we don't know, rather than inventing a cause."""
+        mock_resp = _mock_response(402, {})
+
+        with patch("excalibur_mcp.x_client.httpx.AsyncClient") as MockClient:
+            mock_instance = AsyncMock()
+            mock_instance.post.return_value = mock_resp
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = mock_instance
+
+            with pytest.raises(XAPIError) as exc_info:
+                await client.post_tweet("test")
+            assert "gave no reason" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    async def test_legacy_errors_list_is_read_too(self, client):
+        """X also answers with `errors: [{message}]`; that shape must not be
+        silently dropped in favour of a fallback."""
+        mock_resp = _mock_response(403, {
+            "errors": [{"message": "You are not permitted to create a Post."}],
+        })
+
+        with patch("excalibur_mcp.x_client.httpx.AsyncClient") as MockClient:
+            mock_instance = AsyncMock()
+            mock_instance.post.return_value = mock_resp
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = mock_instance
+
+            with pytest.raises(XAPIError) as exc_info:
+                await client.post_tweet("test")
+            assert "not permitted to create a Post" in exc_info.value.detail
 
     @pytest.mark.asyncio
     async def test_unexpected_status(self, client):
