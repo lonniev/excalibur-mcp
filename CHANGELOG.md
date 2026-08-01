@@ -11,6 +11,65 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## 0.37.1 — 2026-07-31
+
+### Fixed — the scheduler could never spend an authorization it held
+
+`RENEW_BEFORE_MS = 24h` was an absolute constant gating the ONLY path that fires
+posts from a cached token:
+
+```js
+if (state?.phase === "active" && state.expiresAt - now > RENEW_BEFORE_MS)
+```
+
+How long an npub authorization lasts is a **human's choice at reply time**, not
+something the code can know. The operator granted 2 hours on 2026-07-31, so
+`2h > 24h` was false on every tick: the Worker held a valid token, refused to
+spend it, fell through to "request a fresh proof", and DM'd for approval again.
+It posted only inside the same tick that completed a proof — which is why
+nothing ran between 19:30 and 23:03 while the queue sat due.
+
+The lead is now a share of what was actually granted
+(`RENEW_AT_REMAINING_FRACTION = 0.25`), so a 30-day grant renews with days to
+spare and a 2-hour grant renews with 30 minutes — the same proportion of notice
+either way. A fixed window also punished the cautious answer: a deliberately
+short grant produced a machine that asked permission every half hour and never
+used it.
+
+`ProofState` gains `issuedAt`, without which the granted lifetime is unknowable
+after the fact. A state written by an older build has none and is re-requested
+once; every state after that carries one.
+
+`/status` now reports `grantedForMinutes` and `spendable`. A Worker holding a
+good token it declines to spend used to be indistinguishable from one holding
+nothing — both read "pending" on the next tick, which is exactly how this hid.
+`renewsBeforeExpiryHours` is replaced by `renewsAtRemainingPercent`.
+
+
+### Fixed — a reconnected X account was still being told to reconnect
+
+A post reading `Sending · Reconnect X · working…` — three states that cannot all
+be true at once, on an account that had just been reauthorized.
+
+`last_attempt_reason` records what was true at the LAST attempt and nothing
+rewrites it afterwards. The row rendered it as a live instruction:
+
+- The **Reconnect X** button was gated on the reason alone — not on the post's
+  status, so it showed while a publisher was mid-flight (`claim_due_post` moves
+  `scheduled → sending` without clearing the reason, deliberately: if that
+  attempt then dies silently, the old reason is the only trace left), and not on
+  whether X was currently connected, so it survived the reconnect that fixed it.
+- The warning chiclet likewise kept saying "X access expired" about an account
+  that had been working for hours.
+
+The button now additionally requires `scheduled`/`paused` **and** that
+`getXConnection()` does not report `connected`. Only a definite `connected`
+suppresses it — `indeterminate` still offers the door, since a warming vault is
+not evidence the account is fine.
+
+When X *is* connected, an OAuth reason renders as history rather than a warning:
+muted, and prefixed `last attempt:` instead of the warning glyph.
+
 ## 0.37.0 — 2026-07-31
 
 ### Fixed — a held post says why, in the words of whatever refused

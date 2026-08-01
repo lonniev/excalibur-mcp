@@ -168,7 +168,17 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
 function authorizationLine(status: SchedulerStatus | null): string {
   const a = status?.authorization;
   if (!a) return "—";
-  if (a.phase === "active") return `Authorized — renews ${until(a.expiresAt)}`;
+  if (a.phase === "active") {
+    const granted = a.grantedForMinutes != null
+      ? ` · granted ${untilMins(a.grantedForMinutes)}`
+      : "";
+    // A held-but-unspendable token is the state that hid a Worker bug for
+    // hours: it posts nothing and reads as "authorized", so say plainly that
+    // the next tick will renew rather than fire.
+    return a.spendable
+      ? `Authorized — renews ${until(a.expiresAt)}${granted}`
+      : `Authorized but due for renewal — the next tick re-requests${granted}`;
+  }
   if (a.phase === "pending") return `Awaiting your approval (requested ${relative(a.requestedAt)})`;
   return "Idle — no authorization needed right now";
 }
@@ -275,8 +285,8 @@ export default function SchedulerPage() {
               expiring every 30 minutes. Both rows now name whose credential
               they mean. Nothing on this page describes the X OAuth token. */}
           <Row label="npub renewal">
-            {status?.renewsBeforeExpiryHours != null
-              ? `re-requests this worker's npub authorization ${status.renewsBeforeExpiryHours} h before it expires (not your X connection)`
+            {status?.renewsAtRemainingPercent != null
+              ? `re-requests this worker's npub authorization once ${status.renewsAtRemainingPercent}% of the granted lifetime is left — a share, not a fixed number of hours, because you choose that lifetime when you approve (not your X connection)`
               : "—"}
           </Row>
           <Row label="npub re-nudge">

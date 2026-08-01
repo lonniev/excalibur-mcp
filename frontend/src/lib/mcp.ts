@@ -1199,13 +1199,21 @@ export interface SchedulerStatus {
   operator_npub?: string;
   version?: string;
   cadence?: string;
-  renewsBeforeExpiryHours?: number;
+  // Renewal lead as a PERCENTAGE of whatever lifetime the operator granted —
+  // not a fixed number of hours. How long an authorization lasts is a human's
+  // choice at reply time, so a constant window silently refused to spend every
+  // grant shorter than it.
+  renewsAtRemainingPercent?: number;
   rerequestAfterHours?: number;
   mcpUrl?: string;
   verifyAt?: string | null;
   authorization?:
     | { phase: "pending"; reason: string; requestedAt: number }
-    | { phase: "active"; expiresAt: number }
+    // `spendable` false means the Worker HOLDS a valid token but is inside its
+    // renewal window, so the next tick re-requests rather than posting. Without
+    // it, a Worker declining to spend a good token looked exactly like one that
+    // had none.
+    | { phase: "active"; expiresAt: number; grantedForMinutes: number | null; spendable: boolean }
     | { phase: "idle" };
   worker?: string; // "unavailable" when the Worker couldn't be reached
 }

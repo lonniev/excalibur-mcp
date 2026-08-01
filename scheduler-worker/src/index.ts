@@ -39,13 +39,21 @@ export interface Env {
 const SLUG = "excalibur";
 const KEY = "proof_state";
 const INFLIGHT_KEY = "inflight_until";
-const WORKER_VERSION = "0.3.0";
+const WORKER_VERSION = "0.4.0";
 // How long to leave a tick alone after its POST was cut off at the edge. The MCP
 // claims each post for 20 minutes before another tick may reclaim it, so we back
 // off for exactly that: firing again sooner can only collide with work that may
 // still be running on the other side of a connection we already lost.
 const INFLIGHT_COOLDOWN_MS = 20 * 60 * 1000;
-const RENEW_BEFORE_MS = 24 * 60 * 60 * 1000; // re-request a day before expiry
+// Renew when a quarter of the granted lifetime is left. RELATIVE on purpose: how
+// long an authorization lasts is a HUMAN's choice at reply time, not a constant
+// this code can know. It was `24h` absolute, which silently disabled the
+// fire path below for every grant shorter than a day — the operator granted 2h
+// on 2026-07-31 and the Worker spent the evening re-requesting every tick,
+// never once spending a token it held and considered valid. A fixed lead time
+// also punishes the cautious answer: a short, deliberate grant became a machine
+// that asks permission every half hour and never uses it.
+const RENEW_AT_REMAINING_FRACTION = 0.25;
 const REREQUEST_AFTER_MS = 60 * 60 * 1000; // resend the DM if unanswered for 1h
 // Human description of the cron trigger — mirrors `crons` in wrangler.toml.
 const CADENCE = "every 30 minutes (on the hour and the half hour)";
@@ -67,7 +75,13 @@ const PENDING_PROOF_SKEW_S = 120; // clock-skew tolerance for the read gate
 
 type ProofState =
   | { phase: "pending"; poison: string; requestedAt: number; reason: string }
-  | { phase: "active"; token: string; expiresAt: number };
+  // `issuedAt` is what makes the renewal lead RELATIVE: without it the granted
+  // lifetime is unknowable after the fact, and the only options are a constant
+  // (the bug) or spending a token until the instant it dies. A state written by
+  // an older build has no `issuedAt`; it is treated as unusable and re-requested
+  // once, after which every state carries one. That is a single extra approval
+  // at rollout, not a fallback path to maintain.
+  | { phase: "active"; token: string; expiresAt: number; issuedAt: number };
 
 type Call = <R = any>(name: string, args?: Record<string, unknown>) => Promise<R>;
 
@@ -108,11 +122,24 @@ export default {
 async function statusView(env: Env): Promise<Response> {
   const raw = await env.PROOF_KV.get(KEY);
   const state: ProofState | null = raw ? (JSON.parse(raw) as ProofState) : null;
+  const now = Date.now();
   const authorization =
     state?.phase === "pending"
       ? { phase: "pending" as const, reason: state.reason, requestedAt: state.requestedAt }
       : state?.phase === "active"
-        ? { phase: "active" as const, expiresAt: state.expiresAt }
+        ? {
+            phase: "active" as const,
+            expiresAt: state.expiresAt,
+            // What the operator actually granted, and whether that grant is
+            // still spendable. A Worker holding a valid token it declines to
+            // spend used to be indistinguishable here from one holding nothing
+            // — both simply read "pending" on the next tick, which is how a
+            // hardcoded renewal window hid behind an approval loop for hours.
+            grantedForMinutes: state.issuedAt
+              ? Math.round((state.expiresAt - state.issuedAt) / 60_000)
+              : null,
+            spendable: renewalIsNotDue(state, now),
+          }
         : { phase: "idle" as const };
   // Surfaced so a held-off tick reads as a deliberate back-off in the Scheduler
   // tab rather than another silent gap.
@@ -120,7 +147,7 @@ async function statusView(env: Env): Promise<Response> {
   return json({
     version: WORKER_VERSION,
     cadence: CADENCE,
-    renewsBeforeExpiryHours: RENEW_BEFORE_MS / 3_600_000,
+    renewsAtRemainingPercent: RENEW_AT_REMAINING_FRACTION * 100,
     rerequestAfterHours: REREQUEST_AFTER_MS / 3_600_000,
     mcpUrl: env.MCP_URL,
     verifyAt: env.FE_URL ?? null,
@@ -191,6 +218,21 @@ function verifyPendingProof(proofRaw: string, operatorNpub: string): boolean {
   }
 }
 
+// Is this authorization still far enough from expiry to spend?
+//
+// The lead is a fraction of what was actually granted, so a 30-day grant renews
+// with days to spare and a 2-hour grant renews with 30 minutes — both leaving
+// the operator the same PROPORTION of notice. A state predating `issuedAt`
+// cannot say what it was granted, so it is not spent; the next tick re-requests
+// and the one after that is correct forever.
+function renewalIsNotDue(
+  state: Extract<ProofState, { phase: "active" }>, now: number,
+): boolean {
+  if (!state.issuedAt) return false;
+  const granted = state.expiresAt - state.issuedAt;
+  return state.expiresAt - now > granted * RENEW_AT_REMAINING_FRACTION;
+}
+
 async function tick(env: Env): Promise<string> {
   const raw = await env.PROOF_KV.get(KEY);
   const state: ProofState | null = raw ? (JSON.parse(raw) as ProofState) : null;
@@ -206,7 +248,7 @@ async function tick(env: Env): Promise<string> {
     }
 
     // 1) Fresh cached token → fire due posts. No courier traffic.
-    if (state?.phase === "active" && state.expiresAt - now > RENEW_BEFORE_MS) {
+    if (state?.phase === "active" && renewalIsNotDue(state, now)) {
       const until = Number((await env.PROOF_KV.get(INFLIGHT_KEY)) ?? 0);
       if (until > now) {
         const mins = Math.ceil((until - now) / 60_000);
@@ -223,7 +265,9 @@ async function tick(env: Env): Promise<string> {
       });
       if (r?.success && r?.dpop_token) {
         const expiresAt = now + (Number(r.expires_in_seconds) || 0) * 1000;
-        await env.PROOF_KV.put(KEY, JSON.stringify({ phase: "active", token: r.dpop_token, expiresAt }));
+        await env.PROOF_KV.put(KEY, JSON.stringify({
+          phase: "active", token: r.dpop_token, expiresAt, issuedAt: now,
+        }));
         return fire(call, env, operatorNpub, r.dpop_token);
       }
       if (now - state.requestedAt > REREQUEST_AFTER_MS) return request(call, env, operatorNpub);
