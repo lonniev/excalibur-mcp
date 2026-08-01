@@ -10,6 +10,7 @@ import asyncio
 import logging
 import os
 from dataclasses import dataclass
+from typing import Any
 
 import httpx
 
@@ -81,6 +82,51 @@ async def upload_to_postimg(png_bytes: bytes, filename: str = "banner.png") -> s
         raise PostImgUploadError(f"PostImg response missing 'url': {data}")
 
     return url
+
+
+def _safe_json(response: Any) -> dict:
+    """X's response body as a dict — never raising, so an error path can't die
+    reporting an error. A gateway HTML page becomes ``{"raw": ...}``."""
+    try:
+        body = response.json()
+        return body if isinstance(body, dict) else {"raw": str(body)[:400]}
+    except Exception:  # noqa: BLE001 — a non-JSON body is still evidence
+        return {"raw": (getattr(response, "text", "") or "")[:400]}
+
+
+def _x_says(body: Any, fallback: str) -> str:
+    """What X actually said, or *fallback* when it said nothing usable.
+
+    X answers errors in two shapes — RFC-7807-ish (``title``/``detail``) and a
+    legacy ``errors: [{message}]`` list — and a gateway can return neither. This
+    reads all of them so a caller never has to guess.
+
+    Guessing is what it replaces. The 402 branch below used to discard the parsed
+    body and raise a sentence written months earlier: "X API subscription or
+    access tier does not cover this request." On 2026-07-31 a post was paused
+    carrying exactly that text while two siblings from the same account posted
+    fine half an hour before — and nothing anywhere recorded why X singled that
+    one out, because X's explanation was thrown away at the only point it
+    existed. An operator asking "what is wrong with this post?" could not be
+    answered from the record.
+    """
+    if not isinstance(body, dict):
+        return fallback
+    for key in ("detail", "title"):
+        value = str(body.get(key) or "").strip()
+        if value:
+            return value
+    errors = body.get("errors")
+    if isinstance(errors, list):
+        joined = "; ".join(
+            str(e.get("message") or e.get("detail") or "").strip()
+            for e in errors
+            if isinstance(e, dict) and (e.get("message") or e.get("detail"))
+        )
+        if joined:
+            return joined
+    raw = str(body.get("raw") or "").strip()
+    return raw or fallback
 
 
 class XAPIError(Exception):
@@ -167,13 +213,10 @@ class XClient:
             )
 
         if response.status_code not in (200, 202):
-            try:
-                body = response.json()
-            except Exception:
-                body = {"raw": response.text}
+            body = _safe_json(response)
             raise MediaUploadError(
                 response.status_code,
-                f"Media upload failed: {response.status_code}",
+                _x_says(body, f"Media upload failed: {response.status_code}"),
                 body,
             )
 
@@ -219,37 +262,36 @@ class XClient:
         response = await self._post_retrying_connect(url, payload)
 
         if response.status_code == 429:
-            raise XAPIError(429, "Rate limited — try again later", response.json())
+            body = _safe_json(response)
+            raise XAPIError(429, _x_says(body, "Rate limited — try again later"), body)
 
         if response.status_code in (401, 403):
-            body = response.json()
-            detail = body.get("detail", body.get("title", "Authentication failed"))
-            raise XAPIError(response.status_code, detail, body)
+            body = _safe_json(response)
+            raise XAPIError(
+                response.status_code, _x_says(body, "Authentication failed"), body,
+            )
 
         if response.status_code == 402:
-            # X answers a bare 402 when the developer subscription / access tier
-            # behind this account's credentials has lapsed or doesn't cover the
-            # write. Not the x402 micropayment protocol, not a balance problem —
-            # a human must renew the plan at developer.x.com. The server maps
-            # this to the SDK's upstream-subscription situation.
-            try:
-                body = response.json()
-            except Exception:
-                body = {"raw": response.text}
+            # X answers a 402 when the developer subscription / access tier behind
+            # this account's credentials has lapsed or doesn't cover this write.
+            # Not the x402 micropayment protocol, not a balance problem — a human
+            # acts at developer.x.com, and the server maps this to the SDK's
+            # upstream-subscription situation.
+            #
+            # WHICH write, and why, is X's to say and ours to carry: a post
+            # refused for its own content and an account whose plan lapsed are
+            # different problems with different fixes, and a fixed sentence made
+            # them identical in the log.
+            body = _safe_json(response)
             raise XAPIError(
-                402,
-                "X API subscription or access tier does not cover this request",
-                body,
+                402, _x_says(body, "X declined this request and gave no reason"), body,
             )
 
         if response.status_code != 201:
-            try:
-                body = response.json()
-            except Exception:
-                body = {"raw": response.text}
+            body = _safe_json(response)
             raise XAPIError(
                 response.status_code,
-                f"Unexpected response: {response.status_code}",
+                _x_says(body, f"Unexpected response: {response.status_code}"),
                 body,
             )
 
@@ -284,15 +326,17 @@ class XClient:
             )
 
         if response.status_code in (401, 403):
-            body = response.json()
-            detail = body.get("detail", body.get("title", "Authentication failed"))
-            raise XAPIError(response.status_code, detail, body)
+            body = _safe_json(response)
+            raise XAPIError(
+                response.status_code, _x_says(body, "Authentication failed"), body,
+            )
         if response.status_code != 200:
-            try:
-                body = response.json()
-            except Exception:
-                body = {"raw": response.text}
-            raise XAPIError(response.status_code, f"Unexpected response: {response.status_code}", body)
+            body = _safe_json(response)
+            raise XAPIError(
+                response.status_code,
+                _x_says(body, f"Unexpected response: {response.status_code}"),
+                body,
+            )
 
         data = response.json().get("data", {})
         return {

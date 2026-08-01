@@ -11,6 +11,39 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## 0.37.3 — 2026-08-01
+
+### Fixed — X's reason for declining a post is no longer thrown away
+
+Post `bdbe1818` paused with:
+
+```
+x_api_error: X API 402: X API subscription or access tier does not cover this request
+```
+
+Every word after the status code was **ours**, written months earlier.
+`x_client.py` parsed X's response body, raised a canned sentence, and kept the
+body only in `.raw`, which nothing surfaced. Asked "what is wrong with this
+post?", the record could not answer.
+
+And the canned sentence was wrong: a 792-character sibling from the same account
+posted cleanly thirty minutes earlier, so a lapsed subscription is precisely
+what it was not.
+
+`_x_says()` reads all three shapes X uses — `detail`, `title`, and the legacy
+`errors: [{message}]` list — plus a raw-text fallback, and every error branch now
+uses it (429, 401/403, 402, non-201, non-200, media upload). The fallback fires
+only when X truly said nothing, and it says *"X declined this request and gave no
+reason"* rather than inventing one.
+
+`publisher.py` splits the two: `reason` is a stable `x_api_error: <status>` a
+surface can switch on, `detail` is X's own words. They used to be concatenated,
+so the FE could only pattern-match prose — prose we had written.
+
+`attemptLabel` stops asserting a cause: a 402 reads "X declined it (402)" with
+X's sentence in the tooltip, and 429 / 401 / 403 get their own labels now that
+the status code survives.
+
 ## 0.37.2 — 2026-08-01
 
 ### Fixed — the scheduler Worker was undeployable, and nothing checked
