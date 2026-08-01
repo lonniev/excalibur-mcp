@@ -11,6 +11,36 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## 0.37.2 — 2026-08-01
+
+### Fixed — the scheduler Worker was undeployable, and nothing checked
+
+v0.37.1 merged green and `deploy-worker.yml` then failed on `npm ci`:
+
+```
+lock file's @cloudflare/workers-types@4.20260627.1 does not satisfy ^5.0.0
+lock file's typescript@5.9.3 does not satisfy ^7.0.0
+```
+
+Pre-existing drift, not introduced by that release — `scheduler-worker/package-lock.json`
+carried root version `0.1.0` while the manifest had moved through 0.3.0 to
+0.4.0, and the devDependency majors were raised (around #285) without ever
+regenerating the lock. The local `npm run typecheck` that "passed" ran against
+the OLD installed deps, so nobody had ever compiled this Worker on the versions
+its own manifest asks for.
+
+Lock regenerated. It typechecks clean on TypeScript 7 and workers-types 5.
+
+### Added — CI builds the scheduler Worker
+
+The Worker had no pre-merge check of any kind. The only thing that ever built it
+was `deploy-worker.yml`, which runs *after* merge — so a lock/manifest
+disagreement could only ever be discovered by leaving `main` undeployable.
+
+New `worker` job runs `npm ci` (which fails outright on lock drift) and
+`npm run typecheck`. Same always-runs / skip-the-expensive-steps shape as the
+`frontend` job added after #285, in the one corner that still lacked it.
+
 ## 0.37.1 — 2026-07-31
 
 ### Fixed — the scheduler could never spend an authorization it held

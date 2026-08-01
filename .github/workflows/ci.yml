@@ -129,3 +129,58 @@ jobs:
           bytes=$(wc -c < "$css")
           echo "emitted $css ($bytes bytes)"
           [ "$bytes" -gt 5000 ] || { echo "::error::stylesheet is $bytes bytes — Tailwind almost certainly did not run"; exit 1; }
+
+  # The scheduler Worker had NO pre-merge check of any kind. Its package-lock.json
+  # drifted from package.json somewhere around #285 — the lock still named
+  # typescript 5.9.3 and @cloudflare/workers-types 4.x against a manifest asking
+  # for ^7 and ^5 — and nothing noticed, because the only thing that ever built
+  # it was `deploy-worker.yml`, which runs AFTER merge. So a green PR merged and
+  # the deploy died on `npm ci` EUSAGE, leaving main with an undeployable Worker.
+  #
+  # Exactly the shape the `frontend` job above was added to fix, in the one
+  # remaining corner that still had it. Same always-runs / skip-the-expensive-bits
+  # structure, so it is cheap AND safe to require as a status context.
+  worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Did the worker change?
+        id: touched
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BASE_SHA:-}" ]; then
+            echo "push build — building the worker."
+            echo "any=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if git diff --name-only --diff-filter=ACMR "$BASE_SHA" "$HEAD_SHA" \
+               | grep -qE '^scheduler-worker/|^\.github/workflows/(ci|deploy-worker)\.yml$'; then
+            echo "any=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "any=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v7
+        if: steps.touched.outputs.any == 'true'
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: scheduler-worker/package-lock.json
+
+      # `npm ci` is the assertion, not just the install: it FAILS when the lock
+      # and the manifest disagree, which is the exact failure deploy-worker.yml
+      # hit. Running it here moves that from post-merge to pre-merge.
+      - name: Install dependencies (lock must match package.json)
+        if: steps.touched.outputs.any == 'true'
+        working-directory: scheduler-worker
+        run: npm ci
+
+      - name: Typecheck
+        if: steps.touched.outputs.any == 'true'
+        working-directory: scheduler-worker
+        run: npm run typecheck
