@@ -1,23 +1,36 @@
-"""Finding posts that are due, and launching a publisher for each.
+"""Two things, on their own clocks: posting what is ready, building what is next.
 
-That is the whole job. The scheduler does not build content, does not talk to X,
-does not bill anyone, and does not wait to see how any of it turned out — a
-publisher owns one post's publication end to end and records its own outcome
-(see ``publisher.py``). Keeping the two apart is what lets a dynamic block take
-the minutes it needs: the tick is a dispatch, over in seconds, while the LLM
-work runs as a background job on the wheel's own queue.
+The scheduler still builds no content and talks to nobody upstream. What changed
+is that it no longer hands a *publication* to a background job — it hands a
+*resolution*, and does the publishing itself.
 
-Two guards, both already earned elsewhere:
+That inversion follows from how long each takes. Building a body can run minutes
+(a dynamic block is a model prompt with web lookups, capped by the author's own
+runtimeLimit). Posting a finished body is one HTTPS call, tens of milliseconds.
+Only the first needs to outlive the tick.
 
-* ``claim_due_post`` flips ``scheduled → sending`` atomically, so overlapping
-  ticks can never launch two publishers for the same post.
-* the claim lease means a post whose publisher died with its container simply
-  falls back into the due set later. Nothing supervises the publishers; the
-  lease is the recovery.
+**Phase 1 — post.** Every ``resolved`` body whose moment has arrived is claimed
+and sent inline. No background job, no lease measured in tens of minutes, nothing
+that can outlive the tick that started it.
 
-A recurrence that fires faster than its content can be built needs no special
-handling either — a post still ``sending`` inside its lease is not due, so it
-quietly serializes instead of piling up.
+**Phase 2 — resolve.** Templates due within ``RESOLVE_LEAD_SECONDS`` are claimed
+and handed to a worker. Starting a tick EARLY is what keeps publishing punctual:
+resolving at publish_at guarantees the post is late by whatever the model took.
+
+Posting first is deliberate — a body finished during the previous tick goes out
+at the top of this one rather than waiting behind this tick's model work.
+
+Three guards, each earned:
+
+* ``claim_for_resolve`` and ``claim_due_post`` are atomic, so overlapping ticks
+  can never double-start the same work.
+* the resolve lease (20 min, in ``posts.py``) hands back a slot whose worker died
+  with its container. Nothing supervises workers; the lease is the recovery.
+* ``resolve_attempts`` caps how many times a body may fail to build, so a
+  permanently-broken prompt stops billing its owner every half hour.
+
+A recurrence that fires faster than its content can be built still needs no
+special handling: a template already ``resolving`` inside its lease is not due.
 """
 
 from __future__ import annotations
