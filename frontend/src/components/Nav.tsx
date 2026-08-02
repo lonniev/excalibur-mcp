@@ -67,6 +67,7 @@ export default function Nav() {
       {tab("/", "Posts", true)}
       {tab("/snippets", "Snippets")}
       {tab("/new", "Compose")}
+      {tab("/performance", "Performance")}
       {tab("/scheduler", "Scheduler")}
       {tab("/wallet", "Wallet")}
 

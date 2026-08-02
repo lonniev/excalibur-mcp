@@ -30,7 +30,14 @@ _schema_done: bool = False
 
 # Bare domain table names. The wheel's vault._t() schema-prefixes each into the
 # operator's own role/schema, so the logical name stays the contract's ``posts``.
-_DOMAIN_TABLES: tuple[str, ...] = ("posts", "snippets", "scheduler_runs", "voice")
+_DOMAIN_TABLES: tuple[str, ...] = (
+        "posts",
+        "snippets",
+        "scheduler_runs",
+        "voice",
+        "post_metrics_snapshot",
+        "metrics_harvest_job",
+    )
 
 
 async def _get_vault() -> Any:
@@ -179,6 +186,71 @@ async def _ensure_domain_schema(vault: Any) -> None:
         "profile TEXT NOT NULL DEFAULT '', "
         "bans JSONB NOT NULL DEFAULT '[]', "
         "updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
+
+        # Append-only X post metrics. non_public_metrics / organic_metrics are
+        # only available for 30 days after authorship under user-context OAuth —
+        # whatever is not snapshotted here is permanently lost. Never upsert.
+        f"CREATE TABLE IF NOT EXISTS {t('post_metrics_snapshot')} ("
+        "id UUID PRIMARY KEY DEFAULT gen_random_uuid(), "
+        "post_id UUID NOT NULL, "
+        "tweet_id TEXT NOT NULL, "
+        "npub TEXT NOT NULL, "
+        "captured_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), "
+        "t_offset INT NOT NULL DEFAULT 0, "  # seconds since send
+        "impressions INT, "
+        "likes INT, "
+        "replies INT, "
+        "reposts INT, "
+        "quotes INT, "
+        "bookmarks INT, "
+        "url_link_clicks INT, "
+        "user_profile_clicks INT, "
+        "link_placement TEXT, "             # body | first_reply | none
+        "snippet_ids JSONB NOT NULL DEFAULT '[]', "
+        "voice_id TEXT, "
+        "cadence_key TEXT, "                # 15m | 1h | … | 28d
+        "raw JSONB)",
+
+        f"CREATE INDEX IF NOT EXISTS post_metrics_owner_post_idx "
+        f"ON {t('post_metrics_snapshot')} (npub, post_id, captured_at)",
+
+        f"CREATE INDEX IF NOT EXISTS post_metrics_tweet_idx "
+        f"ON {t('post_metrics_snapshot')} (tweet_id, captured_at)",
+
+        f"CREATE INDEX IF NOT EXISTS post_metrics_cadence_idx "
+        f"ON {t('post_metrics_snapshot')} (npub, cadence_key) "
+        "WHERE cadence_key IS NOT NULL",
+
+        # Decaying-cadence harvest queue. A missed tick is permanent data loss,
+        # so attempts + dead-letter (status='dead') replace silent drops.
+        f"CREATE TABLE IF NOT EXISTS {t('metrics_harvest_job')} ("
+        "id UUID PRIMARY KEY DEFAULT gen_random_uuid(), "
+        "post_id UUID NOT NULL, "
+        "tweet_id TEXT NOT NULL, "
+        "npub TEXT NOT NULL, "
+        "cadence_key TEXT NOT NULL, "
+        "due_at TIMESTAMPTZ NOT NULL, "
+        "sent_at TIMESTAMPTZ NOT NULL, "
+        "link_placement TEXT, "
+        "snippet_ids JSONB NOT NULL DEFAULT '[]', "
+        "voice_id TEXT, "
+        "status TEXT NOT NULL DEFAULT 'pending', "  # pending|harvesting|done|dead
+        "attempts INT NOT NULL DEFAULT 0, "
+        "last_attempt_at TIMESTAMPTZ, "
+        "last_error TEXT, "
+        "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), "
+        "updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
+
+        # One job per (post, cadence) — rescheduling the same send is a no-op.
+        f"CREATE UNIQUE INDEX IF NOT EXISTS metrics_harvest_post_cadence_uniq "
+        f"ON {t('metrics_harvest_job')} (post_id, cadence_key)",
+
+        f"CREATE INDEX IF NOT EXISTS metrics_harvest_due_idx "
+        f"ON {t('metrics_harvest_job')} (due_at) "
+        "WHERE status IN ('pending', 'harvesting')",
+
+        f"CREATE INDEX IF NOT EXISTS metrics_harvest_owner_idx "
+        f"ON {t('metrics_harvest_job')} (npub, status)",
     ]
     for stmt in stmts:
         try:

@@ -67,6 +67,19 @@ def _stub_ready():
         yield m
 
 
+@pytest.fixture(autouse=True)
+def _stub_harvest():
+    """Phase 3 (metrics harvest) is a no-op unless a test opts in — keeps ticks
+    off Neon and off patron OAuth while asserting post/resolve behaviour."""
+    with patch(
+        "excalibur_mcp.metrics_harvest.process_due_harvests",
+        AsyncMock(return_value={
+            "kind": "harvest", "captured": [], "failed": [], "processed": 0,
+        }),
+    ) as m:
+        yield m
+
+
 def _runtime(**over):
     rt = SimpleNamespace()
     rt.start_async_job = AsyncMock(return_value={"claim_check": "cc-1", "status": "pending"})
@@ -153,7 +166,26 @@ async def test_quiet_tick_records_a_heartbeat(_stub_run_ring):
         out = await scheduler.process_due_posts(rt)
     assert out["kind"] == "tick"
     assert out["processed"] == 0 and out["resolving"] == [] and out["contended"] == []
+    assert out["harvest"]["kind"] == "harvest"
     _stub_run_ring.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_harvest_phase_runs_after_resolve(_stub_harvest):
+    """Metrics harvest is phase 3 of every tick — same cron, no separate daemon."""
+    rt = _runtime()
+    _stub_harvest.return_value = {
+        "kind": "harvest",
+        "captured": [{"job_id": "j1", "outcome": "captured"}],
+        "failed": [],
+        "processed": 1,
+    }
+    with _list_due():
+        out = await scheduler.process_due_posts(rt)
+    _stub_harvest.assert_awaited_once_with(rt)
+    assert out["harvest"]["processed"] == 1
+    assert out["processed"] == 1  # resolve 0 + harvest 1
+    assert out["who"]["contract"] == "post-then-resolve-harvest/1"
 
 
 @pytest.mark.asyncio

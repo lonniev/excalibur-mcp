@@ -316,12 +316,23 @@ class XClient:
         """Fetch the authenticated user's X profile (v2 ``/users/me``).
 
         Returns ``{id, username, name, profile_image_url}`` — used to show the
-        real @handle on the editor's tweet-card preview."""
+        real @handle on the editor's tweet-card preview. Pass
+        ``include_public_metrics=True`` to also return ``followers_count``."""
+        return await self._get_me(include_public_metrics=False)
+
+    async def get_me_with_metrics(self) -> dict:
+        """Like ``get_me`` plus ``followers_count`` from ``public_metrics``."""
+        return await self._get_me(include_public_metrics=True)
+
+    async def _get_me(self, *, include_public_metrics: bool) -> dict:
         url = f"{X_API_BASE}/users/me"
+        fields = "profile_image_url,name,username"
+        if include_public_metrics:
+            fields += ",public_metrics"
         async with httpx.AsyncClient(timeout=X_API_TIMEOUT) as client:
             response = await client.get(
                 url,
-                params={"user.fields": "profile_image_url,name,username"},
+                params={"user.fields": fields},
                 headers={"Authorization": self._auth_header()},
             )
 
@@ -339,9 +350,93 @@ class XClient:
             )
 
         data = response.json().get("data", {})
-        return {
+        out = {
             "id": data.get("id", ""),
             "username": data.get("username", ""),
             "name": data.get("name", ""),
             "profile_image_url": data.get("profile_image_url", ""),
+        }
+        pm = data.get("public_metrics") or {}
+        if isinstance(pm, dict) and "followers_count" in pm:
+            out["followers_count"] = pm.get("followers_count")
+        return out
+
+    async def get_tweet_metrics(self, tweet_id: str) -> dict:
+        """Fetch engagement metrics for a tweet the authenticated user authored.
+
+        Requests ``public_metrics``, ``non_public_metrics``, and
+        ``organic_metrics``. The non-public / organic fields are only available
+        for ~30 days after creation under OAuth 2.0 user context — after that
+        they are gone permanently. Prefer organic → non_public → public for
+        impression / click counts.
+        """
+        tid = str(tweet_id or "").strip()
+        if not tid or not tid.isdigit():
+            raise XAPIError(0, f"Invalid tweet_id: {tweet_id!r}")
+
+        url = f"{X_API_BASE}/tweets/{tid}"
+        params = {
+            "tweet.fields": (
+                "public_metrics,non_public_metrics,organic_metrics,"
+                "created_at,conversation_id"
+            ),
+        }
+        async with httpx.AsyncClient(timeout=X_API_TIMEOUT) as client:
+            response = await client.get(
+                url,
+                params=params,
+                headers={"Authorization": self._auth_header()},
+            )
+
+        if response.status_code == 429:
+            body = _safe_json(response)
+            raise XAPIError(429, _x_says(body, "Rate limited — try again later"), body)
+        if response.status_code in (401, 403):
+            body = _safe_json(response)
+            raise XAPIError(
+                response.status_code, _x_says(body, "Authentication failed"), body,
+            )
+        if response.status_code == 404:
+            body = _safe_json(response)
+            raise XAPIError(404, _x_says(body, "Tweet not found"), body)
+        if response.status_code != 200:
+            body = _safe_json(response)
+            raise XAPIError(
+                response.status_code,
+                _x_says(body, f"Unexpected response: {response.status_code}"),
+                body,
+            )
+
+        raw = response.json()
+        data = raw.get("data") or {}
+        if not isinstance(data, dict):
+            data = {}
+        public = data.get("public_metrics") or {}
+        non_public = data.get("non_public_metrics") or {}
+        organic = data.get("organic_metrics") or {}
+
+        def _pick(*dicts: dict, key: str) -> int | None:
+            for d in dicts:
+                if isinstance(d, dict) and d.get(key) is not None:
+                    try:
+                        return int(d[key])
+                    except (TypeError, ValueError):
+                        continue
+            return None
+
+        # Prefer organic (author-context full set) then non_public then public.
+        impressions = _pick(organic, non_public, public, key="impression_count")
+        return {
+            "tweet_id": data.get("id") or tid,
+            "conversation_id": data.get("conversation_id"),
+            "created_at": data.get("created_at"),
+            "impressions": impressions,
+            "likes": _pick(organic, public, key="like_count"),
+            "replies": _pick(organic, public, key="reply_count"),
+            "reposts": _pick(organic, public, key="retweet_count"),
+            "quotes": _pick(public, key="quote_count"),
+            "bookmarks": _pick(public, key="bookmark_count"),
+            "url_link_clicks": _pick(organic, non_public, key="url_link_clicks"),
+            "user_profile_clicks": _pick(organic, non_public, key="user_profile_clicks"),
+            "raw": raw if isinstance(raw, dict) else {"data": data},
         }

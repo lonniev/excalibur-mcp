@@ -514,6 +514,25 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
             "tweet_url": tweet_url, "reason": "claim_reassigned_mid_publish",
         })
 
+    # Schedule decaying-cadence metrics harvests. Best-effort and after the row
+    # is durable: a harvest miss is recoverable on the next operator sweep, a
+    # lost send is not. X drops non_public/organic metrics after 30 days.
+    try:
+        from excalibur_mcp.metrics_harvest import schedule_after_send
+
+        await schedule_after_send(
+            post_id=post_id,
+            tweet_id=(result or {}).get("tweet_id") if isinstance(result, dict) else None,
+            tweet_url=tweet_url,
+            npub=owner,
+            sent_at=sent_at,
+            doc=occurrence_doc,
+            text=text,
+            voice_id=owner,
+        )
+    except Exception:  # noqa: BLE001 — never fail a publication over harvest setup
+        logger.exception("publisher: metrics schedule failed for %s", post_id)
+
     # Publish the Nostr companion notes LAST — the send is already recorded, so a
     # slow relay never delays it and a relay miss never un-sends the live tweet.
     nostr_result = await _publish_notes(runtime, owner, note_messages) if note_messages else None
