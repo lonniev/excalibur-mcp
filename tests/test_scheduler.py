@@ -38,6 +38,24 @@ def _stub_claim():
         yield m
 
 
+def _ready(*ids):
+    """Finished bodies waiting for Phase 1 to post them."""
+    return patch.object(
+        scheduler.posts_db, "list_resolved_due",
+        AsyncMock(return_value=[{"post_id": i, "npub": NPUB} for i in ids]),
+    )
+
+
+@pytest.fixture(autouse=True)
+def _stub_post_claim():
+    """Phase 1 claims a RESOLVED body. Default: the claim wins."""
+    with patch.object(
+        scheduler.posts_db, "claim_for_post",
+        AsyncMock(side_effect=lambda pid: {"post_id": pid}),
+    ) as m:
+        yield m
+
+
 @pytest.fixture(autouse=True)
 def _stub_ready():
     """Phase 1 (posting finished bodies) is empty unless a test says otherwise.
@@ -251,3 +269,52 @@ async def test_the_heartbeat_carries_a_marker_the_environment_cannot_fake(_stub_
     # and the shape it names is the shape actually produced
     assert "posted" in out and "resolving" in out
     assert "launched" not in out, "the single-phase key must be gone"
+
+
+@pytest.mark.asyncio
+async def test_phase_one_posts_a_resolved_body(_stub_run_ring, _stub_post_claim):
+    """Phase 1 must CLAIM the state it listed.
+
+    It listed `resolved` rows and then called `claim_due_post`, which accepts
+    only `scheduled` (or a stale `sending`) — so every claim returned None and
+    the poster skipped every post, silently, forever. Two finished posts sat
+    unsent for hours. The default `_stub_ready` returns [] , so no test ever put
+    a row through this path until this one.
+    """
+    rt = _runtime()
+    posted = AsyncMock(return_value={"outcome": "posted"})
+    with _list_due(), _ready("p1", "p2"), \
+         patch("excalibur_mcp.publisher.publish_one", posted):
+        out = await scheduler.process_due_posts(rt)
+
+    assert _stub_post_claim.await_count == 2, "each ready body must be claimed"
+    assert posted.await_count == 2, "and actually posted"
+    assert [x["post_id"] for x in out["posted"]] == ["p1", "p2"]
+    assert out["processed"] == 2
+
+
+@pytest.mark.asyncio
+async def test_a_body_claimed_by_another_tick_is_not_posted_twice(
+    _stub_run_ring, _stub_post_claim,
+):
+    _stub_post_claim.side_effect = lambda pid: None
+    rt = _runtime()
+    posted = AsyncMock(return_value={"outcome": "posted"})
+    with _list_due(), _ready("p1"), \
+         patch("excalibur_mcp.publisher.publish_one", posted):
+        out = await scheduler.process_due_posts(rt)
+
+    posted.assert_not_awaited()
+    assert out["posted"] == []
+
+
+@pytest.mark.asyncio
+async def test_one_bad_post_does_not_stop_the_rest(_stub_run_ring):
+    rt = _runtime()
+    posted = AsyncMock(side_effect=[RuntimeError("boom"), {"outcome": "posted"}])
+    with _list_due(), _ready("p1", "p2"), \
+         patch("excalibur_mcp.publisher.publish_one", posted):
+        out = await scheduler.process_due_posts(rt)
+
+    assert [x["outcome"] for x in out["posted"]] == ["error", "posted"]
+    assert "boom" in out["posted"][0]["reason"]
