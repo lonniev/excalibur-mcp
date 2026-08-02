@@ -127,15 +127,51 @@ def _advance(sent_at: datetime, recurrence: dict[str, Any]) -> datetime | None:
 
 
 def _next_state(
-    sent_at: datetime, recurrence: dict[str, Any] | None, cease_at: Any,
+    slot: datetime | None,
+    recurrence: dict[str, Any] | None,
+    cease_at: Any,
+    *,
+    now: datetime | None = None,
 ) -> tuple[str, datetime | None]:
-    """Return ``(next_status, next_publish_at)`` after a successful fire."""
+    """Return ``(next_status, next_publish_at)`` after a successful fire.
+
+    Advances from the SLOT the post was scheduled for, never from the moment it
+    happened to succeed. Those differ by however long the tick, the model and X
+    took, and using the second compounds that delay into every future occurrence:
+    a weekly Sunday-morning post drifts a few minutes each week until it is
+    posting Wednesday evening. Observed live on post ``0314fe59``.
+
+    Then it walks the pattern forward until it lands **after now**. A slot missed
+    while the post was failing is simply skipped — the next occurrence is the next
+    real one, not a backlog of dates already in the past. That also means a post
+    recovering from a multi-day outage rejoins its own rhythm instead of firing
+    repeatedly to catch up.
+
+    ``slot`` may be ``None`` for a legacy row with no ``publish_at``; the caller
+    passes the send time in that case, which is the best anchor available.
+    """
     if not recurrence:
         return "sent", None
-    nxt = _advance(sent_at, recurrence)
+    if slot is None:
+        return "sent", None
+
+    ref = now or datetime.now(timezone.utc)
+    cease = _parse_iso(cease_at)
+
+    nxt = _advance(slot, recurrence)
     if nxt is None:
         return "sent", None
-    cease = _parse_iso(cease_at)
+
+    # Skip whole missed occurrences rather than scheduling into the past. Bounded
+    # so a malformed recurrence can never spin: a year of daily slots is far more
+    # than any real outage, and anything beyond it is a broken pattern, not a gap.
+    for _ in range(400):
+        if nxt is None or nxt > ref:
+            break
+        nxt = _advance(nxt, recurrence)
+    if nxt is None or nxt <= ref:
+        return "sent", None
+
     if cease is not None and nxt > cease:
         return "sent", None
     return "scheduled", nxt
@@ -418,8 +454,11 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
 
     # 5. Stamp the fire and reschedule (or retire past cease_at).
     sent_at = _now()
+    # Anchored on the SCHEDULED slot, not on `sent_at`. See _next_state: using
+    # the success moment compounds every delay into the next occurrence.
+    slot = _parse_iso(row.get("publish_at")) or sent_at
     next_status, next_publish = _next_state(
-        sent_at, _as_dict(row.get("recurrence")), row.get("cease_at"),
+        slot, _as_dict(row.get("recurrence")), row.get("cease_at"), now=sent_at,
     )
     tweet_url = (result or {}).get("tweet_url") if isinstance(result, dict) else None
 
