@@ -1352,3 +1352,91 @@ export async function redeemCoupon(code: string): Promise<RedeemCouponResult> {
 export async function forgetCoupon(couponId: string): Promise<ForgetCouponResult> {
   return callTool<ForgetCouponResult>("forget_coupon", { coupon_id: couponId });
 }
+
+// ─── Post metrics / performance ──────────────────────────────────────────
+
+export interface MetricsSnapshot {
+  snapshot_id?: string;
+  captured_at?: string;
+  t_offset?: number;
+  cadence_key?: string;
+  impressions?: number | null;
+  likes?: number | null;
+  replies?: number | null;
+  reposts?: number | null;
+  quotes?: number | null;
+  bookmarks?: number | null;
+  url_link_clicks?: number | null;
+  user_profile_clicks?: number | null;
+  link_placement?: string | null;
+  snippet_ids?: string[];
+  voice_id?: string | null;
+  tweet_id?: string;
+}
+
+export interface GetPostMetricsResult {
+  success?: boolean;
+  post_id?: string;
+  snapshots?: MetricsSnapshot[];
+  tweet_url?: string | null;
+  note?: string;
+  error?: string;
+  error_code?: string;
+}
+
+export interface PerformanceSparkPoint {
+  t_offset?: number;
+  cadence_key?: string;
+  impressions?: number | null;
+  likes?: number | null;
+  captured_at?: string;
+}
+
+export interface PerformancePost {
+  post_id: string;
+  tweet_id?: string;
+  link_placement?: string | null;
+  latest_impressions?: number | null;
+  latest_likes?: number | null;
+  latest_replies?: number | null;
+  latest_reposts?: number | null;
+  url_link_clicks?: number | null;
+  user_profile_clicks?: number | null;
+  escape_velocity?: number | null;
+  breakout_ratio?: number | null;
+  sparkline?: PerformanceSparkPoint[];
+}
+
+export interface PostPerformanceResult {
+  success?: boolean;
+  npub?: string;
+  follower_count?: number | null;
+  posts?: PerformancePost[];
+  cohorts?: {
+    link_placement?: Record<string, number>;
+    voice?: Record<string, number>;
+    snippet?: Record<string, number>;
+  };
+  corpus?: {
+    snapshot_count?: number;
+    post_count?: number;
+    rolling_median_t15?: number | null;
+  };
+  error?: string;
+}
+
+export async function getPostMetrics(postId: string): Promise<GetPostMetricsResult> {
+  return callTool<GetPostMetricsResult>("get_post_metrics", { post_id: postId });
+}
+
+export async function getPostPerformance(): Promise<PostPerformanceResult> {
+  return callTool<PostPerformanceResult>("post_performance", {});
+}
+
+export async function getPostPerformanceInfographic(): Promise<{
+  success?: boolean;
+  svg?: string;
+  error?: string;
+}> {
+  return callTool("post_performance_infographic", {});
+}

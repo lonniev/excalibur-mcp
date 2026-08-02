@@ -72,7 +72,7 @@ RESOLVE_RESULT_TTL_S = 3600
 # cached wheel layer serving old bytes under a new SHA. The commit read as
 # confirmation and confirmed nothing. Bump this string whenever the summary
 # changes, and a stale layer becomes visible in the heartbeat itself.
-_TICK_CONTRACT = "post-then-resolve/1"
+_TICK_CONTRACT = "post-then-resolve-harvest/1"
 
 
 def _who() -> dict[str, str]:
@@ -216,13 +216,26 @@ async def process_due_posts(runtime: Any) -> dict[str, Any]:
             entry["degraded_reason"] = claim.get("degraded_reason")
         resolving.append(entry)
 
+    # -- Phase 3: harvest post metrics (decaying cadence; missed = lost) -----
+    # X drops non_public/organic metrics after 30 days. Drain due harvest jobs
+    # on the same tick that posts/resolves so no separate cron is required.
+    harvest: dict[str, Any] = {"kind": "harvest", "captured": [], "failed": [], "processed": 0}
+    try:
+        from excalibur_mcp.metrics_harvest import process_due_harvests
+
+        harvest = await process_due_harvests(runtime)
+    except Exception:  # noqa: BLE001 — harvest must never sink a publish tick
+        logger.exception("scheduler: metrics harvest phase failed")
+
     summary = {"kind": "tick", "who": _who(),
                "posted": posted, "resolving": resolving, "contended": contended,
-               "processed": len(posted) + len(resolving),
+               "harvest": harvest,
+               "processed": len(posted) + len(resolving) + int(harvest.get("processed") or 0),
                "upcoming": await _upcoming(now)}
     logger.info(
-        "scheduler: posted=%d resolving=%d contended=%d",
+        "scheduler: posted=%d resolving=%d contended=%d harvest=%d",
         len(posted), len(resolving), len(contended),
+        int(harvest.get("processed") or 0),
     )
     try:
         await scheduler_runs.complete_run(run_id, summary)

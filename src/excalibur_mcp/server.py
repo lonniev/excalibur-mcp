@@ -1399,6 +1399,108 @@ runtime.register_job_spec(
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Post-metrics harvest + derived reach analytics
+# ---------------------------------------------------------------------------
+
+
+@tool
+@runtime.paid_tool(capability_uuid("harvest_metrics"), catch_errors=True)
+async def harvest_metrics(
+    npub: Annotated[
+        str,
+        Field(description="The OPERATOR's npub (npub1...); this tool is operator-only."),
+    ] = "",
+    dpop_token: str = "",
+    requeue_dead_id: Annotated[
+        str,
+        Field(description="Optional dead-letter job UUID to requeue before the sweep."),
+    ] = "",
+) -> dict:
+    """Operator-only: one cadence-aware metrics harvest sweep.
+
+    Drains due ``metrics_harvest_job`` rows (t+15m … t+28d), fetches X
+    ``non_public_metrics`` / ``organic_metrics`` under each patron's OAuth
+    context, and appends ``post_metrics_snapshot`` rows. A missed cadence is
+    permanent data loss — failed jobs retry up to 5 attempts then land in the
+    dead-letter queue; pass ``requeue_dead_id`` to retry one. Also runs as
+    phase 3 of every ``process_scheduled_posts`` tick.
+    """
+    from excalibur_mcp.tools import metrics as metrics_tools
+
+    return await metrics_tools.harvest(
+        runtime,
+        capability_uuid("harvest_metrics"),
+        npub=npub,
+        requeue_dead_id=requeue_dead_id or "",
+    )
+
+
+@tool
+@runtime.paid_tool(capability_uuid("get_post_metrics"), catch_errors=True)
+async def get_post_metrics(
+    post_id: Annotated[str, Field(description="The post UUID whose snapshot series to return.")],
+    npub: Annotated[str, Field(description="Your npub (npub1...).")] = "",
+    dpop_token: str = "",
+) -> dict:
+    """Patron: raw metrics snapshot series for one owned post.
+
+    Returns the append-only ``post_metrics_snapshot`` rows (impressions, likes,
+    clicks, cadence_key, t_offset, link_placement, snippet_ids) ordered by
+    capture time. Empty when the post has not been harvested yet.
+    """
+    from excalibur_mcp.tools import metrics as metrics_tools
+
+    return await metrics_tools.get_post_metrics(
+        runtime,
+        capability_uuid("get_post_metrics"),
+        post_id=post_id,
+        npub=npub,
+    )
+
+
+@tool
+@runtime.paid_tool(capability_uuid("post_performance"), catch_errors=True)
+async def post_performance(
+    npub: Annotated[str, Field(description="Your npub (npub1...).")] = "",
+    dpop_token: str = "",
+) -> dict:
+    """Patron: derived reach scores across your harvested post corpus.
+
+    Computes escape velocity (t+15m vs rolling median), breakout ratio
+    (impressions ÷ followers), link-placement cohort medians, and
+    snippet/voice attribution from the durable snapshot store — signals that
+    come from owning the curve, not proxying a single X endpoint.
+    """
+    from excalibur_mcp.tools import metrics as metrics_tools
+
+    return await metrics_tools.post_performance(
+        runtime,
+        capability_uuid("post_performance"),
+        npub=npub,
+    )
+
+
+@tool
+@runtime.paid_tool(capability_uuid("post_performance_infographic"), catch_errors=True)
+async def post_performance_infographic(
+    npub: Annotated[str, Field(description="Your npub (npub1...).")] = "",
+    dpop_token: str = "",
+) -> dict:
+    """Patron: SVG infographic of post performance (gold-steel theme).
+
+    Mirrors ``account_statement_infographic`` — a dark-themed SVG of corpus
+    size, median t+15m impressions, top posts, and link-placement cohorts.
+    """
+    from excalibur_mcp.tools import metrics as metrics_tools
+
+    return await metrics_tools.post_performance_infographic(
+        runtime,
+        capability_uuid("post_performance_infographic"),
+        npub=npub,
+    )
+
+
 @tool
 @runtime.paid_tool(capability_uuid("process_scheduled_posts"), catch_errors=True)
 async def process_scheduled_posts(
