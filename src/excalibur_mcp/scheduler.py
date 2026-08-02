@@ -62,17 +62,31 @@ RESOLVE_LEAD_SECONDS = 30 * 60
 RESOLVE_RESULT_TTL_S = 3600
 
 
+# The shape of the summary this module produces. A LITERAL in the source, so it
+# travels only with the code — unlike the version and the commit, which are read
+# from the package metadata and the environment and therefore describe what the
+# container was BUILT for, not what Python is executing.
+#
+# That distinction is not academic. On 2026-08-02 twelve consecutive ticks
+# reported commit a9a4ca3 while emitting the previous build's summary shape: a
+# cached wheel layer serving old bytes under a new SHA. The commit read as
+# confirmation and confirmed nothing. Bump this string whenever the summary
+# changes, and a stale layer becomes visible in the heartbeat itself.
+_TICK_CONTRACT = "post-then-resolve/1"
+
+
 def _who() -> dict[str, str]:
     """Who is answering — the deployed identity behind this tick.
 
     A heartbeat that only says "alive" doesn't say WHICH build is alive, and this
     service has been bitten by a container serving cached bytes while reporting a
-    fresh version. The commit is the honest half of that pair, so every tick
-    carries both and the log can be read as evidence rather than reassurance.
+    fresh version. The commit does NOT settle that: it comes from the
+    environment, so it describes the build request rather than the running code.
+    ``contract`` is the half that cannot lie, because it is compiled in.
     """
     from excalibur_mcp import __version__
 
-    who = {"version": __version__}
+    who = {"version": __version__, "contract": _TICK_CONTRACT}
     sha = os.environ.get("FASTMCP_CLOUD_GIT_COMMIT_SHA", "")
     if sha:
         who["commit"] = sha[:7]

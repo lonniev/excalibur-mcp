@@ -233,3 +233,21 @@ async def test_a_broken_forecast_never_fails_the_tick():
         out = await scheduler.process_due_posts(rt)
     assert [x["post_id"] for x in out["resolving"]] == ["p1"]  # the work still happened
     assert out["upcoming"] == {}
+
+
+@pytest.mark.asyncio
+async def test_the_heartbeat_carries_a_marker_the_environment_cannot_fake(_stub_run_ring):
+    """`version` and `commit` describe the build REQUEST — they come from package
+    metadata and an env var, so a container serving a cached wheel layer reports
+    them happily while executing old code. That happened on 2026-08-02: twelve
+    ticks claimed commit a9a4ca3 while emitting the previous summary shape.
+
+    `contract` is a literal in this module, so it travels only with the code."""
+    rt = _runtime()
+    with _list_due():
+        out = await scheduler.process_due_posts(rt)
+
+    assert out["who"]["contract"] == scheduler._TICK_CONTRACT
+    # and the shape it names is the shape actually produced
+    assert "posted" in out and "resolving" in out
+    assert "launched" not in out, "the single-phase key must be gone"
