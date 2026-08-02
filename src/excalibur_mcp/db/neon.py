@@ -100,6 +100,23 @@ async def _ensure_domain_schema(vault: Any) -> None:
         f"ALTER TABLE {t('posts')} ADD COLUMN IF NOT EXISTS last_attempt_detail TEXT",
         f"ALTER TABLE {t('posts')} ADD COLUMN IF NOT EXISTS template_id UUID",
 
+        # Two-phase publishing (resolve, then post). Only resolution is slow —
+        # a dynamic block runs 90-210s against an LLM — while posting is one
+        # HTTPS call and two row writes. Carrying both in one claim forced a
+        # 45-minute lease over work that is mostly milliseconds, and made every
+        # publisher a long-runner that dies with its container.
+        #
+        # `resolved_at` marks the body complete and is the poster's readiness
+        # test; `resolve_attempts` stops a permanently-failing block from
+        # burning the owner's LLM fare on every tick, forever.
+        f"ALTER TABLE {t('posts')} ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ",
+        f"ALTER TABLE {t('posts')} ADD COLUMN IF NOT EXISTS resolve_attempts INT NOT NULL DEFAULT 0",
+
+        # The poster's work-list: bodies finished resolving and now due. Narrow
+        # and partial so the common tick is an index-only scan.
+        f"CREATE INDEX IF NOT EXISTS posts_resolved_due_idx ON {t('posts')} "
+        "(publish_at) WHERE status = 'resolved'",
+
         f"CREATE INDEX IF NOT EXISTS posts_owner_idx ON {t('posts')} (npub, status)",
 
         f"CREATE INDEX IF NOT EXISTS posts_due_idx ON {t('posts')} (status, publish_at) "

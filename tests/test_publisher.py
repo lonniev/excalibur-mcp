@@ -412,61 +412,7 @@ async def test_empty_text_cache_held_early():
 
 # -- dynamic blocks ----------------------------------------------------------
 
-@pytest.mark.asyncio
-async def test_dynamic_block_resolved_then_posted():
-    rt = _dynamic_runtime()
-    client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "tw9", "tweet_url": "u"}))
-    with _claimed(doc=_DYNAMIC_DOC, recurrence=None, cease_at=None), \
-         patch.object(publisher.posts_db, "mark_sent", AsyncMock()) as mark, \
-         patch.object(publisher, "_owner_voice", AsyncMock(return_value=("", []))), \
-         patch("excalibur_mcp.resolve.resolve_block", AsyncMock(return_value="BTC at $64,000")), \
-         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
-        out = await publisher.publish_one(rt, "p1")
-    assert out["outcome"] == "posted"
-    posted_text = client.post_tweet.await_args.args[0]
-    assert "Markets update." in posted_text and "BTC at $64,000" in posted_text
-    assert rt._apply_billing.await_count == 2  # resolve fare + post fare
-    assert mark.await_args.args[2] == "sent"
-    rt.rollback_debit.assert_not_awaited()
 
-
-@pytest.mark.asyncio
-async def test_author_runtime_limit_is_honored_not_clipped():
-    """The whole point of publishing as a background job: a block gets the time
-    its author asked for, because no HTTP request is waiting on it."""
-    rt = _dynamic_runtime()
-    doc = {"blocks": [{"text": "a long research prompt", "flags": [], "dynamic": True,
-                       "fallback": "x", "runtimeLimit": 600}]}
-    client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "t", "tweet_url": "u"}))
-    rb = AsyncMock(return_value="deep answer")
-    with _claimed(doc=doc, recurrence=None, cease_at=None), \
-         patch.object(publisher.posts_db, "mark_sent", AsyncMock()), \
-         patch.object(publisher, "_owner_voice", AsyncMock(return_value=("", []))), \
-         patch("excalibur_mcp.resolve.resolve_block", rb), \
-         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
-        await publisher.publish_one(rt, "p1")
-    assert rb.await_args.kwargs["timeout_seconds"] == 600
-
-
-@pytest.mark.asyncio
-async def test_dynamic_resolve_failure_uses_fallback_and_records_why():
-    """The tweet still goes out on the author's fallback (their choice), but the
-    outcome says the prompt never made it — with the budget that bounded it."""
-    rt = _dynamic_runtime()
-    client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "t", "tweet_url": "u"}))
-    with _claimed(doc=_DYNAMIC_DOC, recurrence=None, cease_at=None), \
-         patch.object(publisher.posts_db, "mark_sent", AsyncMock()), \
-         patch.object(publisher, "_owner_voice", AsyncMock(return_value=("", []))), \
-         patch("excalibur_mcp.resolve.resolve_block", AsyncMock(side_effect=TimeoutError("slow"))), \
-         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
-        out = await publisher.publish_one(rt, "p1")
-
-    assert out["outcome"] == "posted"
-    notes = out["fallbacks"]
-    assert len(notes) == 1 and notes[0]["reason"].startswith("resolve_timed_out_at_")
-    assert notes[0]["budget_s"] > 0
-    posted_text = client.post_tweet.await_args.args[0]
-    assert "Markets moving fast." in posted_text and "BTC/USD" not in posted_text
 
 
 @pytest.mark.asyncio
@@ -483,100 +429,9 @@ async def test_successful_resolve_records_no_fallback_noise():
     assert "fallbacks" not in out
 
 
-@pytest.mark.asyncio
-async def test_dynamic_resolve_failure_no_fallback_holds_and_refunds(_stub_mark_attempt):
-    rt = _dynamic_runtime()
-    doc = {"blocks": [{"text": "the price now", "flags": [], "dynamic": True}]}  # no fallback
-    client = SimpleNamespace(post_tweet=AsyncMock())
-    with _claimed(doc=doc), \
-         patch.object(publisher.posts_db, "mark_sent", AsyncMock()) as mark, \
-         patch.object(publisher, "_owner_voice", AsyncMock(return_value=("", []))), \
-         patch("excalibur_mcp.resolve.resolve_block", AsyncMock(side_effect=RuntimeError("down"))), \
-         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
-        out = await publisher.publish_one(rt, "p1")
-    assert out["outcome"] == "held" and out["reason"] == "dynamic_resolve_failed"
-    client.post_tweet.assert_not_awaited()  # never post a gap
-    mark.assert_not_called()
-    rt.rollback_debit.assert_awaited_once()  # resolve fare refunded
-    assert rt._apply_billing.await_count == 1  # post fare never charged
 
 
-@pytest.mark.asyncio
-async def test_multiple_dynamic_blocks_resolve_in_parallel():
-    rt = _dynamic_runtime()
-    doc = {"blocks": [
-        {"text": "weather now", "flags": [], "dynamic": True, "fallback": "fa"},
-        {"text": "btc price now", "flags": [], "dynamic": True, "fallback": "fb"},
-        {"text": "static tail", "flags": []},
-    ]}
-    client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "t", "tweet_url": "u"}))
-    rb = AsyncMock(side_effect=["Sunny 72F", "BTC $64k"])
-    with _claimed(doc=doc, recurrence=None, cease_at=None), \
-         patch.object(publisher.posts_db, "mark_sent", AsyncMock()), \
-         patch.object(publisher, "_owner_voice", AsyncMock(return_value=("", []))), \
-         patch("excalibur_mcp.resolve.resolve_block", rb), \
-         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
-        out = await publisher.publish_one(rt, "p1")
-    assert out["outcome"] == "posted" and rb.await_count == 2
-    posted_text = client.post_tweet.await_args.args[0]
-    assert "Sunny 72F" in posted_text and "BTC $64k" in posted_text and "static tail" in posted_text
 
-
-@pytest.mark.asyncio
-async def test_dynamic_block_passes_author_web_access_to_resolver():
-    rt = _dynamic_runtime()
-    doc = {"blocks": [{
-        "text": "the current BTC price", "flags": [], "dynamic": True, "fallback": "x",
-        "domains": "coindesk.com, kraken.com", "maxFetches": 9,
-    }]}
-    client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "t", "tweet_url": "u"}))
-    rb = AsyncMock(return_value="BTC $64k")
-    with _claimed(doc=doc, recurrence=None, cease_at=None), \
-         patch.object(publisher.posts_db, "mark_sent", AsyncMock()), \
-         patch.object(publisher, "_owner_voice", AsyncMock(return_value=("", []))), \
-         patch("excalibur_mcp.resolve.resolve_block", rb), \
-         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
-        await publisher.publish_one(rt, "p1")
-    assert rb.await_args.kwargs["allowed_domains"] == ["coindesk.com", "kraken.com"]
-    assert rb.await_args.kwargs["max_fetches"] == 9
-
-
-@pytest.mark.asyncio
-async def test_dynamic_recurring_snapshots_static_keeps_template_dynamic():
-    """A RECURRING post with a dynamic block fires to a STATIC snapshot (resolved
-    text, no dynamic flag) back-linked to the template, while the template keeps
-    its dynamic doc for the next fire."""
-    rt = _dynamic_runtime()
-    client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "twd", "tweet_url": "u"}))
-    with _claimed(doc=_DYNAMIC_DOC, publish_at="2026-07-10T12:00:00+00:00"), \
-         patch.object(publisher.posts_db, "record_occurrence_and_advance",
-                      AsyncMock(return_value=True)) as occ, \
-         patch.object(publisher, "_owner_voice", AsyncMock(return_value=("", []))), \
-         patch("excalibur_mcp.resolve.resolve_block", AsyncMock(return_value="BTC at $64,000")), \
-         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
-        out = await publisher.publish_one(rt, "p1")
-    assert out["outcome"] == "posted"
-    snap_blocks = occ.await_args.kwargs["doc"]["blocks"]
-    assert not any(b.get("dynamic") for b in snap_blocks)
-    assert occ.await_args.kwargs["text_cache"] == "Markets update.\n\nBTC at $64,000"
-    assert occ.await_args.kwargs["template_id"] == "p1"
-    # The template advances inside the SAME call — it is not passed a doc, so the
-    # dynamic original is preserved by construction rather than by care.
-    assert "doc" not in {k for k in occ.await_args.kwargs if k == "template_doc"}
-    assert occ.await_args.kwargs["next_publish_at"] is not None
-
-
-@pytest.mark.asyncio
-async def test_dynamic_insufficient_balance_for_resolve_holds(_stub_mark_attempt):
-    rt = _runtime(billing={"success": False, "error_code": "insufficient_balance"})
-    rt.load_credentials = AsyncMock(return_value={"llm_api_key": "k"})
-    client = SimpleNamespace(post_tweet=AsyncMock())
-    with _claimed(doc=_DYNAMIC_DOC), \
-         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
-        out = await publisher.publish_one(rt, "p1")
-    assert out["reason"] == "insufficient_balance"
-    assert out["stage"] == "resolve"  # which charge refused, without faking the reason
-    client.post_tweet.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -749,36 +604,6 @@ async def test_recurring_occurrence_snapshot_carries_substituted_note():
     nostr_snap = [b for b in snap_blocks if b.get("nostr")]
     assert nostr_snap and nostr_snap[0]["text"] == f"Read the thread: {url}"
 
-
-@pytest.mark.asyncio
-async def test_nostr_block_excluded_from_dynamic_tweet_text():
-    """A post carrying both a dynamic and a Nostr block: the dynamic text enters
-    the tweet, the Nostr copy never does — it publishes as its own note."""
-    rt = _dynamic_runtime()
-    doc = {"blocks": [
-        {"text": "the BTC price now", "flags": [], "dynamic": True, "fallback": "fb"},
-        {"text": "Companion note {{tweet_url}}", "flags": [], "nostr": True},
-    ]}
-    url = "https://x.com/i/status/twx"
-    client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "twx", "tweet_url": url}))
-    pub = Mock(return_value={"success": True})
-    with _claimed(doc=doc, recurrence=None, cease_at=None), \
-         patch.object(publisher.posts_db, "mark_sent", AsyncMock()), \
-         patch.object(publisher, "_owner_voice", AsyncMock(return_value=("", []))), \
-         patch("excalibur_mcp.resolve.resolve_block", AsyncMock(return_value="BTC $64k")), \
-         patch("excalibur_mcp.nostr_note.publish_note", pub), \
-         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
-        await publisher.publish_one(rt, "p1")
-    posted_text = client.post_tweet.await_args.args[0]
-    assert "BTC $64k" in posted_text and "Companion note" not in posted_text
-    assert pub.call_args.args[0] == f"Companion note {url}"
-
-
-def test_stated_falls_back_when_a_call_site_hands_over_nothing():
-    assert publisher._stated("insufficient_balance", "p1") == "insufficient_balance"
-    assert publisher._stated("  spaced  ", "p1") == "spaced"
-    for blank in (None, "", "   "):
-        assert publisher._stated(blank, "p1") == "unreported"
 
 
 @pytest.mark.asyncio

@@ -28,11 +28,23 @@ def _stub_run_ring():
 
 @pytest.fixture(autouse=True)
 def _stub_claim():
-    """Each due post is claimed atomically before launch. Default: the claim
-    wins; a test overrides to None to simulate another tick already owning it."""
+    """Each template is claimed atomically before a resolver is launched.
+    Default: the claim wins; a test overrides to None to simulate another tick
+    already owning it."""
     with patch.object(
-        scheduler.posts_db, "claim_due_post",
+        scheduler.posts_db, "claim_for_resolve",
         AsyncMock(side_effect=lambda pid: {"post_id": pid}),
+    ) as m:
+        yield m
+
+
+@pytest.fixture(autouse=True)
+def _stub_ready():
+    """Phase 1 (posting finished bodies) is empty unless a test says otherwise.
+    Keeping it empty also keeps `publish_one` — and with it the whole server
+    bootstrap — out of a tick that has nothing to post."""
+    with patch.object(
+        scheduler.posts_db, "list_resolved_due", AsyncMock(return_value=[]),
     ) as m:
         yield m
 
@@ -50,25 +62,28 @@ def _due(*ids):
 
 
 def _list_due(*ids):
-    return patch.object(scheduler.posts_db, "list_due", AsyncMock(return_value=_due(*ids)))
+    """Templates the RESOLVE phase should pick up this tick."""
+    return patch.object(
+        scheduler.posts_db, "list_due_for_resolve", AsyncMock(return_value=_due(*ids)),
+    )
 
 
 @pytest.mark.asyncio
-async def test_launches_one_publisher_per_due_post(_stub_run_ring):
+async def test_launches_one_resolver_per_due_template(_stub_run_ring):
     rt = _runtime()
     with _list_due("p1", "p2", "p3"):
         out = await scheduler.process_due_posts(rt)
 
     assert out["processed"] == 3
-    assert [x["post_id"] for x in out["launched"]] == ["p1", "p2", "p3"]
+    assert [x["post_id"] for x in out["resolving"]] == ["p1", "p2", "p3"]
     assert rt.start_async_job.await_count == 3
     # each launch names the publisher kind, the owner, and only the post id —
     # content never travels through job params
     kind, owner, params = rt.start_async_job.await_args.args
-    assert kind == "publish_post" and owner == NPUB and params == {"post_id": "p3"}
+    assert kind == "resolve_post_body" and owner == NPUB and params == {"post_id": "p3"}
     # bounded well past a single block's 900s ceiling, under the claim lease
-    assert rt.start_async_job.await_args.kwargs["max_runtime_seconds"] == scheduler.PUBLISH_MAX_RUNTIME_S
-    assert scheduler.PUBLISH_MAX_RUNTIME_S > 900
+    assert rt.start_async_job.await_args.kwargs["max_runtime_seconds"] == scheduler.RESOLVE_MAX_RUNTIME_S
+    assert scheduler.RESOLVE_MAX_RUNTIME_S > 900
     _stub_run_ring.assert_awaited_once_with("run-1", out)
 
 
@@ -93,7 +108,7 @@ async def test_post_claimed_by_another_tick_is_not_launched(_stub_claim):
     with _list_due("p1"):
         out = await scheduler.process_due_posts(rt)
     rt.start_async_job.assert_not_awaited()
-    assert out["launched"] == []
+    assert out["resolving"] == []
     assert out["contended"][0]["reason"] == "claimed_by_another_tick"
 
 
@@ -107,7 +122,7 @@ async def test_one_failed_launch_does_not_stop_the_rest():
     )
     with _list_due("p1", "p2"):
         out = await scheduler.process_due_posts(rt)
-    assert [x["post_id"] for x in out["launched"]] == ["p2"]
+    assert [x["post_id"] for x in out["resolving"]] == ["p2"]
     assert out["contended"][0]["post_id"] == "p1"
     assert "launch_failed" in out["contended"][0]["reason"]
 
@@ -119,7 +134,7 @@ async def test_quiet_tick_records_a_heartbeat(_stub_run_ring):
     with _list_due():
         out = await scheduler.process_due_posts(rt)
     assert out["kind"] == "tick"
-    assert out["processed"] == 0 and out["launched"] == [] and out["contended"] == []
+    assert out["processed"] == 0 and out["resolving"] == [] and out["contended"] == []
     _stub_run_ring.assert_awaited_once()
 
 
@@ -216,5 +231,5 @@ async def test_a_broken_forecast_never_fails_the_tick():
          patch.object(scheduler.posts_db, "upcoming_by_owner",
                       AsyncMock(side_effect=RuntimeError("neon down"))):
         out = await scheduler.process_due_posts(rt)
-    assert [x["post_id"] for x in out["launched"]] == ["p1"]  # the work still happened
+    assert [x["post_id"] for x in out["resolving"]] == ["p1"]  # the work still happened
     assert out["upcoming"] == {}

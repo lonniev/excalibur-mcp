@@ -1306,6 +1306,23 @@ async def _publish_post_runner(post_id: str = "", **_: Any) -> dict:
 runtime.register_job_runner("publish_post", _publish_post_runner)
 
 
+async def _resolve_post_body_runner(npub: str = "", post_id: str = "") -> dict:
+    """Build one post's body — the slow half, run as a background job.
+
+    Posting is no longer a background job at all: the scheduler does it inline
+    because it takes milliseconds. This is the only part that needs to outlive a
+    request, and it is the part that can be handed to detached compute, since its
+    work is bounded by the author's runtimeLimit rather than by the ledger, the
+    vault, or X.
+    """
+    from excalibur_mcp.resolver import resolve_one
+
+    return await resolve_one(runtime, post_id)
+
+
+runtime.register_job_runner("resolve_post_body", _resolve_post_body_runner)
+
+
 async def _resolve_build_closure(
     npub: str = "",
     prompt: str = "",

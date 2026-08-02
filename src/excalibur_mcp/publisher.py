@@ -1,10 +1,15 @@
-"""Publishing one post.
+"""Posting one finished body — the fast half.
 
-A *publisher* owns a single post's journey to X and nothing else: resolve its
-dynamic blocks, bill the owner, post, and write down what happened. One
-publisher per publication, running as a background job — so the LLM work it does
-is bounded by the author's own runtime budget, not by the lifetime of whatever
-HTTP request happened to notice the post was due.
+A *publisher* takes a body that is ALREADY resolved and carries it to X: bill the
+owner, post, record what happened, advance any recurrence, publish the companion
+Nostr notes. It never calls an LLM and never branches on whether the post was
+dynamic, because by the time it runs that distinction has been erased by
+``resolver.py``.
+
+That is what makes it fast. A post is one HTTPS call and two row writes — tens of
+milliseconds — where resolution can take minutes. Carrying both under one claim
+forced a 45-minute lease over work that is mostly instantaneous, and let a
+container recycle kill a publication mid-flight.
 
 It is deliberately ignorant of scheduling. It doesn't know what "due" means, it
 never looks for work, and nothing waits on it. The scheduler launches it and
@@ -27,7 +32,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
-from tollbooth.llm_route import clamp_timeout, classify_llm_failure
+from tollbooth.llm_route import classify_llm_failure
 
 from excalibur_mcp.db import posts as posts_db
 from excalibur_mcp.db import scheduler_runs
@@ -136,24 +141,14 @@ def _next_state(
     return "scheduled", nxt
 
 
-# -- dynamic-block resolution ------------------------------------------------
-
-def _dynamic_blocks(doc: dict[str, Any] | None) -> list[dict[str, Any]]:
-    """The dynamic blocks in a post's doc (empty for legacy/static posts)."""
-    if not isinstance(doc, dict):
-        return []
-    blocks = doc.get("blocks")
-    if not isinstance(blocks, list):
-        return []
-    return [b for b in blocks if isinstance(b, dict) and b.get("dynamic")]
-
+# -- companion notes ------------------------------------------------
 
 def _nostr_blocks(doc: dict[str, Any] | None) -> list[dict[str, Any]]:
     """The Nostr companion-note blocks in a post's doc (empty for posts without).
 
     A Nostr block is static copy that never enters the tweet; it is published
     instead as a companion Nostr note carrying the live X URL. Read exactly the
-    way ``_dynamic_blocks`` reads its flag — ``b.get("nostr")``.
+    flagged with ``b.get("nostr")``.
     """
     if not isinstance(doc, dict):
         return []
@@ -255,127 +250,6 @@ def _fallback_reason(exc: Exception, budget_s: float) -> str:
     return classify_llm_failure(message=str(exc)) or f"resolve_failed:{name}"
 
 
-async def _resolve_post_text(
-    owner: str,
-    blocks: list[dict[str, Any]],
-    voice: str,
-    bans: list[str],
-    api_key: str | None,
-) -> tuple[str | None, list[dict[str, Any]] | None, str | None, list[dict[str, Any]]]:
-    """Compose the final tweet text by resolving each dynamic block at fire time.
-
-    Each block gets the budget its author asked for — the publisher is a
-    background job, so there is no request clock to race. Returns
-    ``(text, rendered_blocks, None, fallbacks)`` on success, where
-    ``rendered_blocks`` is a static snapshot for the Sent occurrence and
-    ``fallbacks`` names any block whose prompt didn't make it into the tweet.
-    Returns ``(None, None, reason, fallbacks)`` when a block failed AND carried
-    no fallback — the caller holds the post and never posts a gap. ``api_key`` is
-    None when the operator has no LLM key, so every dynamic block falls
-    back.
-    """
-    import asyncio
-
-    from excalibur_mcp.resolve import INSERT_MARKER, clamp_fetches, resolve_block
-
-    def _domains(b: dict[str, Any]) -> list[str]:
-        raw = b.get("domains")
-        if isinstance(raw, list):
-            return [str(x).strip() for x in raw if str(x).strip()]
-        if isinstance(raw, str):
-            return [x.strip() for x in raw.replace(",", "\n").split("\n") if x.strip()]
-        return []
-
-    # Static texts known up front; dynamic slots fill in after resolution. Nostr
-    # blocks are companion notes, never tweet copy — they compose to "" so they
-    # stay out of the tweet while remaining in the rendered snapshot below.
-    rendered: list[str] = [
-        "" if (isinstance(b, dict) and (b.get("dynamic") or b.get("nostr")))
-        else str((b or {}).get("text", ""))
-        for b in blocks
-    ]
-
-    # Context for a dynamic block: static siblings verbatim + OTHER dynamics as
-    # their fallback. Blocks resolve in PARALLEL, so none can see another's
-    # resolved value — independence is the trade for not posting at the sum of the
-    # per-block times.
-    def _context_for(i: int) -> str:
-        parts: list[str] = []
-        for j, bj in enumerate(blocks):
-            if j == i:
-                parts.append(INSERT_MARKER)
-            elif isinstance(bj, dict) and bj.get("dynamic"):
-                parts.append(str(bj.get("fallback", "")).strip())
-            else:
-                parts.append(rendered[j])
-        return "\n\n".join(p for p in parts if p).strip()
-
-    async def _resolve_one(i: int) -> tuple[str | None, dict[str, Any] | None]:
-        """``(text, fallback_note)`` for dynamic block i.
-
-        ``text`` is the resolved text, or the block's fallback when the resolve
-        didn't produce anything, or None when it failed AND has no fallback (the
-        caller then holds the post rather than posting a gap).
-
-        ``fallback_note`` is non-None exactly when the author's prompt did NOT
-        make it into the tweet. Substituting fallback text is a real degradation
-        of what the author asked for, and it used to leave no trace anywhere but
-        a log line — the post was reported as cleanly `posted` while carrying
-        different words than intended. The note is what makes that visible."""
-        b = blocks[i]
-        prompt = str(b.get("text", "")).strip()
-        fallback = str(b.get("fallback", "")).strip()
-        budget = clamp_timeout(b.get("runtimeLimit"))
-        resolved, why = "", None
-        if not prompt:
-            return (fallback or None), None  # nothing was asked for; not a degradation
-        if not api_key:
-            why = "no_operator_llm_key"
-        else:
-            try:
-                resolved = await resolve_block(
-                    api_key=api_key, prompt=prompt, context=_context_for(i),
-                    voice=voice, bans=bans, allowed_domains=_domains(b),
-                    max_fetches=clamp_fetches(b.get("maxFetches", 5)),
-                    timeout_seconds=budget,
-                )
-                if not resolved:
-                    why = "empty_resolution"
-            except Exception as exc:  # noqa: BLE001 — fall back, report the reason
-                logger.warning("publisher: dynamic resolve failed for %s: %s", owner, exc)
-                why = _fallback_reason(exc, budget)
-        if resolved:
-            return resolved, None
-        return (fallback or None), {"block": i, "reason": why, "budget_s": round(budget, 1)}
-
-    dynamic_idx = [
-        i for i, b in enumerate(blocks) if isinstance(b, dict) and b.get("dynamic")
-    ]
-    results = await asyncio.gather(*(_resolve_one(i) for i in dynamic_idx))
-    fallbacks: list[dict[str, Any]] = []
-    for i, (val, note) in zip(dynamic_idx, results):
-        if val is None:
-            return None, None, "dynamic_resolve_failed", fallbacks
-        if note is not None:
-            fallbacks.append(note)
-        rendered[i] = val
-
-    text = "\n\n".join(p for p in rendered if p).strip()
-    if not text:
-        return None, None, "empty_after_resolve", fallbacks
-
-    # Static snapshot: dynamic blocks become plain text of what actually went out.
-    rendered_blocks: list[dict[str, Any]] = []
-    for i, b in enumerate(blocks):
-        if isinstance(b, dict) and b.get("dynamic"):
-            rendered_blocks.append({"text": rendered[i], "flags": []})
-        elif isinstance(b, dict):
-            rendered_blocks.append(b)
-        else:
-            rendered_blocks.append({"text": str(b), "flags": []})
-    return text, rendered_blocks, None, fallbacks
-
-
 # -- one publication ---------------------------------------------------------
 
 async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
@@ -390,7 +264,6 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
     from excalibur_mcp.x_client import XAPIError
 
     post_tweet_id = capability_uuid("post_tweet")
-    resolve_id = capability_uuid("resolve_dynamic_block")
 
     row = await posts_db.get_claimed(post_id)
     if row is None:
@@ -448,14 +321,13 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
                               **({"detail": detail} if detail else {}), **extra})
 
     doc = _as_dict(row.get("doc"))
-    dynamic = _dynamic_blocks(doc)
     nostr = _nostr_blocks(doc)
     text = (row.get("text_cache") or "").strip()
     # The doc snapshotted into a recurring occurrence — replaced below with the
     # rendered (static) doc when the post carried dynamic blocks.
     occurrence_doc: dict[str, Any] = doc or {}
 
-    if not dynamic and not text:  # content reason
+    if not text:  # content reason — a body that resolved to nothing
         return await _hold("empty_text_cache")
 
     # 1. Resolve the owner's X bearer (no billing yet). — access reason
@@ -472,51 +344,20 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
             detail=_situation_detail(situation),
         )
 
-    # 2. Dynamic blocks: bill the owner once for resolution, run each prompt, and
-    #    compose the final text. A failed block falls back to its author text; a
-    #    failed block with no fallback holds the post (refunding the resolve fare)
-    #    — we never post a gap. The fare is refunded again if anything downstream
-    #    holds the post.
-    resolve_charged = False
+    # The body arrived FINISHED. Resolution is a separate phase now
+    # (``resolver.py``): it runs under its own claim, bills per block, persists
+    # each block as it completes, and only then marks the row ``resolved``. So
+    # this function never calls an LLM, never branches on static-vs-dynamic, and
+    # takes milliseconds — which is why it no longer needs to be a long-runner
+    # able to outlive its container.
     fallbacks: list[dict[str, Any]] = []
-    if dynamic:
-        rcost, rdenial = await runtime._resolve_pricing(
-            resolve_id, "resolve_dynamic_block", "heavy", {},
-        )
-        if rdenial is not None:
-            return await _hold(
-                rdenial.get("error_code") or "pricing_unavailable",
-                detail=_situation_detail(rdenial),
-            )
-        rbilling = await runtime._apply_billing(owner, "resolve_dynamic_block", rcost, [])
-        if isinstance(rbilling, dict):  # finance reason
-            return await _hold(
-                _billing_reason(rbilling, "insufficient_balance"),
-                detail=_situation_detail(rbilling),
-                stage="resolve", cost_sats=rcost,
-            )
-        resolve_charged = True
-
-        try:
-            creds = await runtime.load_credentials(["llm_api_key"])
-            key = creds.get("llm_api_key")
-        except Exception:  # noqa: BLE001 — no key → blocks fall back
-            key = None
-        voice, bans = await _owner_voice(owner)
-        rendered, rendered_blocks, reason, fallbacks = await _resolve_post_text(
-            owner, list(doc.get("blocks") or []) if doc else [], voice, bans, key,
-        )
-        if rendered is None:
-            await runtime.rollback_debit(resolve_id, owner)
-            return await _hold(reason or "dynamic_resolve_failed", fallbacks=fallbacks)
-        text = rendered
-        occurrence_doc = {"blocks": rendered_blocks or []}
+    occurrence_doc = doc or {}
+    if not text:
+        return await _hold("empty_after_resolve")
 
     # 3. Price + bill the owner for post_tweet (tranche-expiry guard inside).
     cost, denial = await runtime._resolve_pricing(post_tweet_id, "post_tweet", "write", {})
     if denial is not None:
-        if resolve_charged:
-            await runtime.rollback_debit(resolve_id, owner)
         return await _hold(
             denial.get("error_code") or "pricing_unavailable",
             detail=_situation_detail(denial),
@@ -525,8 +366,6 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
     if isinstance(billing, dict):
         # Short balance, expired tranche, or an unreadable ledger — leave it
         # scheduled and report which. — finance reason
-        if resolve_charged:
-            await runtime.rollback_debit(resolve_id, owner)
         return await _hold(
             _billing_reason(billing, "insufficient_balance"),
             detail=_situation_detail(billing),
@@ -538,8 +377,6 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
         result = await client.post_tweet(markdown_to_unicode(text))
     except XAPIError as exc:
         await runtime.rollback_debit(post_tweet_id, owner)
-        if resolve_charged:
-            await runtime.rollback_debit(resolve_id, owner)
         # `reason` stays a stable, switchable code; X's own words go in `detail`.
         # They used to be concatenated into one string, so a surface could only
         # pattern-match prose — and when x_client substituted a canned sentence
@@ -568,8 +405,6 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
         # delayed post; guessing costs a duplicate public one, and only the human
         # can look at the timeline and say which happened.
         await runtime.rollback_debit(post_tweet_id, owner)
-        if resolve_charged:
-            await runtime.rollback_debit(resolve_id, owner)
         logger.warning(
             "publisher: post_tweet for %s reached X but never answered (%s); "
             "pausing — a tweet may already be live.",
@@ -578,8 +413,6 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
         return await _pause("x_post_outcome_unknown")
     except Exception as exc:  # noqa: BLE001 — money path, refund then report
         await runtime.rollback_debit(post_tweet_id, owner)
-        if resolve_charged:
-            await runtime.rollback_debit(resolve_id, owner)
         # An exception can carry an empty message; its type still names it.
         return await _hold(str(exc) or type(exc).__name__)
 
