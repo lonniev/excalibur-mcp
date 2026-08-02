@@ -7,7 +7,7 @@ doesn't go out, hold on a situation a later tick can retry, pause only on one
 the owner must fix, and reschedule vs retire correctly.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -736,3 +736,96 @@ async def test_no_hold_can_ever_record_a_blank_reason(_stub_record):
         await publisher.publish_one(rt, "p1")
     recorded = _stub_record.await_args.args[0]
     assert recorded["reason"]  # non-empty, whatever path got us here
+
+
+# ---------------------------------------------------------------------------
+# Recurrence anchors on the SLOT, not on the success moment
+# ---------------------------------------------------------------------------
+
+
+class TestRecurrenceDoesNotDrift:
+    """A weekly Sunday-morning post must stay Sunday morning.
+
+    It did not. `_next_state` advanced from `sent_at` — the moment the post
+    actually succeeded — so every delay (the tick's own 30-minute granularity,
+    the model, X) was compounded into the next occurrence. Post 0314fe59 walked
+    from Sunday morning to Wednesday evening that way.
+    """
+
+    def _sun(self, h=9, m=0, day=2):
+        return datetime(2026, 8, day, h, m, tzinfo=timezone.utc)
+
+    def test_weekly_advances_from_the_slot_not_the_send_time(self):
+        slot = self._sun()                       # Sun 09:00
+        sent = self._sun(h=9, m=37)              # actually went out 37 min late
+        status, nxt = publisher._next_state(
+            slot, {"freq": "weekly", "interval": 1}, None, now=sent,
+        )
+        assert status == "scheduled"
+        assert nxt == datetime(2026, 8, 9, 9, 0, tzinfo=timezone.utc)
+        assert nxt.weekday() == slot.weekday(), "same day of week"
+        assert (nxt.hour, nxt.minute) == (9, 0), "the 37 minutes must not compound"
+
+    def test_lateness_never_accumulates_across_occurrences(self):
+        """Ten weeks of 20-minutes-late posting must not move the time of day."""
+        slot = self._sun()
+        for _ in range(10):
+            sent = slot + timedelta(minutes=20)
+            _, slot = publisher._next_state(
+                slot, {"freq": "weekly", "interval": 1}, None, now=sent,
+            )
+        assert (slot.hour, slot.minute) == (9, 0)
+        assert slot.weekday() == 6  # still Sunday
+
+    def test_a_missed_run_skips_to_the_next_real_occurrence(self):
+        """Recovering from a three-week outage rejoins the rhythm — it does not
+        schedule a date already in the past, nor fire three times to catch up."""
+        slot = self._sun()                                  # Sun Aug 2
+        now = datetime(2026, 8, 22, 12, 0, tzinfo=timezone.utc)  # 20 days later
+        status, nxt = publisher._next_state(
+            slot, {"freq": "weekly", "interval": 1}, None, now=now,
+        )
+        assert status == "scheduled"
+        assert nxt > now, "never schedule into the past"
+        assert nxt == datetime(2026, 8, 23, 9, 0, tzinfo=timezone.utc)
+        assert nxt.weekday() == 6 and (nxt.hour, nxt.minute) == (9, 0)
+
+    def test_cease_at_still_retires_the_series(self):
+        slot = self._sun()
+        status, nxt = publisher._next_state(
+            slot, {"freq": "weekly", "interval": 1},
+            "2026-08-05T00:00:00+00:00", now=slot,
+        )
+        assert status == "sent" and nxt is None
+
+    def test_a_pattern_whose_next_slot_is_unreachable_retires(self):
+        """A malformed recurrence must terminate, not spin looking for a future."""
+        slot = self._sun()
+        status, nxt = publisher._next_state(slot, {"freq": "nonsense"}, None, now=slot)
+        assert status == "sent" and nxt is None
+
+    @pytest.mark.asyncio
+    async def test_publish_one_anchors_the_next_slot_on_publish_at(self, _stub_record):
+        """The wiring, not just the arithmetic.
+
+        `_next_state` can be correct while `publish_one` still hands it the wrong
+        anchor — reverting the call site alone broke no unit test, so this asserts
+        the value that actually reaches the database.
+        """
+        rt = _runtime()
+        client = SimpleNamespace(post_tweet=AsyncMock(
+            return_value={"tweet_id": "tw1", "tweet_url": "https://x.com/i/status/tw1"}))
+        with _claimed(
+            doc={"blocks": []}, text_cache="gm",
+            publish_at="2026-08-02 09:00:00+00",           # Sunday 09:00
+            recurrence={"freq": "weekly", "interval": 1},
+            last_attempt_at="2026-08-02 09:37:00+00",      # claimed 37 min late
+        ), patch.object(publisher.posts_db, "record_occurrence_and_advance",
+                        AsyncMock(return_value=True)) as occ, \
+             patch("excalibur_mcp.server._resolve_x_client",
+                   AsyncMock(return_value=(client, None))):
+            out = await publisher.publish_one(rt, "p1")
+
+        assert out["outcome"] == "posted"
+        nxt = occ.await_args.kwargs["next_publish_at"]
+        assert nxt.startswith("2026-08-09T09:00"), nxt
