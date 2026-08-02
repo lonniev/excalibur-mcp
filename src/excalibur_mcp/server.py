@@ -175,6 +175,22 @@ _DOMAIN_TOOLS = [
     # waiting for the next cron tick.
     ToolIdentity(tool_id=capability_uuid("scheduler_check_now"), capability="scheduler_check_now",
                  category="restricted", intent="Operator: run a scheduler tick now"),
+    # Post-metrics harvest + derived reach analytics (#321). Handlers were
+    # exported via paid_tool but must also seed ToolIdentity rows so the
+    # tollbooth dispatch UUID-join succeeds (without these: tool_not_registered).
+    # Read tools mirror get_post; harvest mirrors process_scheduled_posts.
+    ToolIdentity(tool_id=capability_uuid("get_post_metrics"), capability="get_post_metrics",
+                 category="read", intent="Read the raw metrics snapshot series for one owned post",
+                 pricing_hint_type="flat", pricing_hint_value=1),
+    ToolIdentity(tool_id=capability_uuid("post_performance"), capability="post_performance",
+                 category="read", intent="Derived reach scores across harvested post metrics",
+                 pricing_hint_type="flat", pricing_hint_value=1),
+    ToolIdentity(tool_id=capability_uuid("post_performance_infographic"),
+                 capability="post_performance_infographic", category="read",
+                 intent="SVG infographic of post performance (gold-steel theme)",
+                 pricing_hint_type="flat", pricing_hint_value=1),
+    ToolIdentity(tool_id=capability_uuid("harvest_metrics"), capability="harvest_metrics",
+                 category="restricted", intent="Operator: cadence-aware metrics harvest sweep"),
 ]
 
 TOOL_REGISTRY: dict[str, ToolIdentity] = {ti.tool_id: ti for ti in _DOMAIN_TOOLS}

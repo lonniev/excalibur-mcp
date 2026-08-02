@@ -333,3 +333,39 @@ async def test_harvest_one_job_writes_snapshot_and_marks_done():
     assert kwargs["impressions"] == 120
     assert kwargs["cadence_key"] == "15m"
     assert kwargs["t_offset"] == 15 * 60
+
+
+# ---------------------------------------------------------------------------
+# Canonical identity registry — #321 tools must be seeded (#323)
+# ---------------------------------------------------------------------------
+
+
+def test_metrics_tools_are_in_domain_tool_registry():
+    """#321 handlers are paid_tool-wrapped; without ToolIdentity rows the
+    tollbooth dispatch layer returns tool_not_registered before the body runs.
+
+    Categories match neighboring tools: read for patron analytics, restricted
+    for the operator-only harvest sweep (mirrors process_scheduled_posts).
+    """
+    from tollbooth.tool_identity import capability_uuid
+
+    from excalibur_mcp.server import _DOMAIN_TOOLS, TOOL_REGISTRY
+
+    expected = {
+        "get_post_metrics": "read",
+        "post_performance": "read",
+        "post_performance_infographic": "read",
+        "harvest_metrics": "restricted",
+    }
+    by_cap = {ti.capability: ti for ti in _DOMAIN_TOOLS}
+    for capability, category in expected.items():
+        uid = capability_uuid(capability)
+        assert uid in TOOL_REGISTRY, (
+            f"{capability} ({uid}) missing from TOOL_REGISTRY — "
+            "paid dispatch will return tool_not_registered"
+        )
+        ti = by_cap[capability]
+        assert ti.tool_id == uid
+        assert ti.category == category, f"{capability}: category {ti.category!r} != {category!r}"
+        # Stable UUIDv5 derivation (version nibble 5) — never a hand-rolled v4.
+        assert uid[14] == "5", f"{capability} tool_id is not UUIDv5: {uid}"
