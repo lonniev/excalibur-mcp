@@ -343,6 +343,13 @@ async def compute_post_performance(npub: str, *, follower_count: int | None = No
     for s in snaps:
         by_post.setdefault(str(s["post_id"]), []).append(s)
 
+    # Human identity (title / opening words / posted date) lives on posts, not
+    # on the metric snapshots. One batch lookup so the FE never has to show a
+    # bare hash as the row's visible name.
+    from excalibur_mcp.db import posts as posts_db
+
+    identity = await posts_db.summaries_for_ids(npub, list(by_post.keys()))
+
     t15_all = [
         int(s["impressions"])
         for s in snaps
@@ -368,10 +375,14 @@ async def compute_post_performance(npub: str, *, follower_count: int | None = No
             }
             for s in series_sorted
         ]
+        ident = identity.get(post_id) or {}
         posts_out.append(
             {
                 "post_id": post_id,
                 "tweet_id": latest.get("tweet_id"),
+                "title": ident.get("title") or "",
+                "excerpt": ident.get("excerpt") or "",
+                "last_sent_at": ident.get("last_sent_at"),
                 "link_placement": latest.get("link_placement"),
                 "voice_id": latest.get("voice_id"),
                 "snippet_ids": latest.get("snippet_ids") or [],
@@ -550,34 +561,38 @@ def render_performance_infographic(data: dict[str, Any]) -> str:
     else:
         y = cy + 48
         for p in top:
-            pid = str(p.get("post_id") or "")[:8]
+            label = (p.get("title") or p.get("excerpt") or str(p.get("post_id") or ""))[:40]
+            if len(str(p.get("title") or p.get("excerpt") or str(p.get("post_id") or ""))) > 40:
+                label = label.rstrip() + "…"
+            # SVG text must not carry raw <>&
+            label = escape(label)
             imp = p.get("latest_impressions")
             ev = p.get("escape_velocity")
             br = p.get("breakout_ratio")
-            bits = [f"#{pid}", f"imp={imp if imp is not None else '—'}"]
+            bits = [label, f"imp={imp if imp is not None else '—'}"]
             if isinstance(ev, (int, float)):
-                bits.append(f"ev={ev:.2f}x")
+                bits.append(f"ev={ev:.2f}×")
             if isinstance(br, (int, float)):
-                bits.append(f"br={br:.2f}")
+                bits.append(f"br={br:.2f}×")
             place = p.get("link_placement")
             if place:
                 bits.append(str(place))
             parts.append(
                 _text(
                     CARD_X + 16, y, "  ".join(bits),
-                    size=11, fill=theme.text_white, family="monospace",
+                    size=11, fill=theme.text_white, family="sans-serif",
                 )
             )
             y += row_h
     cy += table_h + 12
 
-    # Link-placement cohort
+    # Where should the link go? (link-placement cohort)
     if cohorts:
         ch = 40 + len(cohorts) * 28
         parts.append(_card(cy, ch, theme))
         parts.append(
             _text(
-                CARD_X + 16, cy + 24, "LINK-PLACEMENT COHORT (median impressions)",
+                CARD_X + 16, cy + 24, "WHERE SHOULD THE LINK GO? (median impressions)",
                 size=11, fill=theme.text_gray, weight="bold", family="sans-serif",
             )
         )

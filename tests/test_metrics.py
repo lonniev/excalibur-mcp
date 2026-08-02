@@ -262,6 +262,115 @@ def test_link_placement_cohort_medians():
     assert cohort["none"] == 50
 
 
+@pytest.mark.asyncio
+async def test_compute_post_performance_includes_title_and_posted_date():
+    """#327 — performance rows carry human identity, not just the post UUID.
+
+    Before the fix, compute_post_performance emitted post_id alone and the FE
+    rendered ``post_id.slice(0, 8)…``. After, each row includes title/excerpt
+    and last_sent_at so a human can recognise their own writing.
+    """
+    from excalibur_mcp import metrics_harvest
+    from excalibur_mcp.db import posts as posts_db
+
+    snaps = [
+        {
+            "post_id": PID,
+            "tweet_id": TWEET_ID,
+            "cadence_key": "15m",
+            "t_offset": 900,
+            "impressions": 200,
+            "likes": 4,
+            "replies": 1,
+            "reposts": 0,
+            "url_link_clicks": 3,
+            "user_profile_clicks": 1,
+            "link_placement": "body",
+            "snippet_ids": [],
+            "voice_id": NPUB,
+            "captured_at": "2026-08-01T12:15:00+00:00",
+        },
+        {
+            "post_id": PID,
+            "tweet_id": TWEET_ID,
+            "cadence_key": "1h",
+            "t_offset": 3600,
+            "impressions": 500,
+            "likes": 10,
+            "replies": 2,
+            "reposts": 1,
+            "url_link_clicks": 7,
+            "user_profile_clicks": 2,
+            "link_placement": "body",
+            "snippet_ids": [],
+            "voice_id": NPUB,
+            "captured_at": "2026-08-01T13:00:00+00:00",
+        },
+    ]
+    identity = {
+        PID: {
+            "title": "Morning dispatch",
+            "excerpt": "The market opened soft and the bid walked away…",
+            "last_sent_at": "2026-08-01T12:00:00+00:00",
+            "publish_at": "2026-08-01T12:00:00+00:00",
+        }
+    }
+
+    with (
+        patch.object(metrics_harvest.metrics_db, "list_all_for_npub", AsyncMock(return_value=snaps)),
+        patch.object(posts_db, "summaries_for_ids", AsyncMock(return_value=identity)) as summaries,
+    ):
+        out = await metrics_harvest.compute_post_performance(NPUB, follower_count=1000)
+
+    summaries.assert_awaited_once()
+    assert len(out["posts"]) == 1
+    row = out["posts"][0]
+    assert row["post_id"] == PID
+    assert row["title"] == "Morning dispatch"
+    assert "market opened soft" in row["excerpt"]
+    assert row["last_sent_at"] == "2026-08-01T12:00:00+00:00"
+    # Derived scores still present (single t+15 sample → median is itself → EV 1×)
+    assert row["escape_velocity"] == pytest.approx(1.0)  # 200 / median(200)
+    assert row["breakout_ratio"] == pytest.approx(0.5)  # 500 / 1000
+
+
+def test_performance_page_source_is_human_legible():
+    """#327 static contract: the FE source must not lead with jargon or hashes.
+
+    The page is React; full browser render is human-in-the-loop. This locks the
+    copy/structure decisions the Code Owner asked for so a regression that
+    reintroduces ``post_id.slice`` or the opaque cohort heading fails CI.
+    """
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[1] / "frontend" / "src" / "components" / "PerformancePage.tsx"
+    text = src.read_text(encoding="utf-8")
+
+    # Post identity is title/excerpt, not a truncated UUID.
+    assert "post_id.slice" not in text
+    assert "postLabel" in text
+    assert "last_sent_at" in text
+
+    # Show-don't-tell: reader-focused subtitle, not a jargon laundry list.
+    assert "How your recent posts are travelling" in text
+    assert "escape velocity, breakout ratio,\n            link-placement cohorts" not in text
+
+    # Item 11: rename the opaque heading; keep a precise tooltip.
+    assert "Where should the link go?" in text
+    assert "Link-placement cohort" not in text
+
+    # Unified Tip treatment (not bare title= on EV/BR alone) + Material glyphs.
+    assert "function Tip" in text
+    assert "from \"lucide-react\"" in text
+    assert "Users" in text  # followers crowd glyph
+    assert "TIPS.escapeVelocity" in text or "escape velocity" in text.lower()
+    assert "denominator of escape velocity" in text.lower() or "rolling median" in text.lower()
+
+    # Refresh stays on the right of the header row.
+    assert "ml-auto" in text
+    assert "RefreshButton" in text
+
+
 def test_tweet_id_from_url():
     from excalibur_mcp.metrics_harvest import tweet_id_from_url
 

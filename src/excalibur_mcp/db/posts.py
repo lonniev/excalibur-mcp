@@ -246,6 +246,40 @@ async def list_posts(
     return {"posts": posts, "total": total, "page": pg, "page_size": psize}
 
 
+async def summaries_for_ids(npub: str, post_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """Identity fields for a set of owned posts, keyed by post_id.
+
+    Used by performance views that already have metric rows and only need the
+    human-facing title/excerpt and when the post went out. Empty input → {}.
+    Unknown or foreign ids are simply absent from the result.
+    """
+    ids = [str(pid) for pid in post_ids if pid]
+    if not ids:
+        return {}
+    rows = await fetch(
+        """
+        SELECT id::text AS post_id, title, left(text_cache, 120) AS excerpt,
+               last_sent_at, publish_at
+        FROM posts
+        WHERE npub = $1 AND id = ANY($2::uuid[])
+        """,
+        npub,
+        ids,
+    )
+    out: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        pid = str(r.get("post_id") or "")
+        if not pid:
+            continue
+        out[pid] = {
+            "title": r.get("title") or "",
+            "excerpt": r.get("excerpt") or "",
+            "last_sent_at": str(r["last_sent_at"]) if r.get("last_sent_at") else None,
+            "publish_at": str(r["publish_at"]) if r.get("publish_at") else None,
+        }
+    return out
+
+
 async def update_post(
     npub: str,
     post_id: str,
