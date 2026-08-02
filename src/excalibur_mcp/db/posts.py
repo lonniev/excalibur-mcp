@@ -509,6 +509,32 @@ async def list_resolved_due(now_iso: str, limit: int = 100) -> list[dict[str, An
     )
 
 
+async def claim_for_post(post_id: str) -> dict[str, Any] | None:
+    """Atomically take a finished body for posting — ``resolved`` → ``sending``.
+
+    A separate claim from ``claim_due_post`` because the two phases accept
+    different states, and conflating them is a silent no-op rather than an
+    error: ``claim_due_post`` matches only ``scheduled`` (or a stale ``sending``),
+    so handing it a ``resolved`` row returns None and the poster skips it —
+    forever. Two posts sat finished-but-unsent for hours that way.
+
+    No lease clause. Posting is one HTTPS call and two row writes, so a claim is
+    held for milliseconds; a poster that dies mid-flight leaves a ``sending`` row
+    that the resolve lease no longer covers, which is deliberate — an
+    unconfirmed send must be looked at by a human, not retried by a timer into a
+    possible double-post.
+    """
+    return await fetchrow(
+        f"""
+        UPDATE posts
+        SET status = 'sending', last_attempt_at = NOW(), updated_at = NOW()
+        WHERE id = $1::uuid AND status = 'resolved'
+        RETURNING {_FULL_COLS}
+        """,
+        post_id,
+    )
+
+
 async def upcoming_by_owner(now_iso: str) -> list[dict[str, Any]]:
     """What the scheduler expects next, grouped by owner:
     ``[{npub, count, next_at}]`` over the posts still ahead of it.

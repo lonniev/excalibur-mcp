@@ -22,7 +22,7 @@ at the top of this one rather than waiting behind this tick's model work.
 
 Three guards, each earned:
 
-* ``claim_for_resolve`` and ``claim_due_post`` are atomic, so overlapping ticks
+* ``claim_for_resolve`` and ``claim_for_post`` are atomic, so overlapping ticks
   can never double-start the same work.
 * the resolve lease (20 min, in ``posts.py``) hands back a slot whose worker died
   with its container. Nothing supervises workers; the lease is the recovery.
@@ -174,7 +174,7 @@ async def process_due_posts(runtime: Any) -> dict[str, Any]:
         from excalibur_mcp.publisher import publish_one
     for row in ready:
         pid, owner = row["post_id"], row["npub"]
-        if await posts_db.claim_due_post(pid) is None:
+        if await posts_db.claim_for_post(pid) is None:
             continue  # another tick got there first; not worth reporting
         try:
             out = await publish_one(runtime, pid)
