@@ -1,5 +1,14 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
+import {
+  Camera,
+  FileText,
+  Info,
+  Link2,
+  Rocket,
+  TrendingUp,
+  Users,
+} from "lucide-react";
 import {
   getPostPerformance,
   type PerformancePost,
@@ -8,6 +17,84 @@ import {
 import RefreshButton from "./RefreshButton";
 
 const card = "rounded-xl border border-stone-200 dark:border-zinc-800 bg-white dark:bg-zinc-900";
+
+// Plain-language definitions — sourced from metrics_harvest.py, not paraphrased
+// from the labels. One Tip treatment is used on summary widgets, table headers,
+// and cells so the reader never has to re-learn where the explanation lives.
+const TIPS = {
+  posts: "How many of your posts have at least one harvested metrics reading.",
+  snapshots:
+    "A snapshot is one reading of a post's metrics at a cadence step (t+15m, +1h, +6h, +24h, +72h, +7d, +28d). Whatever is not snapshotted inside that 28-day window is gone — X stops exposing the private metrics after ~30 days.",
+  medianT15:
+    "Your personal baseline: the rolling median of impressions in the first 15 minutes across your harvested posts. This is the denominator of escape velocity — why the number is on the page at all. Unit: impressions.",
+  followers:
+    "Your current X follower count (best-effort from the account lookup). Denominator of breakout ratio. When this is unavailable, breakout ratio cells stay empty rather than guessing.",
+  escapeVelocity:
+    "How this post's first 15 minutes compared to your own typical post: impressions at t+15m ÷ your rolling median t+15m. Above 1× means faster than your normal.",
+  breakoutRatio:
+    "Whether the post travelled beyond your followers: impressions ÷ follower count. Much greater than 1× implies For You pickup; around 1× means it mostly stayed on the home timeline. Empty when follower count is unavailable.",
+  linkPlacement:
+    "Median impressions bucketed by where you put the link across your corpus — link in the body, link in the first reply, or no link.",
+} as const;
+
+/** Hover / focus annotation with a real design (not a bare title= attribute). */
+function Tip({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <span className="relative inline-flex items-center gap-1 group/tip">
+      {children}
+      <button
+        type="button"
+        className="inline-flex text-stone-300 hover:text-stone-500 dark:text-zinc-600 dark:hover:text-zinc-400 focus:outline-none focus-visible:text-amber-600"
+        aria-label={label}
+        title={label}
+      >
+        <Info className="h-3 w-3" aria-hidden />
+      </button>
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute left-1/2 top-full z-30 mt-1.5 w-64 -translate-x-1/2 rounded-lg border border-stone-200 bg-white px-2.5 py-2 text-left text-[11px] font-normal normal-case tracking-normal leading-snug text-stone-600 opacity-0 shadow-lg transition-opacity group-hover/tip:opacity-100 group-focus-within/tip:opacity-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+      >
+        {label}
+      </span>
+    </span>
+  );
+}
+
+/** Summary widget: Material-style lucide glyph + label + value, centered. */
+function StatCard({
+  icon,
+  label,
+  value,
+  tip,
+  unit,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  tip: string;
+  unit?: string;
+}) {
+  return (
+    <div className={`${card} p-4 text-center`}>
+      <div className="flex items-center justify-center gap-1.5 text-stone-400 dark:text-zinc-500">
+        <span className="text-amber-600 dark:text-amber-400" aria-hidden>
+          {icon}
+        </span>
+        <Tip label={tip}>
+          <span className="text-[11px] uppercase tracking-wide">{label}</span>
+        </Tip>
+      </div>
+      <div className="text-2xl font-semibold tabular-nums mt-2">
+        {value}
+        {unit ? (
+          <span className="ml-1 text-xs font-normal text-stone-400 dark:text-zinc-500">
+            {unit}
+          </span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
 
 /** Tiny SVG sparkline from impression points (oldest → newest). */
 function Sparkline({ points }: { points: { impressions?: number | null }[] }) {
@@ -59,6 +146,30 @@ function fmtInt(n: number | null | undefined): string {
   return n.toLocaleString();
 }
 
+function fmtPosted(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+/** Prefer title, then opening words; never lead with a hash. */
+function postLabel(p: PerformancePost): string {
+  const title = (p.title || "").trim();
+  if (title) return title;
+  const excerpt = (p.excerpt || "").trim().replace(/\s+/g, " ");
+  if (excerpt) {
+    return excerpt.length > 72 ? `${excerpt.slice(0, 72).trimEnd()}…` : excerpt;
+  }
+  return "Untitled post";
+}
+
 export default function PerformancePage() {
   const [data, setData] = useState<PostPerformanceResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -86,19 +197,22 @@ export default function PerformancePage() {
   const corpus = data?.corpus;
   const cohorts = data?.cohorts?.link_placement ?? {};
   const cohortEntries = Object.entries(cohorts).sort((a, b) => b[1] - a[1]);
+  const followers = data?.follower_count ?? null;
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-6 space-y-5">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
           <h1 className="text-lg font-semibold">Performance</h1>
           <p className="text-sm text-stone-500 dark:text-zinc-400 mt-0.5">
-            Reach signals from your harvested post metrics — escape velocity, breakout ratio,
-            link-placement cohorts. Snapshots are captured on a decaying cadence for 28 days after
-            each send.
+            How your recent posts are travelling — early momentum versus your own baseline,
+            reach past your followers, and where a link helped. Metrics are read at set
+            intervals for 28 days after each send; after that X stops exposing them.
           </p>
         </div>
-        <RefreshButton onClick={() => void refresh()} busy={loading} />
+        <div className="shrink-0 ml-auto">
+          <RefreshButton onClick={() => void refresh()} busy={loading} title="Refresh performance" size="sm" />
+        </div>
       </div>
 
       {error && (
@@ -108,36 +222,42 @@ export default function PerformancePage() {
       )}
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <div className={`${card} p-4`}>
-          <div className="text-[11px] uppercase tracking-wide text-stone-400 dark:text-zinc-500">Posts</div>
-          <div className="text-2xl font-semibold tabular-nums mt-1">
-            {fmtInt(corpus?.post_count ?? posts.length)}
-          </div>
-        </div>
-        <div className={`${card} p-4`}>
-          <div className="text-[11px] uppercase tracking-wide text-stone-400 dark:text-zinc-500">Snapshots</div>
-          <div className="text-2xl font-semibold tabular-nums mt-1">
-            {fmtInt(corpus?.snapshot_count)}
-          </div>
-        </div>
-        <div className={`${card} p-4`}>
-          <div className="text-[11px] uppercase tracking-wide text-stone-400 dark:text-zinc-500">Median t+15m</div>
-          <div className="text-2xl font-semibold tabular-nums mt-1">
-            {fmtInt(corpus?.rolling_median_t15 ?? null)}
-          </div>
-        </div>
-        <div className={`${card} p-4`}>
-          <div className="text-[11px] uppercase tracking-wide text-stone-400 dark:text-zinc-500">Followers</div>
-          <div className="text-2xl font-semibold tabular-nums mt-1">
-            {fmtInt(data?.follower_count ?? null)}
-          </div>
-        </div>
+        <StatCard
+          icon={<FileText className="h-4 w-4" />}
+          label="Posts"
+          value={fmtInt(corpus?.post_count ?? posts.length)}
+          tip={TIPS.posts}
+        />
+        <StatCard
+          icon={<Camera className="h-4 w-4" />}
+          label="Snapshots"
+          value={fmtInt(corpus?.snapshot_count)}
+          tip={TIPS.snapshots}
+        />
+        <StatCard
+          icon={<TrendingUp className="h-4 w-4" />}
+          label="Median t+15m"
+          value={fmtInt(corpus?.rolling_median_t15 ?? null)}
+          unit="impr."
+          tip={TIPS.medianT15}
+        />
+        <StatCard
+          icon={<Users className="h-4 w-4" />}
+          label="Followers 👥"
+          value={fmtInt(followers)}
+          tip={TIPS.followers}
+        />
       </div>
 
       {cohortEntries.length > 0 && (
         <div className={`${card} p-4`}>
-          <h2 className="text-sm font-medium mb-3">Link-placement cohort</h2>
-          <p className="text-xs text-stone-500 dark:text-zinc-400 mb-3">
+          <div className="flex items-center justify-center gap-2 mb-1">
+            <Link2 className="h-4 w-4 text-amber-600 dark:text-amber-400" aria-hidden />
+            <Tip label={TIPS.linkPlacement}>
+              <h2 className="text-sm font-medium">Where should the link go?</h2>
+            </Tip>
+          </div>
+          <p className="text-xs text-stone-500 dark:text-zinc-400 mb-3 text-center">
             Median impressions for link-in-body vs. link-in-first-reply vs. no link — grounded in
             your corpus, not third-party claims.
           </p>
@@ -163,10 +283,21 @@ export default function PerformancePage() {
       )}
 
       <div className={`${card} overflow-hidden`}>
-        <div className="px-4 py-3 border-b border-stone-100 dark:border-zinc-800 flex items-center justify-between">
+        <div className="px-4 py-3 border-b border-stone-100 dark:border-zinc-800 flex items-center justify-between gap-3 flex-wrap">
           <h2 className="text-sm font-medium">Posts by reach</h2>
-          <span className="text-xs text-stone-400 dark:text-zinc-500">
-            EV = escape velocity · BR = breakout ratio
+          <span className="text-xs text-stone-400 dark:text-zinc-500 flex items-center gap-3">
+            <Tip label={TIPS.escapeVelocity}>
+              <span className="inline-flex items-center gap-1">
+                <Rocket className="h-3 w-3" aria-hidden />
+                Escape velocity
+              </span>
+            </Tip>
+            <Tip label={TIPS.breakoutRatio}>
+              <span className="inline-flex items-center gap-1">
+                <TrendingUp className="h-3 w-3" aria-hidden />
+                Breakout ratio
+              </span>
+            </Tip>
           </span>
         </div>
         {posts.length === 0 ? (
@@ -191,60 +322,86 @@ export default function PerformancePage() {
                   <th className="px-4 py-2 font-medium">Post</th>
                   <th className="px-3 py-2 font-medium">Curve</th>
                   <th className="px-3 py-2 font-medium text-right">Impr.</th>
-                  <th className="px-3 py-2 font-medium text-right">EV</th>
-                  <th className="px-3 py-2 font-medium text-right">BR</th>
+                  <th className="px-3 py-2 font-medium text-right">
+                    <Tip label={TIPS.escapeVelocity}>
+                      <span>EV</span>
+                    </Tip>
+                  </th>
+                  <th className="px-3 py-2 font-medium text-right">
+                    <Tip label={TIPS.breakoutRatio}>
+                      <span>BR</span>
+                    </Tip>
+                  </th>
                   <th className="px-3 py-2 font-medium">Link</th>
                   <th className="px-3 py-2 font-medium text-right">Clicks</th>
                 </tr>
               </thead>
               <tbody>
-                {posts.map((p) => (
-                  <tr
-                    key={p.post_id}
-                    className="border-b border-stone-50 dark:border-zinc-900 last:border-0 hover:bg-stone-50 dark:hover:bg-zinc-900/60"
-                  >
-                    <td className="px-4 py-2.5">
-                      <Link
-                        to={`/post/${p.post_id}`}
-                        className="font-mono text-xs text-amber-700 dark:text-amber-400 hover:underline"
+                {posts.map((p) => {
+                  const posted = fmtPosted(p.last_sent_at);
+                  const brMissing = p.breakout_ratio == null && followers == null;
+                  return (
+                    <tr
+                      key={p.post_id}
+                      className="border-b border-stone-50 dark:border-zinc-900 last:border-0 hover:bg-stone-50 dark:hover:bg-zinc-900/60"
+                    >
+                      <td className="px-4 py-2.5 max-w-[16rem]">
+                        <Link
+                          to={`/post/${p.post_id}`}
+                          className="block text-sm font-medium text-stone-900 dark:text-zinc-100 hover:text-amber-700 dark:hover:text-amber-400 hover:underline truncate"
+                          title={postLabel(p)}
+                        >
+                          {postLabel(p)}
+                        </Link>
+                        {posted ? (
+                          <div className="text-[11px] text-stone-400 dark:text-zinc-500 mt-0.5">
+                            Posted {posted}
+                          </div>
+                        ) : null}
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <Sparkline points={p.sparkline ?? []} />
+                      </td>
+                      <td className="px-3 py-2.5 text-right tabular-nums">
+                        {fmtInt(p.latest_impressions)}
+                      </td>
+                      <td
+                        className={`px-3 py-2.5 text-right tabular-nums ${
+                          (p.escape_velocity ?? 0) >= 1.5
+                            ? "text-emerald-600 dark:text-emerald-400 font-medium"
+                            : ""
+                        }`}
                       >
-                        {p.post_id.slice(0, 8)}…
-                      </Link>
-                    </td>
-                    <td className="px-3 py-2.5">
-                      <Sparkline points={p.sparkline ?? []} />
-                    </td>
-                    <td className="px-3 py-2.5 text-right tabular-nums">
-                      {fmtInt(p.latest_impressions)}
-                    </td>
-                    <td
-                      className={`px-3 py-2.5 text-right tabular-nums ${
-                        (p.escape_velocity ?? 0) >= 1.5
-                          ? "text-emerald-600 dark:text-emerald-400 font-medium"
-                          : ""
-                      }`}
-                      title="t+15m impressions ÷ your rolling median"
-                    >
-                      {fmtRatio(p.escape_velocity)}
-                    </td>
-                    <td
-                      className={`px-3 py-2.5 text-right tabular-nums ${
-                        (p.breakout_ratio ?? 0) > 1.2
-                          ? "text-sky-600 dark:text-sky-400 font-medium"
-                          : ""
-                      }`}
-                      title="impressions ÷ follower count"
-                    >
-                      {fmtRatio(p.breakout_ratio)}
-                    </td>
-                    <td className="px-3 py-2.5 text-xs capitalize text-stone-500 dark:text-zinc-400">
-                      {(p.link_placement || "—").replace("_", " ")}
-                    </td>
-                    <td className="px-3 py-2.5 text-right tabular-nums text-stone-500 dark:text-zinc-400">
-                      {fmtInt(p.url_link_clicks)}
-                    </td>
-                  </tr>
-                ))}
+                        <Tip label={TIPS.escapeVelocity}>
+                          <span>{fmtRatio(p.escape_velocity)}</span>
+                        </Tip>
+                      </td>
+                      <td
+                        className={`px-3 py-2.5 text-right tabular-nums ${
+                          (p.breakout_ratio ?? 0) > 1.2
+                            ? "text-sky-600 dark:text-sky-400 font-medium"
+                            : ""
+                        }`}
+                      >
+                        <Tip
+                          label={
+                            brMissing
+                              ? "Breakout ratio needs your follower count, which is unavailable right now — reconnect X or try refresh."
+                              : TIPS.breakoutRatio
+                          }
+                        >
+                          <span>{fmtRatio(p.breakout_ratio)}</span>
+                        </Tip>
+                      </td>
+                      <td className="px-3 py-2.5 text-xs capitalize text-stone-500 dark:text-zinc-400">
+                        {(p.link_placement || "—").replace("_", " ")}
+                      </td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-stone-500 dark:text-zinc-400">
+                        {fmtInt(p.url_link_clicks)}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

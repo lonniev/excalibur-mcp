@@ -1395,6 +1395,12 @@ export interface PerformanceSparkPoint {
 export interface PerformancePost {
   post_id: string;
   tweet_id?: string;
+  /** Operator-authored title when set. */
+  title?: string | null;
+  /** Opening words of the posted text (fallback identity). */
+  excerpt?: string | null;
+  /** When the post went out to X. */
+  last_sent_at?: string | null;
   link_placement?: string | null;
   latest_impressions?: number | null;
   latest_likes?: number | null;
