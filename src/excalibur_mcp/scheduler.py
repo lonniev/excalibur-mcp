@@ -1,30 +1,43 @@
-"""Finding posts that are due, and launching a publisher for each.
+"""Two things, on their own clocks: posting what is ready, building what is next.
 
-That is the whole job. The scheduler does not build content, does not talk to X,
-does not bill anyone, and does not wait to see how any of it turned out — a
-publisher owns one post's publication end to end and records its own outcome
-(see ``publisher.py``). Keeping the two apart is what lets a dynamic block take
-the minutes it needs: the tick is a dispatch, over in seconds, while the LLM
-work runs as a background job on the wheel's own queue.
+The scheduler still builds no content and talks to nobody upstream. What changed
+is that it no longer hands a *publication* to a background job — it hands a
+*resolution*, and does the publishing itself.
 
-Two guards, both already earned elsewhere:
+That inversion follows from how long each takes. Building a body can run minutes
+(a dynamic block is a model prompt with web lookups, capped by the author's own
+runtimeLimit). Posting a finished body is one HTTPS call, tens of milliseconds.
+Only the first needs to outlive the tick.
 
-* ``claim_due_post`` flips ``scheduled → sending`` atomically, so overlapping
-  ticks can never launch two publishers for the same post.
-* the claim lease means a post whose publisher died with its container simply
-  falls back into the due set later. Nothing supervises the publishers; the
-  lease is the recovery.
+**Phase 1 — post.** Every ``resolved`` body whose moment has arrived is claimed
+and sent inline. No background job, no lease measured in tens of minutes, nothing
+that can outlive the tick that started it.
 
-A recurrence that fires faster than its content can be built needs no special
-handling either — a post still ``sending`` inside its lease is not due, so it
-quietly serializes instead of piling up.
+**Phase 2 — resolve.** Templates due within ``RESOLVE_LEAD_SECONDS`` are claimed
+and handed to a worker. Starting a tick EARLY is what keeps publishing punctual:
+resolving at publish_at guarantees the post is late by whatever the model took.
+
+Posting first is deliberate — a body finished during the previous tick goes out
+at the top of this one rather than waiting behind this tick's model work.
+
+Three guards, each earned:
+
+* ``claim_for_resolve`` and ``claim_due_post`` are atomic, so overlapping ticks
+  can never double-start the same work.
+* the resolve lease (20 min, in ``posts.py``) hands back a slot whose worker died
+  with its container. Nothing supervises workers; the lease is the recovery.
+* ``resolve_attempts`` caps how many times a body may fail to build, so a
+  permanently-broken prompt stops billing its owner every half hour.
+
+A recurrence that fires faster than its content can be built still needs no
+special handling: a template already ``resolving`` inside its lease is not due.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from excalibur_mcp.db import posts as posts_db
@@ -35,12 +48,18 @@ logger = logging.getLogger(__name__)
 # How long one publication may run before the wheel's watchdog considers it
 # stale. Comfortably over the 900s ceiling a single dynamic block can ask for,
 # and under the claim lease that would otherwise hand the post to another tick.
-PUBLISH_MAX_RUNTIME_S = 960
+RESOLVE_MAX_RUNTIME_S = 960
+
+# How far ahead of publish_at to start building a body. One tick: long enough
+# that a finished body is waiting when the moment arrives, short enough that a
+# block asking for "the price now" is not badly stale. The cost of a longer lead
+# is staleness; the cost of none is lateness.
+RESOLVE_LEAD_SECONDS = 30 * 60
 
 # A publisher's value is its side effects — the tweet and the post row it
 # updates. Nobody redeems its claim check, so the result only needs to outlive
 # the job itself for debugging.
-PUBLISH_RESULT_TTL_S = 3600
+RESOLVE_RESULT_TTL_S = 3600
 
 
 def _who() -> dict[str, str]:
@@ -108,48 +127,89 @@ def _parse_pg(value: str) -> datetime | None:
 
 
 async def process_due_posts(runtime: Any) -> dict[str, Any]:
-    """Launch a publisher for every due post; return what was dispatched."""
+    """One tick, two phases: post what is ready, then start building what is next.
+
+    The order matters. Posting first means a body finished during the previous
+    tick goes out at the top of this one, rather than waiting behind however long
+    this tick's resolutions take. Posting is milliseconds; resolution is minutes.
+
+    **Phase 1 — post.** Every ``resolved`` body whose moment has arrived is
+    claimed and sent inline. No background job, no claim lease measured in tens of
+    minutes, nothing that can outlive the tick.
+
+    **Phase 2 — resolve.** Templates due within the lookahead window are claimed
+    and handed to a worker that builds their body. Starting a tick EARLY is what
+    keeps publishing punctual: resolving at publish_at guarantees the post is late
+    by however long the model took. A post with nothing dynamic resolves instantly
+    and is unaffected.
+    """
     from tollbooth.tool_identity import capability_uuid
 
-    # The tool that requested the work. Nothing is charged at launch — the
-    # publisher bills the owner as it does the work — so this only ever serves
-    # the wheel's rollback on a failed dispatch, where it is a no-op.
     tick_id = capability_uuid("process_scheduled_posts")
     run_id = await scheduler_runs.begin_run()
     now = datetime.now(timezone.utc)
-    due = await posts_db.list_due(now.isoformat())
 
-    launched: list[dict[str, Any]] = []
-    contended: list[dict[str, Any]] = []
-
-    for row in due:
-        pid = row["post_id"]
-        owner = row["npub"]
-        # Claim first: the post leaves the due set before anyone starts work, so a
-        # second tick arriving mid-publication finds nothing to do.
+    # -- Phase 1: post finished bodies -------------------------------------
+    posted: list[dict[str, Any]] = []
+    ready = await posts_db.list_resolved_due(now.isoformat())
+    if ready:
+        # Imported only when there is something to post. `publish_one` reaches
+        # into server.py for the patron's X client, which boots the whole
+        # runtime — a quiet tick must not pay that, and must not require an
+        # operator identity merely to report that nothing was due.
+        from excalibur_mcp.publisher import publish_one
+    for row in ready:
+        pid, owner = row["post_id"], row["npub"]
         if await posts_db.claim_due_post(pid) is None:
-            contended.append({"post_id": pid, "owner": owner, "reason": "claimed_by_another_tick"})
+            continue  # another tick got there first; not worth reporting
+        try:
+            out = await publish_one(runtime, pid)
+            posted.append({"post_id": pid, "owner": owner,
+                           "outcome": out.get("outcome"), "reason": out.get("reason")})
+        except Exception as exc:  # noqa: BLE001 — one bad post must not stop the rest
+            logger.exception("scheduler: posting %s failed", pid)
+            posted.append({"post_id": pid, "owner": owner,
+                           "outcome": "error", "reason": str(exc) or type(exc).__name__})
+
+    # -- Phase 2: start building the next ones ------------------------------
+    horizon = now + timedelta(seconds=RESOLVE_LEAD_SECONDS)
+    resolving: list[dict[str, Any]] = []
+    contended: list[dict[str, Any]] = []
+    for row in await posts_db.list_due_for_resolve(horizon.isoformat()):
+        pid, owner = row["post_id"], row["npub"]
+        if await posts_db.claim_for_resolve(pid) is None:
+            contended.append({"post_id": pid, "owner": owner,
+                              "reason": "claimed_by_another_tick"})
             continue
         try:
             claim = await runtime.start_async_job(
-                "publish_post", owner, {"post_id": pid},
-                tool_id=tick_id, max_runtime_seconds=PUBLISH_MAX_RUNTIME_S,
-                result_ttl_seconds=PUBLISH_RESULT_TTL_S,
+                "resolve_post_body", owner, {"post_id": pid},
+                tool_id=tick_id, max_runtime_seconds=RESOLVE_MAX_RUNTIME_S,
+                result_ttl_seconds=RESOLVE_RESULT_TTL_S,
             )
-        except Exception as exc:  # noqa: BLE001 — one bad launch must not stop the rest
-            # The post stays claimed; its lease expires and a later tick retries.
-            logger.exception("scheduler: failed to launch publisher for %s", pid)
-            contended.append({"post_id": pid, "owner": owner, "reason": f"launch_failed: {exc}"})
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("scheduler: failed to launch resolver for %s", pid)
+            contended.append({"post_id": pid, "owner": owner,
+                              "reason": f"launch_failed: {exc}"})
             continue
-        launched.append({
-            "post_id": pid, "owner": owner,
-            "claim_check": (claim or {}).get("claim_check"),
-        })
+        entry = {"post_id": pid, "owner": owner,
+                 "claim_check": (claim or {}).get("claim_check")}
+        # A dispatch that fell back in-process says so now (SDK 0.79.0). Carry it
+        # into the tick summary: a job running somewhere that may not outlive the
+        # next container recycle is worth seeing without reading a log.
+        if isinstance(claim, dict) and claim.get("degraded"):
+            entry["degraded"] = claim["degraded"]
+            entry["degraded_reason"] = claim.get("degraded_reason")
+        resolving.append(entry)
 
-    summary = {"kind": "tick", "who": _who(), "processed": len(due),
-               "launched": launched, "contended": contended,
+    summary = {"kind": "tick", "who": _who(),
+               "posted": posted, "resolving": resolving, "contended": contended,
+               "processed": len(posted) + len(resolving),
                "upcoming": await _upcoming(now)}
-    logger.info("scheduler: due=%d launched=%d", len(due), len(launched))
+    logger.info(
+        "scheduler: posted=%d resolving=%d contended=%d",
+        len(posted), len(resolving), len(contended),
+    )
     try:
         await scheduler_runs.complete_run(run_id, summary)
     except Exception:  # noqa: BLE001 — audit is non-critical

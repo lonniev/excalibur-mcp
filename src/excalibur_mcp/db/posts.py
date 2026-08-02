@@ -379,6 +379,136 @@ async def claim_due_post(post_id: str) -> dict[str, Any] | None:
     )
 
 
+# A resolve claim covers ONLY the slow half — building a body from its blocks.
+# Bounded by the per-block runtimeLimit (900s ceiling) times a handful of
+# blocks, not by anything that touches X. Deliberately far shorter than the old
+# whole-publication lease: a worker that dies mid-resolve should hand its slot
+# back in minutes, not three quarters of an hour.
+_RESOLVE_LEASE = "interval '20 minutes'"
+
+# How many times a body may fail to resolve before it stops being retried. A
+# dynamic block costs a real LLM fare per attempt, so a permanently-broken
+# prompt must not bill its owner every 30 minutes forever — one post did exactly
+# that from 2026-07-27 onward.
+MAX_RESOLVE_ATTEMPTS = 5
+
+
+async def list_due_for_resolve(horizon_iso: str, limit: int = 100) -> list[dict[str, Any]]:
+    """Templates to start BUILDING now: scheduled and due within the horizon,
+    plus ``resolving`` rows whose lease expired (orphaned by a dead worker).
+
+    The horizon is deliberately ahead of now. Resolution is the slow half, so
+    starting it at publish_at guarantees the post is late by however long the
+    LLM took; starting it a tick early lets the fast poster fire punctually.
+    Posts with nothing dynamic resolve instantly and are unaffected either way.
+    """
+    lim = max(1, min(500, limit))
+    return await fetch(
+        f"""
+        SELECT {_FULL_COLS} FROM posts
+        WHERE publish_at IS NOT NULL AND publish_at <= $1::timestamptz
+          AND resolve_attempts < {MAX_RESOLVE_ATTEMPTS}
+          AND (status = 'scheduled'
+               OR (status = 'resolving'
+                   AND last_attempt_at < NOW() - {_RESOLVE_LEASE}))
+        ORDER BY publish_at ASC
+        LIMIT $2
+        """,
+        horizon_iso,
+        lim,
+    )
+
+
+async def claim_for_resolve(post_id: str) -> dict[str, Any] | None:
+    """Atomically take a template for resolution — ``scheduled`` → ``resolving``.
+
+    Same fencing discipline as the old publish claim: ``last_attempt_at`` moves
+    on every claim, so it identifies THIS worker's tenure. A worker presumed dead
+    and re-claimed finds its later writes no longer match.
+
+    ``resolve_attempts`` increments here rather than on failure, so a worker that
+    dies without reporting still counts against the budget — otherwise a job that
+    crashes the container retries forever and never trips the ceiling.
+    """
+    return await fetchrow(
+        f"""
+        UPDATE posts
+        SET status = 'resolving',
+            resolve_attempts = resolve_attempts + 1,
+            last_attempt_at = NOW(), updated_at = NOW()
+        WHERE id = $1::uuid
+          AND resolve_attempts < {MAX_RESOLVE_ATTEMPTS}
+          AND (status = 'scheduled'
+               OR (status = 'resolving'
+                   AND last_attempt_at < NOW() - {_RESOLVE_LEASE}))
+        RETURNING {_FULL_COLS}
+        """,
+        post_id,
+    )
+
+
+async def save_resolved_doc(
+    post_id: str, doc: dict[str, Any], claim_stamp: str | None,
+) -> bool:
+    """Persist partial resolution progress: the doc with blocks filled in so far.
+
+    Called after EACH block completes, not once at the end. A block runs 90-210s
+    and costs the owner a real fare; a worker that dies after three of four
+    blocks must not make them pay for those three again. The fence keeps a
+    superseded worker from writing over its replacement's progress.
+    """
+    r = await execute(
+        """
+        UPDATE posts SET doc = $2::jsonb, updated_at = NOW()
+        WHERE id = $1::uuid AND status = 'resolving'
+          AND ($3::timestamptz IS NULL OR last_attempt_at = $3::timestamptz)
+        """,
+        post_id, json.dumps(doc), claim_stamp,
+    )
+    return int(r.get("rowCount") or 0) > 0
+
+
+async def mark_resolved(
+    post_id: str, text_cache: str, claim_stamp: str | None,
+) -> bool:
+    """The body is complete — ``resolving`` → ``resolved``, ready for the poster.
+
+    ``resolved_at`` is what a stale-body policy would read; nothing enforces one
+    yet, so it is recorded and left for the poster to judge."""
+    r = await execute(
+        """
+        UPDATE posts
+        SET status = 'resolved', text_cache = $2,
+            resolved_at = NOW(), last_attempt_reason = NULL,
+            last_attempt_detail = NULL, updated_at = NOW()
+        WHERE id = $1::uuid AND status = 'resolving'
+          AND ($3::timestamptz IS NULL OR last_attempt_at = $3::timestamptz)
+        """,
+        post_id, text_cache, claim_stamp,
+    )
+    return int(r.get("rowCount") or 0) > 0
+
+
+async def list_resolved_due(now_iso: str, limit: int = 100) -> list[dict[str, Any]]:
+    """Bodies finished building whose moment has arrived. The poster's work-list.
+
+    Every one of these is a plain text_cache and a fully-rendered doc — no LLM,
+    no branching on content type. Posting them is milliseconds each.
+    """
+    lim = max(1, min(500, limit))
+    return await fetch(
+        f"""
+        SELECT {_FULL_COLS} FROM posts
+        WHERE status = 'resolved'
+          AND publish_at IS NOT NULL AND publish_at <= $1::timestamptz
+        ORDER BY publish_at ASC
+        LIMIT $2
+        """,
+        now_iso,
+        lim,
+    )
+
+
 async def upcoming_by_owner(now_iso: str) -> list[dict[str, Any]]:
     """What the scheduler expects next, grouped by owner:
     ``[{npub, count, next_at}]`` over the posts still ahead of it.

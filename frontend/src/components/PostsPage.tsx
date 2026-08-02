@@ -23,7 +23,7 @@ import RefreshButton from "./RefreshButton";
 // separately) are actions rather than filters: one selects every status, the
 // other clears them so you can pick from scratch. Default is everything
 // selected — equivalent to the old unfiltered view.
-const POST_STATUSES = ["draft", "scheduled", "sending", "paused", "sent", "archived"] as const;
+const POST_STATUSES = ["draft", "scheduled", "resolving", "resolved", "sending", "paused", "sent", "archived"] as const;
 const DATE_FIELDS = [
   { value: "created", label: "Created" },
   { value: "updated", label: "Updated" },
@@ -35,8 +35,14 @@ const PAGE_SIZE = 25;
 const statusStyle: Record<string, string> = {
   draft: "bg-stone-100 text-stone-600 dark:bg-zinc-800 dark:text-zinc-300",
   scheduled: "bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-400",
-  // Transient: the scheduler has claimed this post and is resolving its dynamic
-  // blocks / posting it right now. Pulses so it reads as in-progress, not idle.
+  // Building the body: a worker is resolving this post's dynamic blocks. The
+  // slow phase — minutes, not milliseconds — so it pulses.
+  resolving: "bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-400 animate-pulse",
+  // Built and waiting for its moment. Nothing is running; the text is final and
+  // the next tick will send it.
+  resolved: "bg-teal-100 text-teal-700 dark:bg-teal-500/15 dark:text-teal-400",
+  // Transient: the scheduler has claimed this finished body and is posting it
+  // right now. Milliseconds, so this is rarely seen.
   sending: "bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-400 animate-pulse",
   // A "needs attention" stop-state: the scheduler paused this post after a
   // non-transient failure (e.g. a lapsed X subscription). Distinct from the

@@ -1,0 +1,281 @@
+"""Building one post's body — the slow half, and the only half that is slow.
+
+A post is two jobs wearing one name. Turning an author's template into finished
+text can take minutes: each dynamic block is a prompt the model runs, with web
+lookups, bounded by the author's own ``runtimeLimit`` (900s ceiling). Handing
+that text to X is one HTTPS call — tens of milliseconds.
+
+Carrying both under one claim made every publication a long-runner. It forced a
+45-minute lease over work that is mostly instantaneous, made a container recycle
+able to kill a post mid-flight, and meant one algorithm had to reason about two
+unrelated kinds of work. Splitting them puts each stage on the footing it needs:
+
+* **Resolve** (here) — slow, LLM-bound, retryable, costs a fare per block. Its
+  output is a fully-rendered body persisted to the row. Nothing here touches X,
+  the patron's OAuth token, or the ledger's post fare.
+* **Post** (``publisher.py``) — fast, synchronous, irreversible. Its input is a
+  finished body, so it never branches on whether the post was dynamic.
+
+The static/dynamic fork disappears rather than being handled better: a post with
+no dynamic blocks simply has nothing to resolve, completes instantly, and enters
+the poster's queue by the same path as one that took four minutes.
+
+**Progress is persisted per block, not once at the end.** A block costs the owner
+a real fare; a worker that dies after three of four must not make them buy those
+three again. The claim stamp fences every write, so a worker presumed dead and
+replaced cannot overwrite its successor's progress.
+"""
+
+from __future__ import annotations
+
+import logging
+from datetime import datetime, timezone
+from typing import Any
+
+from excalibur_mcp.db import posts as posts_db
+from excalibur_mcp.db import scheduler_runs
+
+logger = logging.getLogger(__name__)
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+async def _record(outcome: dict[str, Any]) -> dict[str, Any]:
+    """Append this resolution to the audit ring and hand the outcome back.
+
+    Every exit from ``resolve_one`` goes through here, so a build cannot finish
+    without leaving a trace. Best-effort: an audit-write failure must never undo
+    the work it was describing.
+    """
+    try:
+        await scheduler_runs.record_run({"kind": "resolution", **outcome})
+    except Exception:  # noqa: BLE001 — audit is never worth failing the build over
+        logger.exception("resolver: failed to record outcome for %s", outcome.get("post_id"))
+    return outcome
+
+
+def _as_dict(value: Any) -> dict[str, Any] | None:
+    """Neon may hand JSONB back parsed or raw — normalize."""
+    import json
+
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else None
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
+def _blocks(doc: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(doc, dict):
+        return []
+    blocks = doc.get("blocks")
+    return [b for b in blocks if isinstance(b, dict)] if isinstance(blocks, list) else []
+
+
+def _body_text(blocks: list[dict[str, Any]]) -> str:
+    """The posted text: every block's text, blank-line joined.
+
+    Nostr companion blocks are excluded — they are published alongside the post,
+    not inside it.
+    """
+    return "\n\n".join(
+        str(b.get("text", "")) for b in blocks if not b.get("nostr")
+    ).strip()
+
+
+def _domains(b: dict[str, Any]) -> list[str]:
+    """The author's web-lookup allow-list for one block, however they typed it."""
+    raw = b.get("domains")
+    if isinstance(raw, list):
+        return [str(x).strip() for x in raw if str(x).strip()]
+    if isinstance(raw, str):
+        return [x.strip() for x in raw.replace(",", "\n").split("\n") if x.strip()]
+    return []
+
+
+def _billing_reason(billing: dict[str, Any], fallback: str) -> str:
+    """The reason a billing call refused, as IT stated it.
+
+    ``_apply_billing`` distinguishes a patron genuinely short of sats from a
+    ledger it could not read, and flattening the two is how an owner holding 844
+    sats was told to top up.
+    """
+    return str(billing.get("error_code") or fallback)
+
+
+def _is_unresolved(b: dict[str, Any]) -> bool:
+    """A dynamic block still holding its PROMPT rather than an answer.
+
+    ``resolved`` is set by this module as each block completes, which is also how
+    a resumed worker knows what it already paid for.
+    """
+    return bool(b.get("dynamic")) and not b.get("resolved")
+
+
+async def resolve_one(runtime: Any, post_id: str) -> dict[str, Any]:
+    """Build one post's body and leave it ``resolved``, or say why it could not.
+
+    Returns the outcome dict that is also written to the audit ring.
+    """
+    from tollbooth.llm_route import clamp_timeout
+    from tollbooth.tool_identity import capability_uuid
+
+    from excalibur_mcp.publisher import _fallback_reason, _owner_voice
+    from excalibur_mcp.resolve import clamp_fetches, resolve_block
+
+    resolve_id = capability_uuid("resolve_dynamic_block")
+
+    row = await posts_db.get_claimed(post_id)
+    if row is None:
+        return await _record({"post_id": post_id, "outcome": "gone"})
+    owner = row["npub"]
+    claim_stamp = str(row.get("last_attempt_at")) if row.get("last_attempt_at") else None
+
+    async def _hold(reason: str, *, detail: str = "", **extra: Any) -> dict[str, Any]:
+        """Hand the template back to ``scheduled`` and say why.
+
+        A held resolution never reaches the poster, so nothing half-built is ever
+        posted — the whole point of separating the phases.
+        """
+        try:
+            await posts_db.mark_attempt(
+                post_id, _now().isoformat(), reason, detail or None,
+            )
+        except Exception:  # noqa: BLE001 — stamping is never worth failing over
+            logger.exception("resolver: failed to stamp attempt on %s", post_id)
+        return await _record({
+            "post_id": post_id, "owner": owner,
+            "outcome": "held", "reason": reason,
+            **({"detail": detail} if detail else {}), **extra,
+        })
+
+    async def _finish(text: str, **extra: Any) -> dict[str, Any]:
+        """Mark the body ready — the ONLY way this function reports success.
+
+        Every exit runs the same fence. Two shorter paths (a legacy text_cache
+        post, a body a previous worker had already finished) used to call
+        mark_resolved and ignore its answer, so a superseded worker could report
+        a build that its replacement actually owns.
+        """
+        if not await posts_db.mark_resolved(post_id, text, claim_stamp):
+            logger.info("resolver: claim on %s was superseded; standing down", post_id)
+            return await _record({
+                "post_id": post_id, "owner": owner, "outcome": "superseded",
+            })
+        return await _record({
+            "post_id": post_id, "owner": owner, "outcome": "resolved", **extra,
+        })
+
+    doc = _as_dict(row.get("doc")) or {}
+    blocks = _blocks(doc)
+    if not blocks:
+        # Nothing to build. A legacy post carrying only text_cache is already a
+        # finished body; anything else is empty and must not reach X.
+        text = (row.get("text_cache") or "").strip()
+        if not text:
+            return await _hold("empty_text_cache")
+        return await _finish(text, blocks_resolved=0)
+
+    pending = [i for i, b in enumerate(blocks) if _is_unresolved(b)]
+
+    # A post with nothing dynamic — or one whose blocks a previous worker already
+    # bought — is finished the moment we look at it. No fare, no LLM, no branch.
+    if not pending:
+        text = _body_text(blocks)
+        if not text:
+            return await _hold("empty_after_resolve")
+        return await _finish(text, blocks_resolved=0, resumed=True)
+
+    try:
+        creds = await runtime.load_credentials(["llm_api_key"])
+        api_key = creds.get("llm_api_key")
+    except Exception:  # noqa: BLE001 — no key is a situation, not a crash
+        api_key = None
+
+    voice, bans = await _owner_voice(owner)
+    degraded: list[dict[str, Any]] = []
+
+    for i in pending:
+        b = blocks[i]
+        prompt = str(b.get("text", "")).strip()
+        fallback = str(b.get("fallback", "")).strip()
+        budget = clamp_timeout(b.get("runtimeLimit"))
+
+        if not prompt:
+            # Nothing was asked for. Not a degradation, and not worth a fare.
+            blocks[i] = {**b, "text": fallback, "resolved": True}
+            await posts_db.save_resolved_doc(post_id, {**doc, "blocks": blocks}, claim_stamp)
+            continue
+
+        # Bill per block, at the moment that block's work is about to happen.
+        # The old shape charged once up front for the whole post, so a failure on
+        # the last of four blocks refunded work that had genuinely been done.
+        cost, denial = await runtime._resolve_pricing(
+            resolve_id, "resolve_dynamic_block", "heavy", {},
+        )
+        if denial is not None:
+            return await _hold(
+                denial.get("error_code") or "pricing_unavailable",
+                detail=str(denial.get("error") or ""), block=i,
+            )
+        billing = await runtime._apply_billing(owner, "resolve_dynamic_block", cost, [])
+        if isinstance(billing, dict):
+            return await _hold(
+                _billing_reason(billing, "insufficient_balance"),
+                detail=str(billing.get("error") or ""), block=i, cost_sats=cost,
+            )
+
+        why = None
+        resolved_text = ""
+        if not api_key:
+            why = "no_operator_llm_key"
+        else:
+            try:
+                resolved_text = await resolve_block(
+                    api_key=api_key, prompt=prompt,
+                    context=_body_text(blocks[:i]),
+                    voice=voice, bans=bans, allowed_domains=_domains(b),
+                    max_fetches=clamp_fetches(b.get("maxFetches", 5)),
+                    timeout_seconds=budget,
+                )
+                if not resolved_text:
+                    why = "empty_resolution"
+            except Exception as exc:  # noqa: BLE001 — fall back, keep the reason
+                logger.warning("resolver: block %d failed for %s: %s", i, owner, exc)
+                why = _fallback_reason(exc, budget)
+
+        if not resolved_text:
+            # The fare bought nothing, so refund it before deciding what to do.
+            await runtime.rollback_debit(resolve_id, owner)
+            if not fallback:
+                # No fallback means no body. Refuse rather than post a gap — and
+                # name the block's own reason, which used to be computed here and
+                # discarded on the way out.
+                return await _hold(
+                    f"dynamic_resolve_failed: {why}", detail=f"block {i}: {why}",
+                    block=i, degraded=degraded,
+                )
+            resolved_text = fallback
+            degraded.append({"block": i, "reason": why, "budget_s": round(budget, 1)})
+
+        blocks[i] = {**b, "text": resolved_text, "resolved": True}
+        # Persist THIS block before starting the next. What the owner paid for is
+        # now durable; a crash costs only the blocks still outstanding.
+        await posts_db.save_resolved_doc(post_id, {**doc, "blocks": blocks}, claim_stamp)
+
+    text = _body_text(blocks)
+    if not text:
+        return await _hold("empty_after_resolve", degraded=degraded)
+
+    return await _finish(
+        text, blocks_resolved=len(pending),
+        **({"degraded": degraded} if degraded else {}),
+    )
