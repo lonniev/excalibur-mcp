@@ -121,7 +121,7 @@ export default function WalletPage() {
         {invoice && (
           <div className="rounded-lg border border-stone-200 dark:border-zinc-800 p-3 space-y-2">
             {bolt && (
-              <div className="font-mono text-xs break-all bg-stone-50 dark:bg-zinc-950 rounded p-2">
+              <div className="font-mono text-xs break-all bg-stone-50 dark:bg-zinc-950 rounded-sm p-2">
                 {bolt}
               </div>
             )}

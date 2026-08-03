@@ -78,7 +78,7 @@ export default function ProfilePage() {
       <div className={`${card} p-5`}>
         <div className="text-sm font-medium mb-2">Nostr identity</div>
         <div className="flex items-center gap-2">
-          <code className="flex-1 min-w-0 truncate text-xs font-mono text-stone-600 dark:text-zinc-300 bg-stone-50 dark:bg-zinc-950 rounded px-2 py-1.5">
+          <code className="flex-1 min-w-0 truncate text-xs font-mono text-stone-600 dark:text-zinc-300 bg-stone-50 dark:bg-zinc-950 rounded-sm px-2 py-1.5">
             {npub}
           </code>
           <button
@@ -135,5 +135,5 @@ function ThemeSwatch({ theme }: { theme: Theme }) {
   const base = "w-5 h-5 rounded-full border border-stone-300 dark:border-zinc-600";
   if (theme === "dark") return <span className={`${base} bg-zinc-900`} />;
   if (theme === "light") return <span className={`${base} bg-stone-100`} />;
-  return <span className={`${base} bg-gradient-to-r from-stone-100 to-zinc-900`} />;
+  return <span className={`${base} bg-linear-to-r from-stone-100 to-zinc-900`} />;
 }

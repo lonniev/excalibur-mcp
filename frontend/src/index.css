@@ -1,6 +1,15 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+
+/* Replaces v3's `content` array. Stated explicitly rather than leaning on v4's
+   automatic detection, so the scan surface stays reviewable. */
+@source '../index.html';
+@source './**/*.{ts,tsx}';
+
+/* Replaces v3's `darkMode: "class"`. lib/theme.ts toggles `.dark` on <html>,
+   so the variant must match descendants of `.dark` — `:is()`, not `:where()`,
+   because v3.4 emitted `:is(.dark *)` and `:where()` would drop the
+   specificity these utilities have always had. */
+@custom-variant dark (&:is(.dark *));
 
 /* color-scheme is set imperatively by lib/theme.ts on <html>. */
 

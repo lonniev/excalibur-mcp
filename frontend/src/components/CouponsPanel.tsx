@@ -86,7 +86,7 @@ export default function CouponsPanel() {
           autoCorrect="off"
           spellCheck={false}
           disabled={redeeming}
-          className="flex-1 rounded-lg px-3 py-2 text-sm uppercase bg-white dark:bg-zinc-950 border border-stone-300 dark:border-zinc-700 focus:outline-none focus:border-amber-400"
+          className="flex-1 rounded-lg px-3 py-2 text-sm uppercase bg-white dark:bg-zinc-950 border border-stone-300 dark:border-zinc-700 focus:outline-hidden focus:border-amber-400"
         />
         <button
           onClick={() => void onRedeem()}

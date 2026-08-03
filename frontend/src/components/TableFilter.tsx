@@ -13,7 +13,7 @@ export interface DateFieldOption {
 }
 
 const field =
-  "text-xs rounded-lg border border-stone-200 bg-stone-50 px-2 py-1.5 focus:outline-none focus:border-stone-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:focus:border-zinc-500";
+  "text-xs rounded-lg border border-stone-200 bg-stone-50 px-2 py-1.5 focus:outline-hidden focus:border-stone-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:focus:border-zinc-500";
 
 export default function TableFilter({
   search,

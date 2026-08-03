@@ -151,7 +151,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   return (
     <div className="flex gap-3 py-1.5 text-sm">
       <div className="w-40 shrink-0 text-stone-500 dark:text-zinc-400">{label}</div>
-      <div className="min-w-0 break-words text-stone-800 dark:text-zinc-100">{children}</div>
+      <div className="min-w-0 wrap-break-word text-stone-800 dark:text-zinc-100">{children}</div>
     </div>
   );
 }

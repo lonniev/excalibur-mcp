@@ -163,7 +163,7 @@ function ActionIcon({
       disabled={busy}
       title={title}
       aria-label={title}
-      className={`p-1 rounded text-stone-400 dark:text-zinc-500 transition-colors disabled:cursor-not-allowed ${hover}`}
+      className={`p-1 rounded-sm text-stone-400 dark:text-zinc-500 transition-colors disabled:cursor-not-allowed ${hover}`}
     >
       <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" className={busy ? "animate-pulse" : ""} aria-hidden>
         <path d={path} />
@@ -640,7 +640,7 @@ export default function PostsPage() {
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); nav("/profile"); }}
-                        className="mt-1 inline-flex items-center gap-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 transition-colors hover:bg-amber-500/25 dark:text-amber-400"
+                        className="mt-1 inline-flex items-center gap-1 rounded-sm bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 transition-colors hover:bg-amber-500/25 dark:text-amber-400"
                         title="Reconnect your X account — this post reschedules itself once X accepts you again."
                       >
                         Reconnect X →

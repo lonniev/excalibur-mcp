@@ -44,7 +44,7 @@ function Tip({ label, children }: { label: string; children: ReactNode }) {
       {children}
       <button
         type="button"
-        className="inline-flex text-stone-300 hover:text-stone-500 dark:text-zinc-600 dark:hover:text-zinc-400 focus:outline-none focus-visible:text-amber-600"
+        className="inline-flex text-stone-300 hover:text-stone-500 dark:text-zinc-600 dark:hover:text-zinc-400 focus:outline-hidden focus-visible:text-amber-600"
         aria-label={label}
         title={label}
       >

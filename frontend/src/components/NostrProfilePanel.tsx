@@ -17,7 +17,7 @@ import {
 
 const card = "rounded-xl border border-stone-200 dark:border-zinc-800 bg-white dark:bg-zinc-900";
 const field =
-  "w-full rounded-lg px-3 py-2 text-sm bg-white dark:bg-zinc-950 border border-stone-300 dark:border-zinc-700 focus:outline-none focus:border-amber-400";
+  "w-full rounded-lg px-3 py-2 text-sm bg-white dark:bg-zinc-950 border border-stone-300 dark:border-zinc-700 focus:outline-hidden focus:border-amber-400";
 
 export default function NostrProfilePanel({ npub }: { npub: string }) {
   const [picture, setPicture] = useState("");

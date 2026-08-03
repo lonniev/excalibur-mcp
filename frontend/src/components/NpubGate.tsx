@@ -23,7 +23,7 @@ type Stage = "begin" | "awaiting" | "checking";
 
 const card = "rounded-xl border border-stone-200 dark:border-zinc-800 bg-white dark:bg-zinc-900";
 const input =
-  "w-full rounded-lg px-3 py-2.5 text-sm bg-white dark:bg-zinc-950 border border-stone-300 dark:border-zinc-700 focus:outline-none focus:border-amber-400 dark:focus:border-amber-500 font-mono";
+  "w-full rounded-lg px-3 py-2.5 text-sm bg-white dark:bg-zinc-950 border border-stone-300 dark:border-zinc-700 focus:outline-hidden focus:border-amber-400 dark:focus:border-amber-500 font-mono";
 const primary =
   "w-full bg-amber-600 hover:bg-amber-500 text-white text-sm py-2.5 rounded-lg disabled:opacity-40 transition-colors";
 const ghost =
