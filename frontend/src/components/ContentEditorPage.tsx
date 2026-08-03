@@ -1194,7 +1194,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
       {/* Soft-swap progress strip — shown while stepping to a sibling post so the
           in-place content change reads as motion, not a frozen pause. */}
       {stepping && (
-        <div className="fixed inset-x-0 top-0 z-[60] h-0.5 overflow-hidden bg-amber-400/15">
+        <div className="fixed inset-x-0 top-0 z-60 h-0.5 overflow-hidden bg-amber-400/15">
           <div className="h-full w-2/5 animate-pulse bg-amber-400" />
         </div>
       )}
@@ -1268,7 +1268,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
                 onClick={() => goToNeighbor(-1)}
                 disabled={curIndex <= 0}
                 title="Previous post (← arrow or swipe left)"
-                className="rounded px-1.5 py-0.5 text-base leading-none hover:text-amber-300 disabled:opacity-30"
+                className="rounded-sm px-1.5 py-0.5 text-base leading-none hover:text-amber-300 disabled:opacity-30"
               >
                 ‹
               </button>
@@ -1280,7 +1280,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
                 onClick={() => goToNeighbor(1)}
                 disabled={curIndex >= neighbors.length - 1}
                 title="Next post (→ arrow or swipe right)"
-                className="rounded px-1.5 py-0.5 text-base leading-none hover:text-amber-300 disabled:opacity-30"
+                className="rounded-sm px-1.5 py-0.5 text-base leading-none hover:text-amber-300 disabled:opacity-30"
               >
                 ›
               </button>
@@ -1384,7 +1384,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
           <span>↻ This is a published record. To change future postings, edit the recurring template.</span>
           <button
             onClick={() => nav(`/post/${templateId}`)}
-            className="ml-auto rounded bg-violet-400 px-2.5 py-1 font-medium text-zinc-950 hover:bg-violet-300"
+            className="ml-auto rounded-sm bg-violet-400 px-2.5 py-1 font-medium text-zinc-950 hover:bg-violet-300"
           >
             Edit the template →
           </button>
@@ -1397,7 +1397,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
           <span>↻ This recurring post resolves fresh each time it fires.</span>
           <button
             onClick={() => nav(`/?template=${id}`)}
-            className="ml-auto rounded bg-zinc-700 px-2.5 py-1 font-medium text-zinc-100 hover:bg-zinc-600"
+            className="ml-auto rounded-sm bg-zinc-700 px-2.5 py-1 font-medium text-zinc-100 hover:bg-zinc-600"
           >
             View published postings →
           </button>
@@ -1411,7 +1411,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
           onTouchEnd={onStageTouchEnd}
           className="relative flex flex-1 items-start justify-center overflow-y-auto px-4 py-10"
         >
-          <div className="pointer-events-none absolute inset-x-0 top-0 h-64 bg-gradient-to-b from-amber-400 to-transparent opacity-5" />
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-64 bg-linear-to-b from-amber-400 to-transparent opacity-5" />
           <div className="relative w-full max-w-xl">
             {isSnippet && !preview && (
               <div className="mb-3">
@@ -1420,7 +1420,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="My CTA Footer"
-                  className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-amber-400"
+                  className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-hidden focus:border-amber-400"
                 />
               </div>
             )}
@@ -1432,7 +1432,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
                   onChange={(e) => setTitle(e.target.value)}
                   maxLength={200}
                   placeholder="Untitled — the list shows the first line"
-                  className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-amber-400"
+                  className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-hidden focus:border-amber-400"
                 />
               </div>
             )}
@@ -1523,7 +1523,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
                     <div className="mb-1.5 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-sky-400">
                       <Share className="h-3 w-3" /> nostr note
                     </div>
-                    <p className="whitespace-pre-wrap break-words leading-normal">
+                    <p className="whitespace-pre-wrap wrap-break-word leading-normal">
                       {b.text
                         ? b.text.split(TWEET_URL_TOKEN).map((part, i, arr) => (
                             <span key={i}>
@@ -1581,7 +1581,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
                 {needsXConnect && (
                   <button
                     onClick={() => nav("/profile")}
-                    className="ml-auto rounded bg-amber-400 px-2.5 py-1 font-medium text-zinc-950 hover:bg-amber-300"
+                    className="ml-auto rounded-sm bg-amber-400 px-2.5 py-1 font-medium text-zinc-950 hover:bg-amber-300"
                   >
                     Connect X →
                   </button>
@@ -1690,7 +1690,7 @@ function BlockView({
       return (
         <>
           {shown ? (
-            <p className="whitespace-pre-wrap break-words text-[15px] leading-normal text-zinc-900">{shown}</p>
+            <p className="whitespace-pre-wrap wrap-break-word text-[15px] leading-normal text-zinc-900">{shown}</p>
           ) : !failed ? (
             <p className="text-[15px] italic leading-normal text-zinc-400">(dynamic block — no preview yet)</p>
           ) : null}
@@ -1706,7 +1706,7 @@ function BlockView({
         </>
       );
     }
-    return <p className="whitespace-pre-wrap break-words text-[15px] leading-normal text-zinc-900">{block.text}</p>;
+    return <p className="whitespace-pre-wrap wrap-break-word text-[15px] leading-normal text-zinc-900">{block.text}</p>;
   }
   // A dynamic block is a self-contained card: its prompt and fallback are edited
   // inline, and Run resolves it in place — no separate edit mode, no global
@@ -1739,20 +1739,20 @@ function BlockView({
             onChange={(e) => onChange(e.target.value)}
             placeholder="Write the prompt to run, e.g. 'the current BTC price in USD, one short sentence'"
             rows={Math.max(2, Math.ceil(block.text.length / 42))}
-            className="w-full resize-none rounded border border-violet-300 bg-white p-2 text-[13px] leading-snug text-violet-900 placeholder:text-violet-300 outline-none focus:border-violet-500"
+            className="w-full resize-none rounded-sm border border-violet-300 bg-white p-2 text-[13px] leading-snug text-violet-900 placeholder:text-violet-300 outline-hidden focus:border-violet-500"
           />
           <input
             value={block.fallback ?? ""}
             onChange={(e) => onChangeFallback(e.target.value)}
             placeholder="Fallback text if it can't resolve (optional)"
-            className="mt-1.5 w-full rounded border border-violet-200 bg-white px-2 py-1 text-[12px] text-violet-800 placeholder:text-violet-300 outline-none focus:border-violet-400"
+            className="mt-1.5 w-full rounded-sm border border-violet-200 bg-white px-2 py-1 text-[12px] text-violet-800 placeholder:text-violet-300 outline-hidden focus:border-violet-400"
           />
           <div className="mt-1.5 flex items-center gap-1.5">
             <input
               value={block.domains ?? ""}
               onChange={(e) => onChangeDomains(e.target.value)}
               placeholder="Allowed web domains, comma-separated (blank = any)"
-              className="min-w-0 flex-1 rounded border border-violet-200 bg-white px-2 py-1 text-[12px] text-violet-800 placeholder:text-violet-300 outline-none focus:border-violet-400"
+              className="min-w-0 flex-1 rounded-sm border border-violet-200 bg-white px-2 py-1 text-[12px] text-violet-800 placeholder:text-violet-300 outline-hidden focus:border-violet-400"
             />
             <input
               type="number"
@@ -1761,7 +1761,7 @@ function BlockView({
               value={block.maxFetches ?? 5}
               onChange={(e) => onChangeMaxFetches(Number(e.target.value) || 0)}
               title="Max web lookups (search + fetch) for this prompt"
-              className="w-16 flex-none rounded border border-violet-200 bg-white px-2 py-1 text-[12px] text-violet-800 outline-none focus:border-violet-400"
+              className="w-16 flex-none rounded-sm border border-violet-200 bg-white px-2 py-1 text-[12px] text-violet-800 outline-hidden focus:border-violet-400"
             />
             <input
               type="number"
@@ -1771,7 +1771,7 @@ function BlockView({
               value={block.runtimeLimit ?? 210}
               onChange={(e) => onChangeRuntimeLimit(Number(e.target.value) || 0)}
               title="Time budget in seconds (60–900). Bounds runtime and may affect the fare."
-              className="w-16 flex-none rounded border border-violet-200 bg-white px-2 py-1 text-[12px] text-violet-800 outline-none focus:border-violet-400"
+              className="w-16 flex-none rounded-sm border border-violet-200 bg-white px-2 py-1 text-[12px] text-violet-800 outline-hidden focus:border-violet-400"
             />
             <span className="flex-none text-[10px] text-violet-400">sec</span>
           </div>
@@ -1790,7 +1790,7 @@ function BlockView({
             {canDelete && <button onClick={onDelete} title="Delete block" className="flex items-center gap-1.5 rounded-md px-2.5 py-2 text-[13px] font-medium text-zinc-500 hover:bg-rose-50 hover:text-rose-600 transition-colors"><Trash2 className="h-4 w-4" /> Delete</button>}
           </div>
           {result && (
-            <p className="mt-1.5 rounded bg-white p-1.5 text-[13px] leading-snug text-zinc-900 ring-1 ring-emerald-200">
+            <p className="mt-1.5 rounded-sm bg-white p-1.5 text-[13px] leading-snug text-zinc-900 ring-1 ring-emerald-200">
               {result}
             </p>
           )}
@@ -1841,7 +1841,7 @@ function BlockView({
             onChange={(e) => onChange(e.target.value)}
             placeholder="Companion note text. Use {{tweet_url}} for the live X link."
             rows={Math.max(2, Math.ceil(block.text.length / 42))}
-            className="w-full resize-none rounded border border-sky-300 bg-white p-2 text-[13px] leading-snug text-sky-900 placeholder:text-sky-300 outline-none focus:border-sky-500"
+            className="w-full resize-none rounded-sm border border-sky-300 bg-white p-2 text-[13px] leading-snug text-sky-900 placeholder:text-sky-300 outline-hidden focus:border-sky-500"
           />
           <div className="mt-1.5 flex flex-wrap items-center gap-2">
             <button
@@ -1880,7 +1880,7 @@ function BlockView({
         onMouseDown={(ev) => ev.preventDefault()}
         onClick={() => applyStyle(style)}
         title={tip}
-        className="rounded px-1.5 py-0.5 text-zinc-700 hover:bg-amber-200"
+        className="rounded-sm px-1.5 py-0.5 text-zinc-700 hover:bg-amber-200"
       >
         {label}
       </button>
@@ -1895,7 +1895,7 @@ function BlockView({
             onMouseDown={(ev) => ev.preventDefault()}
             onClick={() => setShowEmoji((v) => !v)}
             title="Insert emoji or symbol"
-            className="rounded px-1.5 py-0.5 text-zinc-700 hover:bg-amber-200"
+            className="rounded-sm px-1.5 py-0.5 text-zinc-700 hover:bg-amber-200"
           >
             <Smile className="h-3.5 w-3.5" />
           </button>
@@ -1913,7 +1913,7 @@ function BlockView({
                         key={`${group.label}-${i}`}
                         onMouseDown={(ev) => ev.preventDefault()}
                         onClick={() => { insertAtCursor(em); setShowEmoji(false); }}
-                        className="rounded p-1 text-lg hover:bg-amber-100"
+                        className="rounded-sm p-1 text-lg hover:bg-amber-100"
                       >
                         {em}
                       </button>
@@ -1928,13 +1928,13 @@ function BlockView({
           ref={editRef}
           autoFocus value={block.text} onChange={(e) => onChange(e.target.value)}
           rows={Math.max(2, Math.ceil(block.text.length / 42))}
-          className="w-full resize-none bg-amber-50 p-2 text-[15px] leading-normal text-zinc-900 outline-none"
+          className="w-full resize-none bg-amber-50 p-2 text-[15px] leading-normal text-zinc-900 outline-hidden"
         />
         <div className="flex items-center justify-between rounded-b-md bg-amber-100 px-2 py-1">
           <span className="font-mono text-[10px] text-amber-700">
             {block.dynamic ? "this is a dynamic prompt — it runs at post time" : "editing clears this block's flags"}
           </span>
-          <button onClick={onDoneEdit} className="rounded bg-zinc-900 px-2 py-0.5 text-xs text-white hover:bg-zinc-700">Done</button>
+          <button onClick={onDoneEdit} className="rounded-sm bg-zinc-900 px-2 py-0.5 text-xs text-white hover:bg-zinc-700">Done</button>
         </div>
       </div>
     );
@@ -1949,7 +1949,7 @@ function BlockView({
         data-block-id={block.id}
         onMouseUp={() => onMouseUp(block.id, ref.current)}
         onTouchEnd={() => onMouseUp(block.id, ref.current)}
-        className="cursor-text select-text whitespace-pre-wrap break-words text-[15px] leading-normal text-zinc-900"
+        className="cursor-text select-text whitespace-pre-wrap wrap-break-word text-[15px] leading-normal text-zinc-900"
       >
         {segs.map((s, i) => {
           if (!s.flag) return <span key={i}>{s.text}</span>;
@@ -1957,7 +1957,7 @@ function BlockView({
           const isActive = s.flag.id === activeFlagId;
           return (
             <mark key={i} onClick={(e) => onFlagClick(s.flag!.id, e.currentTarget.getBoundingClientRect())}
-              className={`cursor-pointer rounded px-0.5 ${isActive ? c.active + " ring-1 ring-zinc-900" : c.mark}`}>
+              className={`cursor-pointer rounded-sm px-0.5 ${isActive ? c.active + " ring-1 ring-zinc-900" : c.mark}`}>
               {s.text}
             </mark>
           );
@@ -2021,18 +2021,18 @@ function FlagsTab({
               <div className="flex min-w-0 flex-col items-start gap-1">
                 <div className="flex min-w-0 items-start gap-2">
                   <span className={`mt-1 h-2.5 w-2.5 flex-none rounded-full ${c.dot}`} />
-                  <p className={`whitespace-pre-wrap rounded ${c.mark} px-1.5 py-0.5 text-[13px] text-zinc-900`}>"{region}"</p>
+                  <p className={`whitespace-pre-wrap rounded-sm ${c.mark} px-1.5 py-0.5 text-[13px] text-zinc-900`}>"{region}"</p>
                 </div>
                 {spanCount > 1 && (
                   <span className="ml-4 font-mono text-[10px] uppercase tracking-wider text-zinc-500">one region · spans {spanCount} blocks</span>
                 )}
               </div>
-              <button onClick={(e) => { e.stopPropagation(); onRemove(f.blockId, f.id); }} title="Clear flag" className="flex flex-none items-center gap-1 rounded text-zinc-500 hover:text-rose-400"><Trash2 className="h-4 w-4" /></button>
+              <button onClick={(e) => { e.stopPropagation(); onRemove(f.blockId, f.id); }} title="Clear flag" className="flex flex-none items-center gap-1 rounded-sm text-zinc-500 hover:text-rose-400"><Trash2 className="h-4 w-4" /></button>
             </div>
             <textarea
               value={f.note} onChange={(e) => onNote(f.blockId, f.id, e.target.value)} onClick={(e) => e.stopPropagation()}
               placeholder="What should change here? (optional)" rows={2}
-              className="w-full resize-none rounded-md border border-zinc-700 bg-zinc-950 p-2 text-sm text-zinc-200 placeholder:text-zinc-600 outline-none focus:border-amber-400"
+              className="w-full resize-none rounded-md border border-zinc-700 bg-zinc-950 p-2 text-sm text-zinc-200 placeholder:text-zinc-600 outline-hidden focus:border-amber-400"
             />
             <button onClick={(e) => { e.stopPropagation(); onRefine(f.blockId, f); }} disabled={f.loading}
               className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-md bg-amber-400 px-3 py-1.5 text-sm font-medium text-zinc-950 hover:bg-amber-300 disabled:opacity-60 transition-colors">
@@ -2097,7 +2097,7 @@ function SnippetsTab({
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="My CTA Footer 26jun2026"
-            className="flex-1 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-600 outline-none focus:border-amber-400"
+            className="flex-1 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-600 outline-hidden focus:border-amber-400"
           />
           <button
             onClick={save}
@@ -2195,7 +2195,7 @@ function VoiceTab({
       <div>
         <label className="mb-1.5 block font-mono text-[11px] uppercase tracking-widest text-zinc-500">Voice profile</label>
         <textarea value={voice} onChange={(e) => setVoice(e.target.value)} rows={5} disabled={!loaded}
-          className="w-full resize-none rounded-md border border-zinc-700 bg-zinc-900 p-2 text-sm text-zinc-200 outline-none focus:border-amber-400 disabled:opacity-50"
+          className="w-full resize-none rounded-md border border-zinc-700 bg-zinc-900 p-2 text-sm text-zinc-200 outline-hidden focus:border-amber-400 disabled:opacity-50"
           placeholder="Paste a few sentences in your own voice…" />
         <p className="mt-1.5 text-xs text-zinc-500">Sent with every refinement so rewrites sound like you, not like a model.</p>
       </div>
@@ -2207,7 +2207,7 @@ function VoiceTab({
               <span key={i} className="flex items-center gap-1 rounded-full border border-amber-400 bg-zinc-900 pl-2.5 pr-1 py-0.5">
                 <input autoFocus value={draft} onChange={(e) => setDraft(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") { setEditing(null); setDraft(""); } }}
-                  className="w-32 bg-transparent text-xs text-zinc-100 outline-none" />
+                  className="w-32 bg-transparent text-xs text-zinc-100 outline-hidden" />
                 <button onClick={commitEdit} title="Save chip" className="rounded-full p-0.5 text-amber-300 hover:text-amber-200">
                   <Check className="h-3 w-3" />
                 </button>
@@ -2215,7 +2215,7 @@ function VoiceTab({
             ) : (
               <span key={i}
                 className={`flex items-center gap-1 rounded-full border pl-2.5 pr-1 py-1 text-xs transition-colors ${b.on ? "border-amber-400 bg-amber-400 text-zinc-950" : "border-zinc-700 text-zinc-500 line-through"}`}>
-                <button onClick={() => toggle(i)} title="Toggle constraint" className="max-w-[12rem] truncate">{b.text}</button>
+                <button onClick={() => toggle(i)} title="Toggle constraint" className="max-w-48 truncate">{b.text}</button>
                 <button onClick={() => startEdit(i)} title="Edit" className={`rounded-full p-0.5 ${b.on ? "hover:bg-amber-500/40" : "hover:bg-zinc-700"}`}>
                   <Pencil className="h-2.5 w-2.5" />
                 </button>
@@ -2230,7 +2230,7 @@ function VoiceTab({
           <input value={adding} onChange={(e) => setAdding(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") addBan(); }}
             placeholder="Add a construction to avoid…"
-            className="flex-1 rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-amber-400" />
+            className="flex-1 rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 outline-hidden focus:border-amber-400" />
           <button onClick={addBan} disabled={!adding.trim()} title="Add"
             className="flex items-center gap-1 rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:border-amber-400 hover:text-amber-300 disabled:opacity-40">
             <Plus className="h-3 w-3" /> Add
@@ -2268,7 +2268,7 @@ function ScheduleTab({
   onSchedule: () => void; saving: boolean; onDiscard: () => void; isNew: boolean;
   isScheduled: boolean; onUnschedule: () => void;
 }) {
-  const field = "w-full rounded-md border border-zinc-700 bg-zinc-900 p-2 text-sm text-zinc-200 outline-none focus:border-amber-400";
+  const field = "w-full rounded-md border border-zinc-700 bg-zinc-900 p-2 text-sm text-zinc-200 outline-hidden focus:border-amber-400";
   const canSchedule = !!publishAt;
   return (
     <div className="space-y-5">
@@ -2294,7 +2294,7 @@ function ScheduleTab({
             <div className="flex flex-none items-center gap-1.5">
               <span className="text-xs text-zinc-500">every</span>
               <input type="number" min={1} value={interval} onChange={(e) => setInterval(Math.max(1, Number(e.target.value) || 1))}
-                className="w-14 rounded-md border border-zinc-700 bg-zinc-900 p-2 text-center text-sm text-zinc-200 outline-none focus:border-amber-400" />
+                className="w-14 rounded-md border border-zinc-700 bg-zinc-900 p-2 text-center text-sm text-zinc-200 outline-hidden focus:border-amber-400" />
             </div>
           )}
         </div>
@@ -2414,9 +2414,9 @@ function CalendarPreview({ publishAt, freq, interval, ceaseAt }: {
   return (
     <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-3">
       <div className="mb-2 flex items-center justify-between">
-        <button onClick={prev} title="Previous month" className="rounded px-2 text-zinc-500 hover:text-amber-300">‹</button>
+        <button onClick={prev} title="Previous month" className="rounded-sm px-2 text-zinc-500 hover:text-amber-300">‹</button>
         <span className="font-mono text-[11px] uppercase tracking-widest text-zinc-400">{monthLabel}</span>
-        <button onClick={next} title="Next month" className="rounded px-2 text-zinc-500 hover:text-amber-300">›</button>
+        <button onClick={next} title="Next month" className="rounded-sm px-2 text-zinc-500 hover:text-amber-300">›</button>
       </div>
       <div className="grid grid-cols-7 gap-0.5 text-center">
         {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
@@ -2433,16 +2433,16 @@ function CalendarPreview({ publishAt, freq, interval, ceaseAt }: {
           if (isStart) cls = "bg-amber-400 font-semibold text-zinc-950";
           if (isCease) cls = `ring-1 ring-rose-400 text-rose-300${isStart || isOcc ? " bg-amber-400/20" : ""}`;
           return (
-            <div key={i} className={`flex aspect-square items-center justify-center rounded text-[11px] tabular-nums ${cls}`}>
+            <div key={i} className={`flex aspect-square items-center justify-center rounded-sm text-[11px] tabular-nums ${cls}`}>
               {day}
             </div>
           );
         })}
       </div>
       <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-zinc-500">
-        <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-amber-400" /> start</span>
-        {freq !== "none" && <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-amber-400/30" /> repeats</span>}
-        {ceaseKey && <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-sm ring-1 ring-rose-400" /> cease</span>}
+        <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-xs bg-amber-400" /> start</span>
+        {freq !== "none" && <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-xs bg-amber-400/30" /> repeats</span>}
+        {ceaseKey && <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-xs ring-1 ring-rose-400" /> cease</span>}
       </div>
     </div>
   );

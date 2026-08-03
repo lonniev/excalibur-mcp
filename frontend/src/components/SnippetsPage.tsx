@@ -159,7 +159,7 @@ export default function SnippetsPage() {
                       <Star className={`h-4 w-4 ${s.favorite ? "fill-current" : ""}`} />
                     </button>
                   </td>
-                  <td className="px-3 py-2.5 align-top font-medium text-stone-800 dark:text-zinc-200 whitespace-nowrap max-w-[12rem] truncate">
+                  <td className="px-3 py-2.5 align-top font-medium text-stone-800 dark:text-zinc-200 whitespace-nowrap max-w-48 truncate">
                     {s.name}
                   </td>
                   <td className="px-3 py-2.5 align-top max-w-md">

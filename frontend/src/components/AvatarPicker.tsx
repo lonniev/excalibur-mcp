@@ -154,7 +154,7 @@ export default function AvatarPicker({ value, onChange }: { value: string; onCha
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder="https://… or a single emoji"
-          className="mt-2 w-full rounded-lg px-2 py-1.5 text-xs font-mono bg-white dark:bg-zinc-950 border border-stone-300 dark:border-zinc-700 focus:outline-none focus:border-amber-400"
+          className="mt-2 w-full rounded-lg px-2 py-1.5 text-xs font-mono bg-white dark:bg-zinc-950 border border-stone-300 dark:border-zinc-700 focus:outline-hidden focus:border-amber-400"
         />
       </details>
 

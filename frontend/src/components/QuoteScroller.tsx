@@ -77,7 +77,7 @@ export default function QuoteScroller({
         {heading ?? "Working…"}
       </div>
       <div
-        className="mx-auto flex min-h-[7rem] max-w-xl flex-col justify-center gap-3"
+        className="mx-auto flex min-h-28 max-w-xl flex-col justify-center gap-3"
         style={{ opacity: visible ? 1 : 0, transition: `opacity ${FADE_MS}ms ease` }}
       >
         <p className="font-serif text-lg italic leading-relaxed text-zinc-300">

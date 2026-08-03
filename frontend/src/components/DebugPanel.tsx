@@ -229,14 +229,14 @@ export default function DebugPanel() {
         </button>
       </div>
       {open && (
-        <div className="max-h-64 w-full overflow-y-auto border-t border-zinc-700 bg-zinc-950/95 p-3 font-mono text-xs backdrop-blur">
+        <div className="max-h-64 w-full overflow-y-auto border-t border-zinc-700 bg-zinc-950/95 p-3 font-mono text-xs backdrop-blur-sm">
           {log.length === 0 && <div className="text-zinc-500">No MCP activity yet.</div>}
           {log.map((entry, i) => {
             const failed = isFailure(entry);
             return (
               <div
                 key={i}
-                className={`flex gap-2 py-0.5 ${failed ? "-mx-1 rounded bg-red-950/60 px-1" : ""}`}
+                className={`flex gap-2 py-0.5 ${failed ? "-mx-1 rounded-sm bg-red-950/60 px-1" : ""}`}
               >
                 <span className="shrink-0 text-zinc-600">{entry.ts}</span>
                 <span className={`w-12 shrink-0 ${failed ? "font-bold text-red-400" : TYPE_COLOR[entry.type]}`}>
