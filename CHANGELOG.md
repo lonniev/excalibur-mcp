@@ -11,6 +11,28 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — frontend moved to Tailwind CSS v4
+
+Tailwind v4 relocated its PostCSS plugin, so a bare dependency bump could not
+build. The frontend now uses the first-party `@tailwindcss/vite` plugin, and the
+PostCSS layer is gone with it — `postcss.config.js`, `autoprefixer`, and
+`postcss` are removed, since v4 vendor-prefixes via Lightning CSS.
+
+`tailwind.config.js` is deleted in favour of CSS-first configuration in
+`src/index.css`. `darkMode: "class"` becomes
+`@custom-variant dark (&:is(.dark *))`, which the dark/light/system picker in
+`lib/theme.ts` depends on: without it every `dark:` utility would quietly fall
+back to `prefers-color-scheme` while the build still passed. The `content` array
+becomes explicit `@source` directives. `@tailwindcss/typography` is dropped —
+no `prose` class was ever used.
+
+Utility renames (`rounded`→`rounded-sm`, `rounded-sm`→`rounded-xs`,
+`outline-none`→`outline-hidden`) were verified value-equivalent against a v3
+baseline build. One deliberate visual change: the hero `<h1>` carries
+`leading-tight sm:text-4xl`, and v4 lets the explicit `leading-tight` win where
+v3 let `text-4xl`'s bundled line-height override it, so the heading renders at
+the 45px it asks for instead of 40px.
+
 ## 0.37.3 — 2026-08-01
 
 ### Fixed — X's reason for declining a post is no longer thrown away
