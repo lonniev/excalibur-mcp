@@ -356,12 +356,18 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
                               "reason": _stated(reason, post_id),
                               **({"detail": detail} if detail else {}), **extra})
 
+    # What went out is `render` — this firing's resolved blocks. `doc` is the
+    # author's template and is never read for content here (nor written: the
+    # publishing path holds no write handle on it at all). Legacy rows resolved
+    # before `render` existed carry their rendered text in `doc`, so they fall
+    # back to it; nothing else may.
     doc = _as_dict(row.get("doc"))
-    nostr = _nostr_blocks(doc)
+    rendered = _as_dict(row.get("render")) or doc or {}
+    nostr = _nostr_blocks(rendered)
     text = (row.get("text_cache") or "").strip()
-    # The doc snapshotted into a recurring occurrence — replaced below with the
-    # rendered (static) doc when the post carried dynamic blocks.
-    occurrence_doc: dict[str, Any] = doc or {}
+    # The doc snapshotted into a recurring occurrence: the rendered blocks, so
+    # history shows what was published rather than the prompt behind it.
+    occurrence_doc: dict[str, Any] = rendered
 
     if not text:  # content reason — a body that resolved to nothing
         return await _hold("empty_text_cache")
@@ -387,7 +393,6 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
     # takes milliseconds — which is why it no longer needs to be a long-runner
     # able to outlive its container.
     fallbacks: list[dict[str, Any]] = []
-    occurrence_doc = doc or {}
     if not text:
         return await _hold("empty_after_resolve")
 

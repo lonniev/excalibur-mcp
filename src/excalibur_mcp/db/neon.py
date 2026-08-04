@@ -119,6 +119,23 @@ async def _ensure_domain_schema(vault: Any) -> None:
         f"ALTER TABLE {t('posts')} ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ",
         f"ALTER TABLE {t('posts')} ADD COLUMN IF NOT EXISTS resolve_attempts INT NOT NULL DEFAULT 0",
 
+        # What THIS firing built, kept apart from what the author wrote.
+        #
+        # Resolution used to write its output back into `doc`, and a dynamic
+        # block's prompt IS its `text` — so the first firing of a recurring
+        # template overwrote the prompt with that firing's answer (or, when the
+        # model was unreachable, with the fallback) and marked the block
+        # resolved. Advancing the recurrence never restored it, so the template
+        # was destroyed by its own first success: frozen, silently static, and
+        # unrecoverable because `doc` has no history.
+        #
+        # `render` is that per-firing scratch space. `doc` is authored state and
+        # changes only when a human edits it; `render` is derived, cleared at
+        # every recurrence boundary, and rebuilt from `doc` on the next firing.
+        # Keeping partial progress here is still what stops a worker that died
+        # after three of four paid blocks from re-billing the owner.
+        f"ALTER TABLE {t('posts')} ADD COLUMN IF NOT EXISTS render JSONB",
+
         # The poster's work-list: bodies finished resolving and now due. Narrow
         # and partial so the common tick is an index-only scan.
         f"CREATE INDEX IF NOT EXISTS posts_resolved_due_idx ON {t('posts')} "

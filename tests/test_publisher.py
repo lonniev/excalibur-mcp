@@ -229,8 +229,14 @@ def test_claim_lease_outlives_the_cron_period():
     lease_min = int(re.search(r"(\d+) minutes", posts_db._CLAIM_LEASE).group(1))
 
     wrangler = Path(__file__).resolve().parent.parent / "scheduler-worker" / "wrangler.toml"
-    crons = re.search(r'crons\s*=\s*\["\*/(\d+) ', wrangler.read_text()).group(1)
-    cron_min = int(crons)
+    crons = re.search(r'crons\s*=\s*\["\*/(\d+) ', wrangler.read_text())
+    if crons is None:
+        # No cron configured — the scheduler is deliberately halted (2026-08-04,
+        # while resolution was writing over authored templates). The invariant is
+        # vacuous with nothing firing, and un-skips itself the moment a schedule
+        # is restored, which is exactly when it matters again.
+        pytest.skip("scheduler-worker has no cron trigger; nothing fires to race a lease")
+    cron_min = int(crons.group(1))
 
     assert lease_min > cron_min, (
         f"claim lease ({lease_min} min) must exceed the cron period ({cron_min} min); "

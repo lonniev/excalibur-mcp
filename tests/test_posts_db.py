@@ -162,6 +162,85 @@ async def test_occurrence_and_advance_are_one_statement():
 
 
 @pytest.mark.asyncio
+async def test_save_render_writes_render_and_never_doc():
+    """The column boundary, asserted in SQL — the layer where it is real.
+
+    Resolution wrote its output into `doc` until 2026-08-04. Since a dynamic
+    block's prompt IS its `text`, that consumed the authored template on the
+    first firing. Nothing in the publishing path may hold a write handle on
+    `doc`; assertions about in-memory dicts do not establish that, because the
+    block list is rebuilt on every read and the damage was only ever durable.
+    """
+    captured = {}
+
+    async def fake_execute(query, *args):
+        captured["query"] = query
+        return {"rowCount": 1}
+
+    with patch.object(posts_db, "execute", fake_execute):
+        ok = await posts_db.save_render(
+            PID, {"blocks": [{"text": "answer"}]}, "2026-07-30 20:30:20+00",
+        )
+
+    assert ok is True
+    q = captured["query"]
+    assert "SET render = $2::jsonb" in q
+    assert "doc" not in q, "the authored doc is not writable from the resolve path"
+    # Still fenced: a superseded worker must not overwrite its replacement.
+    assert "last_attempt_at = $3::timestamptz" in q
+
+
+@pytest.mark.asyncio
+async def test_advancing_a_recurrence_clears_this_firings_state():
+    """A template advancing to its next occurrence must carry nothing forward.
+
+    `render` left standing is last firing's finished text sitting where the next
+    firing looks for work — the post freezes and reposts it forever.
+    `resolve_attempts` left standing is subtler: it increments on every claim,
+    including successful ones, and is capped, so a healthy recurring template
+    silently stopped resolving after its 5th firing by dropping off the
+    work-list.
+    """
+    captured = {}
+
+    async def fake_fetchrow(query, *args):
+        captured["query"] = query
+        return {"id": "occ-1"}
+
+    with patch.object(posts_db, "fetchrow", fake_fetchrow):
+        await posts_db.record_occurrence_and_advance(
+            template_id=PID, npub="npub1x", doc={"blocks": []}, text_cache="hi",
+            tweet_url="u", sent_at="2026-07-30T20:32:22+00:00",
+            occurrence_publish_at=None, next_publish_at="2026-07-31T11:40:25+00:00",
+            claim_stamp="2026-07-30 20:30:20+00",
+        )
+
+    advanced = captured["query"].split("INSERT INTO posts")[0]
+    assert "render               = NULL" in advanced
+    assert "resolve_attempts     = 0" in advanced
+    assert "resolved_at          = NULL" in advanced
+
+
+@pytest.mark.asyncio
+async def test_editing_the_doc_drops_a_stale_render():
+    """An edit invalidates whatever this firing built from the OLD prompts.
+    Keeping it would publish text the author has just rewritten."""
+    captured = {}
+
+    async def fake_fetchrow(query, *args):
+        captured["query"] = query
+        return {"post_id": PID, "status": "scheduled", "updated_at": "now"}
+
+    with patch.object(posts_db, "fetchrow", fake_fetchrow):
+        await posts_db.update_post("npub1x", PID, {"doc": {"blocks": []}})
+    assert "render = NULL" in captured["query"]
+
+    with patch.object(posts_db, "fetchrow", fake_fetchrow):
+        await posts_db.update_post("npub1x", PID, {"title": "just a rename"})
+    assert "render = NULL" not in captured["query"], "an unrelated patch keeps progress"
+
+
+@pytest.mark.asyncio
 async def test_occurrence_and_advance_reports_a_lost_claim():
     with patch.object(posts_db, "fetchrow", AsyncMock(return_value=None)):
         held = await posts_db.record_occurrence_and_advance(
