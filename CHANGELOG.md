@@ -11,6 +11,43 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — resolution consumed the template it was building from
+
+A dynamic block's prompt IS its `text`, and the resolver wrote each answer back
+into `doc` — the authored row. So the first firing of a recurring template
+replaced every prompt with that firing's output and marked the block `resolved`.
+Advancing the recurrence never restored it and `doc` has no history, so the
+template was destroyed by its own first success.
+
+Nothing reported it. Later firings found no pending blocks, called no model,
+charged no fare, and reposted the frozen words on schedule. Where resolution had
+failed, what froze was the block's fallback text — the visible form of the bug,
+and the only one that looked wrong. A block with **no** fallback was the sole
+survivor: that path refuses rather than writes.
+
+Authored and derived state are now two columns. `doc` changes only under a human
+edit; `render` holds what a firing built, and is cleared when the recurrence
+advances. The resolve path no longer holds a write handle on `doc` at all,
+asserted in SQL rather than in dicts.
+
+Two further defects surfaced in the same mechanism:
+
+- `resolve_attempts` increments on every claim, including successful ones, and is
+  capped at 5. Nothing reset it, so a healthy recurring template stopped
+  resolving after its fifth firing — silently, by dropping off the work-list.
+  Advancing now resets it; a genuinely broken template still trips the cap,
+  because it never reaches that statement.
+- Templates flattened before this fix carry `resolved: true` in their authored
+  doc. Honouring it keeps them frozen; ignoring it runs last firing's output as
+  the prompt and bills the owner for fluent posts nobody wrote. They now pause
+  with `template_prompt_lost`, naming the affected blocks. **The prompts are not
+  recoverable** — `doc` has no history and sent occurrences hold rendered text —
+  so the block must be re-authored, then Resumed.
+
+The Cloudflare cron trigger is deployed empty while this ships; restore
+`crons = ["*/30 * * * *"]` in `scheduler-worker/wrangler.toml` once the MCP is
+running this code.
+
 ### Changed — Performance page reads without a legend
 
 The Followers widget carried both a lucide `Users` glyph and a `👥` emoji: one
