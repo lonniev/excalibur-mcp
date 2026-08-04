@@ -16,16 +16,11 @@ compatibility_date = "2026-06-19"
 # between ticks instead of being pinned awake 24/7 — patrons who need immediacy
 # use "Post Now" in the UI rather than waiting for a tick.
 #
-# HALTED 2026-08-04 — the resolver writes its output back over the authored
-# template's own `doc` (resolver.py: the dynamic block's prompt IS `text`), and
-# advancing a recurrence never restores it. Every tick that resolves a recurring
-# template destroys the prompt it was built from — irrecoverably, since `doc` has
-# no history. An empty `crons` deploys the Worker with NO schedule.
-#
-# RESTORE to ["*/30 * * * *"] only once resolution no longer holds a write handle
-# on the authored doc.
+# Halted 2026-08-04 while resolution was writing over authored templates, and
+# restored the same day once #336 gave `render` its own column. The window that
+# did the damage was #318 (08-02 02:08Z) to #336 (08-04 10:29Z).
 [triggers]
-crons = []
+crons = ["*/30 * * * *"]
 
 [vars]
 # Public, not secret. The worker self-discovers the operator npub from this MCP.
