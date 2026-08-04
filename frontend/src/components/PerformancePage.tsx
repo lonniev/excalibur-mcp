@@ -33,8 +33,10 @@ const TIPS = {
     "How this post's first 15 minutes compared to your own typical post: impressions at t+15m ÷ your rolling median t+15m. Above 1× means faster than your normal.",
   breakoutRatio:
     "Whether the post travelled beyond your followers: impressions ÷ follower count. Much greater than 1× implies For You pickup; around 1× means it mostly stayed on the home timeline. Empty when follower count is unavailable.",
+  trend:
+    "Impressions at each snapshot for this post, oldest to newest (t+15m through +28d). The line shows the shape of the climb; the Impr. column carries the latest number.",
   linkPlacement:
-    "Median impressions bucketed by where you put the link across your corpus — link in the body, link in the first reply, or no link.",
+    "Median impressions grouped by where the link sat — in the body, in the first reply, or no link at all. Only the groups your corpus actually contains appear, and the panel stays hidden until there are two of them, because one median compares to nothing.",
 } as const;
 
 /** Hover / focus annotation with a real design (not a bare title= attribute). */
@@ -243,23 +245,23 @@ export default function PerformancePage() {
         />
         <StatCard
           icon={<Users className="h-4 w-4" />}
-          label="Followers 👥"
+          label="Followers"
           value={fmtInt(followers)}
           tip={TIPS.followers}
         />
       </div>
 
-      {cohortEntries.length > 0 && (
+      {cohortEntries.length > 1 && (
         <div className={`${card} p-4`}>
           <div className="flex items-center justify-center gap-2 mb-1">
             <Link2 className="h-4 w-4 text-amber-600 dark:text-amber-400" aria-hidden />
             <Tip label={TIPS.linkPlacement}>
-              <h2 className="text-sm font-medium">Where should the link go?</h2>
+              <h2 className="text-sm font-medium">Link placement and reach</h2>
             </Tip>
           </div>
           <p className="text-xs text-stone-500 dark:text-zinc-400 mb-3 text-center">
-            Median impressions for link-in-body vs. link-in-first-reply vs. no link — grounded in
-            your corpus, not third-party claims.
+            Median impressions grouped by where the link sat — grounded in your corpus, not
+            third-party claims.
           </p>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -283,22 +285,8 @@ export default function PerformancePage() {
       )}
 
       <div className={`${card} overflow-hidden`}>
-        <div className="px-4 py-3 border-b border-stone-100 dark:border-zinc-800 flex items-center justify-between gap-3 flex-wrap">
+        <div className="px-4 py-3 border-b border-stone-100 dark:border-zinc-800">
           <h2 className="text-sm font-medium">Posts by reach</h2>
-          <span className="text-xs text-stone-400 dark:text-zinc-500 flex items-center gap-3">
-            <Tip label={TIPS.escapeVelocity}>
-              <span className="inline-flex items-center gap-1">
-                <Rocket className="h-3 w-3" aria-hidden />
-                Escape velocity
-              </span>
-            </Tip>
-            <Tip label={TIPS.breakoutRatio}>
-              <span className="inline-flex items-center gap-1">
-                <TrendingUp className="h-3 w-3" aria-hidden />
-                Breakout ratio
-              </span>
-            </Tip>
-          </span>
         </div>
         {posts.length === 0 ? (
           <div className="px-4 py-10 text-center text-sm text-stone-500 dark:text-zinc-400">
@@ -320,16 +308,26 @@ export default function PerformancePage() {
               <thead>
                 <tr className="text-left text-xs text-stone-400 dark:text-zinc-500 border-b border-stone-100 dark:border-zinc-800">
                   <th className="px-4 py-2 font-medium">Post</th>
-                  <th className="px-3 py-2 font-medium">Curve</th>
+                  <th className="px-3 py-2 font-medium">
+                    <Tip label={TIPS.trend}>
+                      <span>Trend</span>
+                    </Tip>
+                  </th>
                   <th className="px-3 py-2 font-medium text-right">Impr.</th>
                   <th className="px-3 py-2 font-medium text-right">
                     <Tip label={TIPS.escapeVelocity}>
-                      <span>EV</span>
+                      <span className="inline-flex items-center gap-1">
+                        <Rocket className="h-3 w-3" aria-hidden />
+                        Escape velocity
+                      </span>
                     </Tip>
                   </th>
                   <th className="px-3 py-2 font-medium text-right">
                     <Tip label={TIPS.breakoutRatio}>
-                      <span>BR</span>
+                      <span className="inline-flex items-center gap-1">
+                        <TrendingUp className="h-3 w-3" aria-hidden />
+                        Breakout ratio
+                      </span>
                     </Tip>
                   </th>
                   <th className="px-3 py-2 font-medium">Link</th>

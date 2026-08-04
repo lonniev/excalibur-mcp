@@ -11,6 +11,39 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Performance page reads without a legend
+
+The Followers widget carried both a lucide `Users` glyph and a `👥` emoji: one
+concept, two icons. The emoji is gone.
+
+"Curve" named the shape of a thing without saying what was plotted. It is now
+"Trend", and it carries the same `Tip` treatment as every other metric on the
+page — impressions at each snapshot, oldest to newest.
+
+The Escape velocity and Breakout ratio legend chips in the table header are
+folded into the columns they described. The columns had abbreviated to `EV` and
+`BR` precisely because the legend was there to expand them; with the glyph and
+full name in the header cell, the reader no longer looks in two places.
+
+### Fixed — the link-placement panel promised a comparison it could not make
+
+`_detect_link_placement` reads the outgoing body text, so it can only ever
+return `body` or `none` — it cannot see a link in a first reply. `first_reply`
+lives in a schema comment and a unit test; nothing stamps it in production. The
+panel nonetheless offered "link-in-body vs. link-in-first-reply vs. no link",
+and with a single cohort it rendered one median with nothing to compare against.
+
+It now renders only when the corpus actually holds two or more placement
+groups, and the title ("Link placement and reach") and tip describe what the
+harvester can produce rather than what was hoped for.
+
+### Fixed — the small Refresh spinner was too faint to read as "working"
+
+`RefreshButton`'s `sm` scale goes h-8/h-4 → h-10/h-5. The fix lives in the
+shared component rather than in a per-page override, so the Performance and
+Scheduler page headers stay the same size — the drift this component was
+written to prevent.
+
 ### Changed — frontend moved to Tailwind CSS v4
 
 Tailwind v4 relocated its PostCSS plugin, so a bare dependency bump could not

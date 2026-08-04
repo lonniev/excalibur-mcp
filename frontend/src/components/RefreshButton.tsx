@@ -9,6 +9,10 @@
 // sitting beside a title. Everything that carries meaning — the glyph, the spin
 // while busy, the disabled state, the accessible name — is fixed here so it
 // cannot drift again.
+//
+// "sm" is smaller than a toolbar button, not small: at h-4 the spin was too
+// faint to read as "working". The scale lives here rather than in a per-page
+// override, so both page headers stay the same size.
 
 import { RefreshCw } from "lucide-react";
 
@@ -25,8 +29,8 @@ export default function RefreshButton({
   /** Override only to say WHAT refreshes; the accessible name follows it. */
   title?: string;
 }) {
-  const box = size === "lg" ? "h-12 w-12" : "h-8 w-8";
-  const glyph = size === "lg" ? "h-6 w-6" : "h-4 w-4";
+  const box = size === "lg" ? "h-12 w-12" : "h-10 w-10";
+  const glyph = size === "lg" ? "h-6 w-6" : "h-5 w-5";
 
   return (
     <button
