@@ -162,6 +162,52 @@ async def test_occurrence_and_advance_are_one_statement():
 
 
 @pytest.mark.asyncio
+async def test_re_authoring_a_flattened_block_clears_the_per_firing_mark():
+    """Repairing a destroyed prompt must actually repair it.
+
+    `resolver._lost_prompts` refuses to build a template whose authored block is
+    `dynamic` AND `resolved` — the signature of a prompt overwritten before the
+    doc/render split. But an editing surface that loads a damaged block and
+    PATCHes it back carries that flag along, so the owner rewrites the prompt,
+    saves, and the template pauses as prompt-lost anyway. Forever, over a prompt
+    that is now perfectly good.
+
+    `resolved` is never authored state, so it is stripped at the column.
+    """
+    captured = {}
+
+    async def fake_fetchrow(query, *args):
+        captured["args"] = args
+        return {"post_id": PID, "status": "scheduled", "updated_at": "now"}
+
+    repaired = {"blocks": [
+        {"text": "static", "flags": []},
+        {"text": "the newly re-authored prompt", "dynamic": True,
+         "fallback": "fb", "resolved": True},
+    ]}
+    with patch.object(posts_db, "fetchrow", fake_fetchrow):
+        await posts_db.update_post("npub1x", PID, {"doc": repaired})
+
+    saved = json.loads(next(a for a in captured["args"] if isinstance(a, str) and "blocks" in a))
+    assert "resolved" not in saved["blocks"][1], "the stale mark must not survive the save"
+    assert saved["blocks"][1]["text"] == "the newly re-authored prompt"
+    assert saved["blocks"][1]["dynamic"] is True, "and the block is still dynamic"
+    assert saved["blocks"][1]["fallback"] == "fb"
+
+    # Same gate on the create path, so a duplicated damaged post is clean too.
+    async def fake_create(query, *args):
+        captured["args"] = args
+        return {"post_id": PID, "status": "draft", "created_at": "now"}
+
+    with patch.object(posts_db, "fetchrow", fake_create):
+        await posts_db.create_post(
+            "npub1x", repaired, None, None, None, None, "draft", None,
+        )
+    saved = json.loads(next(a for a in captured["args"] if isinstance(a, str) and "blocks" in a))
+    assert "resolved" not in saved["blocks"][1]
+
+
+@pytest.mark.asyncio
 async def test_save_render_writes_render_and_never_doc():
     """The column boundary, asserted in SQL — the layer where it is real.
 

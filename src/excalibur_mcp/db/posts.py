@@ -64,6 +64,33 @@ _PATCHABLE: dict[str, str] = {
 _JSON_KEYS = {"doc", "recurrence"}
 
 
+# Marks the resolver stamps on a block while building ONE firing. They describe a
+# render, never authored intent, so they never belong in `doc`.
+_PER_FIRING_BLOCK_KEYS = frozenset({"resolved"})
+
+
+def _authored(doc: Any) -> Any:
+    """``doc`` as the author meant it: per-firing marks stripped from every block.
+
+    ``resolved`` on a dynamic block in ``doc`` is the signature of a template
+    flattened before the doc/render split, and ``resolver._lost_prompts`` reads it
+    to refuse building from a destroyed prompt. That detector turns on the FE: a
+    surface that loads a damaged block and PATCHes it back would re-assert the
+    flag, and the template would then be diagnosed prompt-lost forever while
+    holding the prompt its owner had just carefully rewritten.
+
+    Stripping on the way in makes every surface's behaviour irrelevant — there is
+    one gate, and it is the one immediately before the column.
+    """
+    if not isinstance(doc, dict) or not isinstance(doc.get("blocks"), list):
+        return doc
+    return {**doc, "blocks": [
+        {k: v for k, v in b.items() if k not in _PER_FIRING_BLOCK_KEYS}
+        if isinstance(b, dict) else b
+        for b in doc["blocks"]
+    ]}
+
+
 async def create_post(
     npub: str,
     doc: dict[str, Any],
@@ -93,7 +120,7 @@ async def create_post(
         npub,
         status,
         title or None,
-        json.dumps(doc),
+        json.dumps(_authored(doc)),
         text_cache,
         publish_at,
         json.dumps(recurrence) if recurrence is not None else None,
@@ -300,6 +327,8 @@ async def update_post(
         if key not in patch:
             continue
         value = patch[key]
+        if key == "doc":
+            value = _authored(value)
         if key in _JSON_KEYS:
             value = json.dumps(value) if value is not None else None
         params.append(value)
