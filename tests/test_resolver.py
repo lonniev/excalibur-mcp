@@ -40,7 +40,7 @@ def _stub_voice():
 @pytest.fixture(autouse=True)
 def _stub_writes():
     """The two row-writes the resolver makes, exposed for assertion."""
-    with patch.object(resolver.posts_db, "save_resolved_doc", AsyncMock(return_value=True)) as save, \
+    with patch.object(resolver.posts_db, "save_render", AsyncMock(return_value=True)) as save, \
          patch.object(resolver.posts_db, "mark_resolved", AsyncMock(return_value=True)) as done, \
          patch.object(resolver.posts_db, "mark_attempt", AsyncMock()):
         yield SimpleNamespace(save=save, done=done)
@@ -123,10 +123,15 @@ class TestProgressIsPersisted:
     async def test_a_resumed_worker_rebuys_nothing(self, _stub_writes):
         """A block already carrying an answer is marked resolved. A second worker
         must skip it — charging again for work the owner already owns is the
-        failure this flag exists to prevent."""
+        failure this flag exists to prevent.
+
+        The evidence lives in ``render``, this firing's working copy. It cannot
+        live in ``doc``: that is the author's template, it outlives the firing,
+        and reading paid-for-ness from it is what froze recurring posts."""
         rt = _runtime()
         already = {**_DYN, "text": "$64,000", "resolved": True}
-        with _claimed(_doc(_STATIC, already, dict(_DYN))), \
+        with _claimed(_doc(_STATIC, dict(_DYN), dict(_DYN)),
+                      render=_doc(_STATIC, already, dict(_DYN))), \
              patch("excalibur_mcp.resolve.resolve_block", AsyncMock(return_value="fresh")):
             out = await resolver.resolve_one(rt, "p1")
 
@@ -137,7 +142,8 @@ class TestProgressIsPersisted:
     async def test_a_fully_resumed_body_costs_nothing_at_all(self, _stub_writes):
         rt = _runtime()
         done_block = {**_DYN, "text": "$64,000", "resolved": True}
-        with _claimed(_doc(_STATIC, done_block)):
+        with _claimed(_doc(_STATIC, dict(_DYN)),
+                      render=_doc(_STATIC, done_block)):
             out = await resolver.resolve_one(rt, "p1")
         assert out["outcome"] == "resolved" and out.get("resumed") is True
         rt._apply_billing.assert_not_awaited()
@@ -233,3 +239,126 @@ class TestAuthorControls:
         assert kw["timeout_seconds"] == 300
         assert kw["max_fetches"] == 2
         assert kw["allowed_domains"] == ["coindesk.com", "kraken.com"]
+
+
+# ---------------------------------------------------------------------------
+# The author's template is not the resolver's scratch paper
+# ---------------------------------------------------------------------------
+
+
+class TestTheAuthoredDocIsNeverWritten:
+    """The 2026-08-04 defect, pinned from several directions.
+
+    A dynamic block's prompt IS its ``text``, and resolution used to write its
+    answer back over that — into ``doc``, the authored row. One firing of a
+    recurring template therefore consumed the template: the prompt became the
+    answer (or the fallback, when the model was unreachable), the block was
+    marked ``resolved``, and every later firing found nothing pending and
+    reposted the same frozen words. ``doc`` has no history, so the prompts were
+    gone for good.
+
+    These assert the separation rather than the symptom: whatever else happens,
+    the resolver writes ``render`` and only ``render``.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_successful_resolve_leaves_the_prompt_untouched(self, _stub_writes):
+        """The success path did the damage too — this is not a failure-only bug.
+        A template that resolves perfectly still had its prompt overwritten, and
+        looked fine doing it, because generated prose reads like content."""
+        rt = _runtime()
+        doc = _doc(_STATIC, dict(_DYN))
+        with _claimed(doc), \
+             patch("excalibur_mcp.resolve.resolve_block", AsyncMock(return_value="$64,000")):
+            await resolver.resolve_one(rt, "p1")
+
+        saved = _stub_writes.save.await_args.args[1]
+        assert saved["blocks"][1]["text"] == "$64,000", "the render carries the answer"
+        assert doc["blocks"][1]["text"] == "the BTC/USD price now", "the doc keeps the prompt"
+        assert "resolved" not in doc["blocks"][1], "and is not marked spent"
+
+    @pytest.mark.asyncio
+    async def test_a_fallback_never_becomes_the_prompt(self, _stub_writes):
+        """The visible half of the bug: an unreachable model substituted the
+        fallback, and the fallback then WAS the prompt for every firing after."""
+        rt = _runtime()
+        doc = _doc(_STATIC, dict(_DYN))
+        with _claimed(doc), \
+             patch("excalibur_mcp.resolve.resolve_block",
+                   AsyncMock(side_effect=RuntimeError("provider down"))):
+            out = await resolver.resolve_one(rt, "p1")
+
+        assert out["outcome"] == "resolved" and out["degraded"]
+        assert doc["blocks"][1]["text"] == "the BTC/USD price now"
+        saved = _stub_writes.save.await_args.args[1]
+        assert saved["blocks"][1]["text"] == "Markets moving fast."
+
+    @pytest.mark.asyncio
+    async def test_the_prompt_is_read_from_the_doc_not_the_render(self, _stub_writes):
+        """The mechanism, isolated. Given a render whose block already holds last
+        firing's ANSWER, the model must still be asked the authored QUESTION —
+        reading the prompt from the working copy is what made a substituted
+        fallback self-perpetuating."""
+        rt = _runtime()
+        stale = {**_DYN, "text": "Markets moving fast."}  # last firing's fallback
+        resolve = AsyncMock(return_value="$64,000")
+        with _claimed(_doc(_STATIC, dict(_DYN)), render=_doc(_STATIC, stale)), \
+             patch("excalibur_mcp.resolve.resolve_block", resolve):
+            await resolver.resolve_one(rt, "p1")
+
+        assert resolve.await_args.kwargs["prompt"] == "the BTC/USD price now"
+
+    @pytest.mark.asyncio
+    async def test_an_already_flattened_template_pauses_instead_of_guessing(
+        self, _stub_writes,
+    ):
+        """Templates damaged before the fix carry ``resolved: true`` in their doc,
+        which only the resolver ever writes — so the prompt there is really last
+        firing's output, and it is gone for good.
+
+        Two wrong answers were available. Honour the flag and the post stays
+        frozen, reposting stale text forever. Ignore it and the fallback becomes
+        the prompt, so the owner is billed for fluent posts nobody wrote. Pause:
+        the one outcome that tells the truth and costs nothing."""
+        rt = _runtime()
+        flattened = {**_DYN, "text": "Markets moving fast.", "resolved": True}
+        resolve = AsyncMock(return_value="$64,000")
+        with _claimed(_doc(_STATIC, flattened)), \
+             patch.object(resolver.posts_db, "mark_paused", AsyncMock()) as paused, \
+             patch("excalibur_mcp.resolve.resolve_block", resolve):
+            out = await resolver.resolve_one(rt, "p1")
+
+        assert out["outcome"] == "paused"
+        assert out["reason"] == "template_prompt_lost"
+        assert out["blocks"] == [1]
+        assert "re-author" in out["detail"]
+        resolve.assert_not_awaited(), "never run last firing's output as a prompt"
+        rt._apply_billing.assert_not_awaited(), "and never bill for it"
+        paused.assert_awaited_once()
+        _stub_writes.done.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_an_undamaged_template_is_not_mistaken_for_a_flattened_one(
+        self, _stub_writes,
+    ):
+        """The detector keys on `resolved` in an authored DYNAMIC block. A static
+        block, or a dynamic one that has simply never fired, is untouched."""
+        rt = _runtime()
+        with _claimed(_doc(_STATIC, dict(_DYN))), \
+             patch("excalibur_mcp.resolve.resolve_block", AsyncMock(return_value="$64k")):
+            out = await resolver.resolve_one(rt, "p1")
+        assert out["outcome"] == "resolved"
+
+    @pytest.mark.asyncio
+    async def test_a_stale_render_is_rebuilt_not_resumed(self, _stub_writes):
+        """A render that no longer matches the authored doc would pair block N's
+        answer with block N's new prompt. Rebuild rather than post a body the
+        author never wrote."""
+        rt = _runtime()
+        resolve = AsyncMock(return_value="$64,000")
+        with _claimed(_doc(_STATIC, dict(_DYN), dict(_DYN)),
+                      render=_doc(_STATIC, {**_DYN, "text": "old", "resolved": True})), \
+             patch("excalibur_mcp.resolve.resolve_block", resolve):
+            out = await resolver.resolve_one(rt, "p1")
+
+        assert out["blocks_resolved"] == 2, "both blocks rebuilt from the doc"

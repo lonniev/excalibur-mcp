@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 # Columns returned for a full single-post read.
 _FULL_COLS = (
-    "id::text AS post_id, npub, status, title, doc, text_cache, "
+    "id::text AS post_id, npub, status, title, doc, render, text_cache, "
     "publish_at, recurrence, cease_at, last_sent_at, tweet_url, "
     "last_attempt_at, last_attempt_reason, last_attempt_detail, "
     "template_id::text AS template_id, "
@@ -309,6 +309,13 @@ async def update_post(
         params.append(text_cache)
         set_parts.append(f"text_cache = ${len(params)}")
 
+    # An edit to the authored doc invalidates whatever this firing had already
+    # built from the OLD prompts. Dropping it costs the owner any partially-paid
+    # blocks; keeping it would post text the author has just rewritten, which is
+    # the worse of the two and silent besides.
+    if "doc" in patch:
+        set_parts.append("render = NULL")
+
     # Transitioning to "sent" (the FE's Post It) stamps the fire time server-side,
     # so every send records last_sent_at without the caller having to.
     if patch.get("status") == "sent":
@@ -481,23 +488,29 @@ async def claim_for_resolve(post_id: str) -> dict[str, Any] | None:
     )
 
 
-async def save_resolved_doc(
-    post_id: str, doc: dict[str, Any], claim_stamp: str | None,
+async def save_render(
+    post_id: str, render: dict[str, Any], claim_stamp: str | None,
 ) -> bool:
-    """Persist partial resolution progress: the doc with blocks filled in so far.
+    """Persist partial resolution progress: THIS firing's blocks filled in so far.
 
     Called after EACH block completes, not once at the end. A block runs 90-210s
     and costs the owner a real fare; a worker that dies after three of four
     blocks must not make them pay for those three again. The fence keeps a
     superseded worker from writing over its replacement's progress.
+
+    Writes `render`, never `doc`. It wrote `doc` until 2026-08-04, and since a
+    dynamic block's prompt IS its `text`, every resolution overwrote the prompt
+    it had just run — destroying the recurring template on its first firing. The
+    two states now live in two columns precisely so this can't be reintroduced by
+    a careless edit: nothing in the publishing path holds a write handle on `doc`.
     """
     r = await execute(
         """
-        UPDATE posts SET doc = $2::jsonb, updated_at = NOW()
+        UPDATE posts SET render = $2::jsonb, updated_at = NOW()
         WHERE id = $1::uuid AND status = 'resolving'
           AND ($3::timestamptz IS NULL OR last_attempt_at = $3::timestamptz)
         """,
-        post_id, json.dumps(doc), claim_stamp,
+        post_id, json.dumps(render), claim_stamp,
     )
     return int(r.get("rowCount") or 0) > 0
 
@@ -721,6 +734,20 @@ async def record_occurrence_and_advance(
     CTE yields no row, the INSERT selects from an empty relation, and we return
     ``False`` rather than writing a second occurrence over someone else's work.
 
+    Advancing also RESETS this firing's derived state — ``render``, ``resolved_at``,
+    ``resolve_attempts`` — because the template is now due for a *different*
+    occurrence and none of that describes it any more. Two bugs lived in the gap:
+
+    * ``render`` (formerly written straight into ``doc``) left the finished text
+      standing where the next firing looked for prompts, so a recurring template
+      reposted its first firing's words forever.
+    * ``resolve_attempts`` increments on every claim, including successful ones,
+      and is capped at ``MAX_RESOLVE_ATTEMPTS``. Never resetting it meant a
+      healthy recurring template stopped resolving after its 5th firing and
+      dropped out of ``list_due_for_resolve`` — silently, since falling off a
+      work-list raises nothing. A permanently-broken template still trips the cap:
+      it never reaches this statement, because this only runs after a live tweet.
+
     Returns whether this publisher was still the owner. ``False`` means the tweet
     went out but the claim was lost — the caller must say so loudly, never silently.
     """
@@ -734,6 +761,9 @@ async def record_occurrence_and_advance(
                 last_attempt_at      = $6::timestamptz,
                 last_attempt_reason  = NULL,
                 last_attempt_detail  = NULL,
+                render               = NULL,
+                resolve_attempts     = 0,
+                resolved_at          = NULL,
                 updated_at           = NOW()
             WHERE id = $1::uuid
               AND ($9::timestamptz IS NULL OR

@@ -12,12 +12,17 @@
 -- lives in `doc` as the single source of truth; `text_cache` is the FE-composed
 -- text (blocks joined "\n\n") so the scheduler and list excerpts never have to
 -- deserialize `doc`.
+--
+-- `doc` is AUTHORED state: it changes only when a human edits the post. The
+-- publishing path must never write it. What a given firing built goes in
+-- `render` — see the column comment below.
 CREATE TABLE IF NOT EXISTS posts (
     id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     npub          TEXT        NOT NULL,        -- owner; access-control key
     status        TEXT        NOT NULL DEFAULT 'draft',  -- draft|scheduled|sent|archived
     title         TEXT,                        -- optional human label; falls back to first body line
-    doc           JSONB       NOT NULL,        -- editable Doc (source of truth)
+    doc           JSONB       NOT NULL,        -- authored Doc (source of truth; human edits only)
+    render        JSONB,                       -- THIS firing's resolved doc; cleared each recurrence
     text_cache    TEXT,                        -- composed text (scheduler + excerpts)
     publish_at    TIMESTAMPTZ,                 -- first/next intended publish
     recurrence    JSONB,                       -- {"freq": "...", "interval": n} | null
