@@ -355,16 +355,40 @@ def test_performance_page_source_is_human_legible():
     assert "How your recent posts are travelling" in text
     assert "escape velocity, breakout ratio,\n            link-placement cohorts" not in text
 
-    # Item 11: rename the opaque heading; keep a precise tooltip.
-    assert "Where should the link go?" in text
+    # Item 11: rename the opaque heading; keep a precise tooltip. The question
+    # form ("Where should the link go?") went with it — the page answers with a
+    # median, so a heading that asks is a promise the panel does not keep.
+    assert "Link placement and reach" in text
+    assert "Where should the link go?" not in text
     assert "Link-placement cohort" not in text
+
+    # The panel needs two cohorts to compare. One median compares to nothing,
+    # and _detect_link_placement only ever emits `body` or `none`, so a corpus
+    # of all-linked posts would otherwise render a lone row forever.
+    assert "cohortEntries.length > 1" in text
 
     # Unified Tip treatment (not bare title= on EV/BR alone) + Material glyphs.
     assert "function Tip" in text
     assert "from \"lucide-react\"" in text
     assert "Users" in text  # followers crowd glyph
-    assert "TIPS.escapeVelocity" in text or "escape velocity" in text.lower()
+    assert "TIPS.escapeVelocity" in text
     assert "denominator of escape velocity" in text.lower() or "rolling median" in text.lower()
+
+    # One concept, one icon: the lucide glyph says crowd, so the emoji may not
+    # say it a second time.
+    assert "👥" not in text
+
+    # "Curve" named a shape without saying what was plotted; "Trend" carries the
+    # page's Tip treatment like every other metric.
+    assert ">Curve<" not in text
+    assert "TIPS.trend" in text
+
+    # EV/BR are spelled out in the columns they label, so the header legend that
+    # existed to expand the abbreviations is gone.
+    assert "Escape velocity" in text
+    assert "Breakout ratio" in text
+    assert ">EV<" not in text
+    assert ">BR<" not in text
 
     # Refresh stays on the right of the header row.
     assert "ml-auto" in text
