@@ -706,11 +706,19 @@ async def pause_exhausted_firings(horizon_iso: str, limit: int = 100) -> list[di
     weekend without credits, a run of upstream 401s — walks a perfectly good post
     to the cap.
 
-    At the cap both ``list_due_for_resolve`` and ``claim_for_resolve`` drop it,
-    while the row still says ``scheduled``. It looks queued, it is unreachable,
-    and the only thing that resets the counter is a successful advance that can
-    now never happen. Pausing puts it in a state the owner can actually see and
-    resume, and Resume clears the counter (see ``update_post``).
+    At the cap both ``list_due_for_resolve`` and ``claim_for_resolve`` drop it.
+    Two statuses land there:
+
+    * ``scheduled`` — looks queued, is unreachable. The original #339 case.
+    * ``resolving`` — the claim that walks the counter to the cap is the same
+      claim that leaves the row here. From that instant no work-list and no
+      other sweep can reach it, while it still reads as work in progress. That
+      is #344: the same dead-end shape as orphaned ``sending``, one state left.
+
+    Pausing puts either in a state the owner can actually see and resume, and
+    Resume clears the counter (see ``update_post``). A live resolve still inside
+    its lease is left alone — if it finishes it advances; if it dies the lease
+    expires and the next tick pauses it.
 
     The prior reason is carried into the detail because it is the real story;
     ``firing_attempts_exhausted`` alone would say only that a number ran out.
@@ -726,9 +734,12 @@ async def pause_exhausted_firings(horizon_iso: str, limit: int = 100) -> list[di
             updated_at = NOW()
         WHERE id IN (
             SELECT id FROM posts
-            WHERE status = 'scheduled' AND publish_at IS NOT NULL
+            WHERE publish_at IS NOT NULL
               AND publish_at <= $1::timestamptz
               AND resolve_attempts >= {MAX_RESOLVE_ATTEMPTS}
+              AND (status = 'scheduled'
+                   OR (status = 'resolving'
+                       AND last_attempt_at < NOW() - {_RESOLVE_LEASE}))
             LIMIT {lim})
         RETURNING id::text AS post_id, npub
         """,

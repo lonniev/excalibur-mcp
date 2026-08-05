@@ -348,6 +348,39 @@ async def test_a_post_at_the_firing_cap_is_paused_not_silently_dropped():
     assert "firing_attempts_exhausted" in q
     assert f"resolve_attempts >= {posts_db.MAX_RESOLVE_ATTEMPTS}" in q
     assert "COALESCE(last_attempt_reason" in q, "the real reason must survive"
+    # The claim that walks a row to the cap leaves it `resolving`, not
+    # `scheduled`. If the sweep only matched `scheduled`, that claim would
+    # strand the post with no work-list and no exit (#344).
+    assert "'resolving'" in q
+
+
+@pytest.mark.asyncio
+async def test_resolving_at_the_firing_cap_has_an_automatic_exit():
+    """#344: claim_for_resolve admits a row at 4 and increments to 5, leaving
+    status='resolving'. list_due_for_resolve and claim_for_resolve both reject
+    it on the counter; recover_orphaned_sends only scans sending. Without this
+    sweep branch the row is permanently invisible while looking in-progress.
+
+    A pause needs an exit (#339). Pausing lands on the same Resume path that
+    already zeroes resolve_attempts.
+    """
+    captured = {}
+
+    async def fake_fetch(query, *args):
+        captured["query"] = query
+        return []
+
+    with patch.object(posts_db, "fetch", fake_fetch):
+        await posts_db.pause_exhausted_firings("2026-08-05T00:00:00+00:00")
+    q = captured["query"]
+    assert "status = 'paused'" in q
+    assert f"resolve_attempts >= {posts_db.MAX_RESOLVE_ATTEMPTS}" in q
+    # Must match the stranded resolving-at-cap shape, not only scheduled.
+    assert "'resolving'" in q
+    # Do not yank a live resolve still inside its lease — only orphaned ones.
+    # The resolve lease is interval '20 minutes' (_RESOLVE_LEASE).
+    assert "last_attempt_at" in q
+    assert "20 minutes" in q
 
 
 @pytest.mark.asyncio
