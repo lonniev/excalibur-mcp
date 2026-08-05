@@ -48,6 +48,29 @@ The Cloudflare cron trigger is deployed empty while this ships; restore
 `crons = ["*/30 * * * *"]` in `scheduler-worker/wrangler.toml` once the MCP is
 running this code.
 
+### Fixed — the ⓘ annotations on Performance opened where nobody could see them
+
+Every `Tip` on the page did open on hover — the panel reached `opacity: 1`
+exactly as written. It was then clipped away by its own ancestors. `overflow-x-auto`
+computes `overflow-y: auto`, so the table's horizontal scroller clips vertically
+too, and the card around it adds `overflow-hidden`. An `absolute` panel hanging
+below the trigger has nowhere to go: a header tooltip surfaced as a sliver, a
+body-row tooltip as a one-pixel line of border. The three metrics that most
+needed explaining — Trend, Escape velocity, Breakout ratio — were the three
+whose explanations were unreachable.
+
+The panel is now portalled to `<body>` and positioned `fixed` from the trigger's
+client rect, so no ancestor can clip it. Being free of the layout also lets it be
+clamped to the viewport, which the old `-translate-x-1/2` panel could not be —
+the right-most columns previously ran their explanation off the edge of the
+window. It flips above the trigger when the space below is short, follows the
+trigger on scroll and resize, and answers to touch (tap to open, tap away to
+dismiss) as well as hover and keyboard focus.
+
+Verified in a headless browser against the real component: summary widget, table
+header and last-row cell all render fully inside the viewport, in light and dark,
+at 1280px and 390px wide.
+
 ### Changed — Performance page reads without a legend
 
 The Followers widget carried both a lucide `Users` glyph and a `👥` emoji: one

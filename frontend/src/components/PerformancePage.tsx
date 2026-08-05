@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import {
   Camera,
@@ -39,25 +40,106 @@ const TIPS = {
     "Median impressions grouped by where the link sat — in the body, in the first reply, or no link at all. Only the groups your corpus actually contains appear, and the panel stays hidden until there are two of them, because one median compares to nothing.",
 } as const;
 
-/** Hover / focus annotation with a real design (not a bare title= attribute). */
+const TIP_W = 256; // px — must match the w-64 on the panel
+const TIP_GAP = 6; // px between the ⓘ and the panel
+const TIP_MARGIN = 8; // px kept clear of the viewport edge
+
+/**
+ * Hover / focus annotation with a real design (not a bare title= attribute).
+ *
+ * The panel is portalled to <body> and positioned `fixed` from the trigger's
+ * client rect. An in-flow `absolute` panel cannot work here: every ⓘ in the two
+ * tables lives inside `overflow-x-auto` — which computes `overflow-y: auto`, so
+ * the scroll container clips vertically too — nested in an `overflow-hidden`
+ * card. Those ancestors clipped the panel away entirely even though it did
+ * reach `opacity: 1`. Portalling also lets the panel be clamped to the viewport,
+ * which a `-translate-x-1/2` panel hanging off a right-edge column cannot be.
+ */
 function Tip({ label, children }: { label: string; children: ReactNode }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number; flip: boolean } | null>(null);
+
+  const place = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const left = Math.min(
+      Math.max(r.left + r.width / 2 - TIP_W / 2, TIP_MARGIN),
+      Math.max(window.innerWidth - TIP_W - TIP_MARGIN, TIP_MARGIN),
+    );
+    // Flip above when a panel below would run past the viewport bottom. 96px is
+    // a generous height for the longest TIPS string at this width.
+    const flip = r.bottom + TIP_GAP + 96 > window.innerHeight;
+    setPos({ left, top: flip ? r.top - TIP_GAP : r.bottom + TIP_GAP, flip });
+  }, []);
+
+  // While open, follow the trigger: `fixed` coordinates go stale the moment the
+  // page or an inner table scrolls. Capture phase so nested scrollers count.
+  // Keyed on open/closed, not on `pos` — each reposition writes a new `pos` and
+  // would otherwise re-bind the listeners on every scroll frame.
+  const open = pos !== null;
+  useEffect(() => {
+    if (!open) return;
+    const onMove = () => place();
+    window.addEventListener("scroll", onMove, true);
+    window.addEventListener("resize", onMove);
+    return () => {
+      window.removeEventListener("scroll", onMove, true);
+      window.removeEventListener("resize", onMove);
+    };
+  }, [open, place]);
+
+  const close = useCallback(() => setPos(null), []);
+
+  // Touch has no hover, so the ⓘ is a tap toggle there — which means it also
+  // needs a tap-outside dismissal. Ignored for inside taps so the button's own
+  // onClick still decides.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: PointerEvent) => {
+      if (!ref.current?.contains(e.target as Node)) close();
+    };
+    document.addEventListener("pointerdown", onDown);
+    return () => document.removeEventListener("pointerdown", onDown);
+  }, [open, close]);
+
   return (
-    <span className="relative inline-flex items-center gap-1 group/tip">
+    <span
+      ref={ref}
+      className="relative inline-flex items-center gap-1"
+      onPointerEnter={(e) => e.pointerType !== "touch" && place()}
+      onPointerLeave={(e) => e.pointerType !== "touch" && close()}
+    >
       {children}
       <button
         type="button"
         className="inline-flex text-stone-300 hover:text-stone-500 dark:text-zinc-600 dark:hover:text-zinc-400 focus:outline-hidden focus-visible:text-amber-600"
         aria-label={label}
-        title={label}
+        onFocus={place}
+        onBlur={close}
+        onClick={place}
+        onKeyDown={(e) => e.key === "Escape" && close()}
       >
         <Info className="h-3 w-3" aria-hidden />
       </button>
-      <span
-        role="tooltip"
-        className="pointer-events-none absolute left-1/2 top-full z-30 mt-1.5 w-64 -translate-x-1/2 rounded-lg border border-stone-200 bg-white px-2.5 py-2 text-left text-[11px] font-normal normal-case tracking-normal leading-snug text-stone-600 opacity-0 shadow-lg transition-opacity group-hover/tip:opacity-100 group-focus-within/tip:opacity-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
-      >
-        {label}
-      </span>
+      {pos
+        ? createPortal(
+            <span
+              role="tooltip"
+              aria-hidden
+              style={{
+                left: pos.left,
+                top: pos.top,
+                width: TIP_W,
+                transform: pos.flip ? "translateY(-100%)" : undefined,
+              }}
+              className="pointer-events-none fixed z-50 rounded-lg border border-stone-200 bg-white px-2.5 py-2 text-left text-[11px] font-normal normal-case tracking-normal leading-snug text-stone-600 shadow-lg dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+            >
+              {label}
+            </span>,
+            document.body,
+          )
+        : null}
     </span>
   );
 }
