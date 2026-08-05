@@ -40,12 +40,17 @@ export default function SchedulerStatusLine({
   state: SchedulerState;
   collapseLabel?: boolean;
 }) {
-  const { health, publishing, stuck, soon } = state;
+  const { health, resolving, stuck, soon } = state;
   const pulse = health === "healthy" || health === "quiet";
-  // A Post is only ever one of six things: Draft, Scheduled, Sending, Sent,
-  // Paused, Archived, and every badge must land you on a Posts filter —
+  // Every badge must name a real Post status and land you on that Posts filter —
   // "publishing" and "not posted" were earlier inventions here, and a name with
   // nowhere to click is what makes a post hard to track down.
+  //
+  // The rule was written when a Post was one of six things; #318 made it eight by
+  // splitting publishing into Resolving and Resolved. This badge kept saying
+  // "Sending" for a post being BUILT, so it pointed at a filter that correctly
+  // showed nothing — the badge and the list beside it disagreeing in plain sight.
+  // The statuses are the vocabulary; a badge does not get to coin its own.
   //
   // The held badge is the one deliberate exception. It counts a SUBSET of
   // Scheduled — the ones that tried and were held — so labelling it "Scheduled"
@@ -62,12 +67,12 @@ export default function SchedulerStatusLine({
       <span className={`inline-block h-2 w-2 rounded-full ${DOT[health]} ${pulse ? "animate-pulse" : ""}`} />
       <span className={collapseLabel ? "hidden sm:inline" : undefined}>{LABEL[health]}</span>
 
-      {publishing.length > 0 && (
+      {resolving.length > 0 && (
         <span
           className={`${CHIP} bg-sky-500/15 text-sky-600 dark:text-sky-400`}
-          title={`A publisher is working on ${publishing.join(", ")} right now. Filter Posts by Sending to see it.`}
+          title={`A worker is building the body of ${resolving.join(", ")} right now. Filter Posts by Resolving to see it.`}
         >
-          {publishing.length} Sending
+          {resolving.length} Resolving
         </span>
       )}
 

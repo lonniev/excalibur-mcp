@@ -40,14 +40,29 @@ export interface SchedulerState {
   lastRun: string | null;
   /** Posts that didn't go out, newest outcome per post. */
   stuck: StuckPost[];
-  /** Posts launched whose publisher hasn't reported back — the ones showing Sending. */
-  publishing: string[];
+  /**
+   * Posts whose body is being BUILT right now — the ones showing `resolving`.
+   *
+   * Was `publishing`, and was labelled "Sending", which is a different status
+   * with its own filter. Since #318 split publishing in two, posting is inline
+   * and takes milliseconds, so the only phase the log can honestly report as
+   * in-flight is resolution.
+   */
+  resolving: string[];
   /** Posts queued ahead, from the newest tick's own owner-scoped forecast. */
   soon: number;
 }
 
+// How long a resolve claim is honoured before the scheduler hands the slot back
+// (`_RESOLVE_LEASE` in db/posts.py). A `resolving` entry older than this is no
+// longer evidence of live work — its worker is presumed dead and the row has been
+// re-claimed or released. Without this bound the badge can only ever be cleared by
+// a publication row, so it over-reports for the whole gap between "resolve
+// finished" and "post sent", which for an early resolve is the entire wait.
+const RESOLVE_LEASE_MS = 20 * 60 * 1000;
+
 export const UNKNOWN_STATE: SchedulerState = {
-  health: "unknown", lastRun: null, stuck: [], publishing: [], soon: 0,
+  health: "unknown", lastRun: null, stuck: [], resolving: [], soon: 0,
 };
 
 export function relative(fromIso: string): string {
@@ -69,18 +84,16 @@ export function deriveSchedulerState(runs: SchedulerRun[]): SchedulerState {
   // a dying cron look livelier than it is.
   const newest = runs.find((r) => r.summary?.kind !== "publication");
   if (!newest) {
-    return { health: "quiet", lastRun: null, stuck: [], publishing: [], soon: 0 };
+    return { health: "quiet", lastRun: null, stuck: [], resolving: [], soon: 0 };
   }
 
   const s = newest.summary ?? {};
   // One pass, newest first: whichever row we meet first for a post is its latest
-  // word. A publication settles it. A launch with no publication since means a
-  // publisher is STILL WORKING it — precisely the post sitting in Sending on the
-  // Posts tab, and the only honest way to say "in progress" from a log that
-  // records only starts and finishes.
+  // word, and a publication settles it.
   const accounted = new Set<string>();
   const stuck: StuckPost[] = [];
-  const publishing: string[] = [];
+  const resolving: string[] = [];
+  const now = Date.now();
   for (const r of runs) {
     const row = r.summary;
     if (!row) continue;
@@ -97,18 +110,31 @@ export function deriveSchedulerState(runs: SchedulerRun[]): SchedulerState {
       }
       continue;
     }
-    // Work a tick STARTED. `posted` entries whose publication row hasn't been
-    // met yet are genuinely in flight; `resolving` ones are still building.
-    // Both read as "in progress" to the reader, which is what Sending means.
+    // Only `resolving` is in-flight work. `posted` is NOT: since #318 the tick
+    // publishes inline and writes the entry with its outcome already decided, so
+    // counting it meant reporting a finished action as ongoing. That was the
+    // pre-split assumption, when launch and publication were one phase.
     //
-    // This read `row.launched` until 2026-08-04 — a key the scheduler stopped
-    // emitting when publishing split in two. The list was therefore always
-    // empty, so a post could sit in Sending for days with this panel insisting
-    // nothing was in flight. One did.
-    for (const l of [...(row.posted ?? []), ...(row.resolving ?? [])]) {
-      if (!l.post_id || accounted.has(l.post_id)) continue;
-      accounted.add(l.post_id);
-      publishing.push(l.post_id.slice(0, 8));
+    // Two bugs lived here. It read `row.launched` until 2026-08-04 — a key the
+    // scheduler stopped emitting at the split — so the list was always empty and
+    // a post sat unreported for days. The fix restored the count but kept the
+    // name: a post being BUILT was reported as "Sending", a different status
+    // whose Posts filter correctly showed nothing.
+    //
+    // The lease bound is the second half. `accounted` is only ever set by a
+    // publication row, and a finished resolve writes none — so without an age
+    // limit an entry lingers from "resolve started" until "post sent", which for
+    // a post resolved a tick early is the whole wait.
+    // Scoped to the resolving loop only — a stale row's `recovered` entries are
+    // still worth reporting, and an early `continue` here would swallow them.
+    const startedAt = Date.parse(r.run_at ?? "");
+    const withinLease = isNaN(startedAt) || now - startedAt <= RESOLVE_LEASE_MS;
+    if (withinLease) {
+      for (const l of row.resolving ?? []) {
+        if (!l.post_id || accounted.has(l.post_id)) continue;
+        accounted.add(l.post_id);
+        resolving.push(l.post_id.slice(0, 8));
+      }
     }
     // A tick that repaired a stranded post is reporting something the owner has
     // to act on: a pause means a tweet may already be live.
@@ -131,7 +157,7 @@ export function deriveSchedulerState(runs: SchedulerRun[]): SchedulerState {
   const age = Date.now() - new Date(newest.run_at).getTime();
   // A stall always outranks activity: publishers can be mid-flight while the cron
   // behind them has died, and the dead cron is the thing worth saying. A publisher
-  // being mid-flight is POST state, reported by the Sending badge — the dot stays
+  // being mid-flight is POST state, reported by the Resolving badge — the dot stays
   // about the cron so the two never compete to describe the same thing.
   const health: Health = isNaN(age)
     ? "unknown"
@@ -147,7 +173,7 @@ export function deriveSchedulerState(runs: SchedulerRun[]): SchedulerState {
     health,
     lastRun: newest.run_at,
     stuck,
-    publishing,
+    resolving,
     soon: newest.summary?.upcoming?.count ?? 0,
   };
 }
