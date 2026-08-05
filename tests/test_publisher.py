@@ -943,3 +943,56 @@ class TestRecurrenceDoesNotDrift:
         assert out["outcome"] == "posted"
         nxt = occ.await_args.kwargs["next_publish_at"]
         assert nxt.startswith("2026-08-09T09:00"), nxt
+
+
+# ---------------------------------------------------------------------------
+# A degraded send must not read as a clean one
+# ---------------------------------------------------------------------------
+
+
+_FELL_BACK_RENDER = {"blocks": [
+    {"text": "Markets update.", "flags": []},
+    {"text": "Markets moving fast.", "flags": [], "dynamic": True,
+     "fallback": "Markets moving fast.", "resolved": True,
+     "fellBack": {"reason": "upstream_llm_unfunded", "budget_s": 480.0}},
+]}
+
+
+@pytest.mark.asyncio
+async def test_a_publication_that_sent_fallback_text_says_so(_stub_record):
+    """The tweet went out, but not with the words the author asked for.
+
+    `fallbacks` was declared in publish_one and never appended to, so this key
+    could not fire and every degraded send recorded as a clean success. Four
+    flattened templates posted their fallback line on schedule for days and
+    nothing in the log or the FE could tell them from real posts.
+    """
+    rt = _runtime()
+    client = SimpleNamespace(post_tweet=AsyncMock(
+        return_value={"tweet_id": "tw9", "tweet_url": "https://x.com/i/status/tw9"}))
+    with _claimed(render=_FELL_BACK_RENDER), \
+         patch.object(publisher.posts_db, "record_occurrence_and_advance",
+                      AsyncMock(return_value=True)), \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        out = await publisher.publish_one(rt, "p1")
+
+    assert out["outcome"] == "posted"          # the send itself still succeeded
+    recorded = _stub_record.await_args.args[0]
+    assert recorded["fallbacks"] == [
+        {"block": 1, "reason": "upstream_llm_unfunded", "budget_s": 480.0},
+    ], "a fallback send must be distinguishable from a real one"
+
+
+@pytest.mark.asyncio
+async def test_a_clean_publication_carries_no_fallbacks_key(_stub_record):
+    """The flip side: an undegraded send must stay quiet, or the marker is noise."""
+    rt = _runtime()
+    client = SimpleNamespace(post_tweet=AsyncMock(
+        return_value={"tweet_id": "tw8", "tweet_url": "https://x.com/i/status/tw8"}))
+    with _claimed(render={"blocks": [{"text": "All good.", "flags": [], "resolved": True}]}), \
+         patch.object(publisher.posts_db, "record_occurrence_and_advance",
+                      AsyncMock(return_value=True)), \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        await publisher.publish_one(rt, "p1")
+
+    assert "fallbacks" not in _stub_record.await_args.args[0]

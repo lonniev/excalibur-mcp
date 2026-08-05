@@ -66,7 +66,7 @@ _JSON_KEYS = {"doc", "recurrence"}
 
 # Marks the resolver stamps on a block while building ONE firing. They describe a
 # render, never authored intent, so they never belong in `doc`.
-_PER_FIRING_BLOCK_KEYS = frozenset({"resolved"})
+_PER_FIRING_BLOCK_KEYS = frozenset({"resolved", "fellBack"})
 
 
 def _authored(doc: Any) -> Any:

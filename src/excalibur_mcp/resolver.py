@@ -162,9 +162,12 @@ def _start_render(doc: dict[str, Any], row: Any) -> dict[str, Any]:
     # honouring it would make them skip resolution forever, which is the exact
     # symptom. Authored state cannot tell us a block is already paid for; only a
     # live render can.
+    from excalibur_mcp.db.posts import _PER_FIRING_BLOCK_KEYS
+
     fresh = copy.deepcopy(doc)
     fresh["blocks"] = [
-        {k: v for k, v in b.items() if k != "resolved"} for b in _blocks(fresh)
+        {k: v for k, v in b.items() if k not in _PER_FIRING_BLOCK_KEYS}
+        for b in _blocks(fresh)
     ]
     return fresh
 
@@ -382,6 +385,12 @@ async def resolve_one(runtime: Any, post_id: str) -> dict[str, Any]:
                 )
             resolved_text = fallback
             degraded.append({"block": i, "reason": why, "budget_s": round(budget, 1)})
+            # Mark the BLOCK, not just this run's log line. The log row says a
+            # resolve degraded; only the render can tell the publisher that the
+            # words it is about to send are the author's consolation rather than
+            # the post they asked for. Per-firing, so it is stripped on the next
+            # firing and on any authored save (_PER_FIRING_BLOCK_KEYS).
+            b = {**b, "fellBack": {"reason": why, "budget_s": round(budget, 1)}}
 
         blocks[i] = {**b, "text": resolved_text, "resolved": True}
         # Persist THIS block before starting the next. What the owner paid for is
