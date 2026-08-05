@@ -179,6 +179,27 @@ def _next_state(
 
 # -- companion notes ------------------------------------------------
 
+def _fallback_blocks(rendered: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Blocks in THIS firing's render that carry the author's fallback text.
+
+    ``fellBack`` is stamped on the block by ``resolver`` when a dynamic block's
+    resolution bought nothing and the authored fallback was substituted. Reading
+    it off the render — rather than off the resolve log row — is what makes the
+    degradation survive a dead worker, a resumed render, and the gap between the
+    resolve tick and the posting tick.
+    """
+    if not isinstance(rendered, dict):
+        return []
+    blocks = rendered.get("blocks")
+    if not isinstance(blocks, list):
+        return []
+    return [
+        {"block": i, **b["fellBack"]}
+        for i, b in enumerate(blocks)
+        if isinstance(b, dict) and isinstance(b.get("fellBack"), dict)
+    ]
+
+
 def _nostr_blocks(doc: dict[str, Any] | None) -> list[dict[str, Any]]:
     """The Nostr companion-note blocks in a post's doc (empty for posts without).
 
@@ -400,7 +421,16 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
     # this function never calls an LLM, never branches on static-vs-dynamic, and
     # takes milliseconds — which is why it no longer needs to be a long-runner
     # able to outlive its container.
-    fallbacks: list[dict[str, Any]] = []
+    # Which blocks are about to go out as the author's consolation rather than as
+    # the post they asked for. The resolver stamps `fellBack` on the block itself,
+    # so this survives a dead worker, a resumed render and the gap between the
+    # resolve tick and the posting tick — none of which the resolve log row does.
+    #
+    # This list was declared here and never filled, so `fallbacks` on a publication
+    # could not fire and every degraded send read as a clean one. Four flattened
+    # templates posted their fallback line on schedule for days and nothing in the
+    # log or the FE could distinguish them from real posts.
+    fallbacks: list[dict[str, Any]] = _fallback_blocks(rendered)
     if not text:
         return await _hold("empty_after_resolve")
 
