@@ -345,6 +345,20 @@ async def update_post(
     if "doc" in patch:
         set_parts.append("render = NULL")
 
+    # Putting a post back in play clears THIS firing's bookkeeping — otherwise
+    # Resume has no exit. `pause_exhausted_firings` pauses a post at the attempt
+    # cap; the owner resumes; the very next tick sees the counter still at the
+    # cap and pauses it again. An infinite loop with a button in it.
+    #
+    # `render` is deliberately NOT cleared here. The doc-edit branch above owns
+    # that, and dropping it on a bare Resume would re-bill the owner for blocks
+    # they have already paid for.
+    if patch.get("status") in ("scheduled", "draft"):
+        set_parts.append(
+            "resolve_attempts = 0, resolved_at = NULL, x_call_at = NULL, "
+            "last_attempt_reason = NULL, last_attempt_detail = NULL",
+        )
+
     # Transitioning to "sent" (the FE's Post It) stamps the fire time server-side,
     # so every send records last_sent_at without the caller having to.
     if patch.get("status") == "sent":
@@ -391,62 +405,21 @@ async def hard_delete(npub: str, post_id: str) -> bool:
 # -- Scheduler queries (operator-side; not npub-scoped) ----------------------
 
 
-# A 'sending' post (claimed by a tick that is firing it) whose claim is older
-# than this is presumed orphaned — a tick that crashed/timed out mid-resolve —
-# and is eligible for reclaim. Must exceed the longest possible resolve (the max
-# runtime budget, 900s) so a still-running resolve is never reclaimed → no
-# double-post.
-# How long a claim survives before another tick may treat the publisher as dead
-# and re-fire the post. This MUST exceed the cron period (currently every 30
-# minutes, see scheduler-worker/wrangler.toml) or the lease is guaranteed to be
-# stale by the time the next tick looks — which is not "recovery after a crash",
-# it is "re-fire everything still in flight". At 20 minutes against a 30-minute
-# cron there was no margin at all, and on 2026-07-30 a publisher that had already
-# tweeted was re-claimed 28 minutes later and tweeted the same post a second time.
-_CLAIM_LEASE = "interval '45 minutes'"
-
-
-async def list_due(now_iso: str, limit: int = 100) -> list[dict[str, Any]]:
-    """Due posts to consider firing, oldest first: ``scheduled`` ones whose
-    publish_at has arrived, plus ``sending`` ones whose claim lease has expired
-    (orphaned by a crashed/timed-out tick). The atomic ``claim_due_post`` is what
-    actually grants exclusive ownership — this is just the candidate set."""
-    lim = max(1, min(500, limit))
-    return await fetch(
-        f"""
-        SELECT {_FULL_COLS} FROM posts
-        WHERE publish_at IS NOT NULL AND publish_at <= $1::timestamptz
-          AND (status = 'scheduled'
-               OR (status = 'sending'
-                   AND last_attempt_at < $1::timestamptz - {_CLAIM_LEASE}))
-        ORDER BY publish_at ASC
-        LIMIT $2
-        """,
-        now_iso,
-        lim,
-    )
-
-
-async def claim_due_post(post_id: str) -> dict[str, Any] | None:
-    """Atomically take ownership of a due post for firing — ``scheduled`` →
-    ``sending`` (or reclaim a ``sending`` post whose lease expired). Returns the
-    claimed row, or ``None`` when another concurrent tick already owns it.
-
-    This is what makes overlapping cron ticks safe: only the tick whose UPDATE
-    matches a still-claimable row gets it, so the same post is never fired twice.
-    On a transient hold the caller releases it back to ``scheduled`` (via
-    ``mark_attempt``); on success ``mark_sent`` moves it on."""
-    return await fetchrow(
-        f"""
-        UPDATE posts
-        SET status = 'sending', last_attempt_at = NOW(), updated_at = NOW()
-        WHERE id = $1::uuid
-          AND (status = 'scheduled'
-               OR (status = 'sending' AND last_attempt_at < NOW() - {_CLAIM_LEASE}))
-        RETURNING {_FULL_COLS}
-        """,
-        post_id,
-    )
+# How long a publisher may hold a claim before the recovery sweep presumes it
+# dead. This MUST exceed the cron period (every 30 minutes, see
+# scheduler-worker/wrangler.toml) or the lease is guaranteed to be stale by the
+# time the next tick looks — which is not "recovery after a crash", it is
+# "re-fire everything still in flight". At 20 minutes against a 30-minute cron
+# there was no margin at all, and on 2026-07-30 a publisher that had already
+# tweeted was re-claimed 28 minutes later and tweeted the same post a second
+# time.
+#
+# The margin argument is unchanged, but what the lease BOUNDS has changed. It no
+# longer gates a reclaim — nothing re-fires a `sending` post on a timer. It gates
+# ``recover_orphaned_sends``, which decides between resuming and pausing on
+# EVIDENCE (`x_call_at`) rather than on elapsed time. Time only decides when it
+# is safe to look.
+_SEND_LEASE = "interval '45 minutes'"
 
 
 # A resolve claim covers ONLY the slow half — building a body from its blocks.
@@ -588,26 +561,178 @@ async def list_resolved_due(now_iso: str, limit: int = 100) -> list[dict[str, An
 async def claim_for_post(post_id: str) -> dict[str, Any] | None:
     """Atomically take a finished body for posting — ``resolved`` → ``sending``.
 
-    A separate claim from ``claim_due_post`` because the two phases accept
-    different states, and conflating them is a silent no-op rather than an
-    error: ``claim_due_post`` matches only ``scheduled`` (or a stale ``sending``),
-    so handing it a ``resolved`` row returns None and the poster skips it —
-    forever. Two posts sat finished-but-unsent for hours that way.
+    Accepts only ``resolved``: the two phases take different states, and
+    conflating them is a silent no-op rather than an error. A claim that matched
+    only ``scheduled`` once skipped every finished body forever, and two posts
+    sat resolved-but-unsent for hours that way.
 
-    No lease clause. Posting is one HTTPS call and two row writes, so a claim is
-    held for milliseconds; a poster that dies mid-flight leaves a ``sending`` row
-    that the resolve lease no longer covers, which is deliberate — an
-    unconfirmed send must be looked at by a human, not retried by a timer into a
-    possible double-post.
+    Still no lease clause, and no timer ever re-fires a ``sending`` post. That
+    rule is what keeps a publisher which already tweeted from being re-claimed
+    and tweeting again, as one was on 2026-07-30. What changed is that
+    ``sending`` is no longer a dead end: ``recover_orphaned_sends`` looks at
+    stale claims and decides on EVIDENCE, resuming only where ``x_call_at``
+    proves the publisher died before reaching X.
+
+    ``x_call_at`` is cleared here so the marker is scoped to THIS firing. Without
+    that, a recurrence would inherit the previous occurrence's mark and be paused
+    for a send that completed days ago.
     """
     return await fetchrow(
         f"""
         UPDATE posts
-        SET status = 'sending', last_attempt_at = NOW(), updated_at = NOW()
+        SET status = 'sending', x_call_at = NULL,
+            last_attempt_at = NOW(), updated_at = NOW()
         WHERE id = $1::uuid AND status = 'resolved'
         RETURNING {_FULL_COLS}
         """,
         post_id,
+    )
+
+
+async def mark_x_call_started(post_id: str, claim_stamp: str | None) -> bool:
+    """Authorize the irreversible call. **A ``False`` return means DO NOT POST.**
+
+    This is not a log line, it is the gate. It must be the last thing that
+    happens before ``post_tweet``, and its answer is what grants permission,
+    because recovery later reads exactly this column to decide whether a tweet
+    might be live.
+
+    A plain stamp would not do. If the write's outcome is unknown — a Neon
+    hiccup, a timeout — and we post anyway, the row still reads ``x_call_at IS
+    NULL`` and the sweep concludes nothing was sent. That is the 2026-07-30
+    double-post rebuilt out of new parts. Making the write a compare-and-set that
+    GATES the call removes the case by construction: no confirmed write, no call.
+
+    The same statement also stops a superseded publisher. A worker that stalled
+    in OAuth or billing while a sweep handed its row to someone else finds
+    ``last_attempt_at`` moved, matches zero rows, and stands down before touching
+    X. An exception is treated exactly like ``False`` by the caller.
+    """
+    r = await execute(
+        """
+        UPDATE posts SET x_call_at = NOW(), updated_at = NOW()
+        WHERE id = $1::uuid AND status = 'sending' AND x_call_at IS NULL
+          AND ($2::timestamptz IS NULL OR last_attempt_at = $2::timestamptz)
+        """,
+        post_id, claim_stamp,
+    )
+    return int(r.get("rowCount") or 0) > 0
+
+
+async def recover_orphaned_sends(limit: int = 100) -> dict[str, list[dict[str, Any]]]:
+    """Repair ``sending`` rows whose publisher never came back.
+
+    Before this existed a publisher that died left its post in ``sending``
+    forever: no lease covered it, no work-list accepted it, and the only queries
+    that did (``list_due``/``claim_due_post``) had lost their callers in the
+    resolve/post split. One post sat there from 2026-08-02 to 08-04, in a state
+    that looked active and was simply unreachable.
+
+    Three branches, exhaustive and mutually exclusive over a stale claim:
+
+    * ``x_call_at IS NOT NULL`` — we were cleared to call X and may have done so.
+      **Pause.** A tweet may be live; only a human looking at the timeline can
+      say. Never retried, on the same principle that pauses an unanswered send.
+    * ``x_call_at IS NULL AND resolved_at IS NOT NULL`` — provably before the
+      call, and provably a row this code wrote: ``claim_for_post`` only accepts
+      ``resolved``, and only ``mark_resolved`` sets both. **Resume** by returning
+      it to ``resolved``, where the poster picks it up on the same tick.
+    * ``x_call_at IS NULL AND resolved_at IS NULL`` — a row that predates the
+      marker. Its NULL is an absence of instrumentation, not evidence. **Pause**
+      rather than guess; this branch empties itself and never refills.
+
+    Each is one bulk statement, never a read-then-write: the race against a live
+    publisher must be settled by row locking. Both orders are safe — if the CAS
+    lands first the predicate here no longer matches, and if this lands first the
+    CAS matches nothing and that publisher never calls X.
+
+    Known gap: a publisher that died between billing and the CAS leaves a fare
+    charged for a tweet that never went out, and resuming does not refund it.
+    Reversing it safely needs a ``billed_at`` column and a refund keyed to the
+    original debit — ``rollback_debit`` takes no debit reference, so calling it
+    from here could reverse something unrelated. The window is one statement
+    wide, which is why the gap is accepted rather than papered over.
+    """
+    lim = max(1, min(500, limit))
+    out: dict[str, list[dict[str, Any]]] = {}
+    stale = (
+        f"status = 'sending' AND last_attempt_at IS NOT NULL "
+        f"AND last_attempt_at < NOW() - {_SEND_LEASE}"
+    )
+
+    out["paused_unknown"] = await fetch(
+        f"""
+        UPDATE posts SET status = 'paused',
+            last_attempt_reason = 'x_post_outcome_unknown',
+            last_attempt_detail = 'The publisher was cleared to post and never '
+                'confirmed. A tweet may already be live — check your timeline '
+                'before resuming.',
+            updated_at = NOW()
+        WHERE id IN (SELECT id FROM posts WHERE {stale}
+                     AND x_call_at IS NOT NULL LIMIT {lim})
+        RETURNING id::text AS post_id, npub
+        """,
+    )
+    out["resumed"] = await fetch(
+        f"""
+        UPDATE posts SET status = 'resolved', updated_at = NOW()
+        WHERE id IN (SELECT id FROM posts WHERE {stale}
+                     AND x_call_at IS NULL AND resolved_at IS NOT NULL LIMIT {lim})
+        RETURNING id::text AS post_id, npub
+        """,
+    )
+    out["paused_legacy"] = await fetch(
+        f"""
+        UPDATE posts SET status = 'paused',
+            last_attempt_reason = 'sending_orphaned_pre_split',
+            last_attempt_detail = 'Stranded before send-tracking existed, so '
+                'whether it posted is unrecorded. Check your timeline, then '
+                'resume or return it to draft.',
+            updated_at = NOW()
+        WHERE id IN (SELECT id FROM posts WHERE {stale}
+                     AND x_call_at IS NULL AND resolved_at IS NULL LIMIT {lim})
+        RETURNING id::text AS post_id, npub
+        """,
+    )
+    return out
+
+
+async def pause_exhausted_firings(horizon_iso: str, limit: int = 100) -> list[dict[str, Any]]:
+    """Stop a post that has run out of firing attempts from LOOKING healthy.
+
+    ``resolve_attempts`` reads like a resolution counter and is really a firing
+    counter: a publisher hold releases the post, the next tick claims it for
+    resolve, and the claim increments. So a handful of post-phase failures — a
+    weekend without credits, a run of upstream 401s — walks a perfectly good post
+    to the cap.
+
+    At the cap both ``list_due_for_resolve`` and ``claim_for_resolve`` drop it,
+    while the row still says ``scheduled``. It looks queued, it is unreachable,
+    and the only thing that resets the counter is a successful advance that can
+    now never happen. Pausing puts it in a state the owner can actually see and
+    resume, and Resume clears the counter (see ``update_post``).
+
+    The prior reason is carried into the detail because it is the real story;
+    ``firing_attempts_exhausted`` alone would say only that a number ran out.
+    """
+    lim = max(1, min(500, limit))
+    return await fetch(
+        f"""
+        UPDATE posts SET status = 'paused',
+            last_attempt_reason = 'firing_attempts_exhausted',
+            last_attempt_detail = 'Gave up after {MAX_RESOLVE_ATTEMPTS} attempts. '
+                'Last reason: ' || COALESCE(last_attempt_reason, 'not recorded')
+                || '. Fix that, then resume.',
+            updated_at = NOW()
+        WHERE id IN (
+            SELECT id FROM posts
+            WHERE status = 'scheduled' AND publish_at IS NOT NULL
+              AND publish_at <= $1::timestamptz
+              AND resolve_attempts >= {MAX_RESOLVE_ATTEMPTS}
+            LIMIT {lim})
+        RETURNING id::text AS post_id, npub
+        """,
+        horizon_iso,
     )
 
 
@@ -642,14 +767,25 @@ async def get_claimed(post_id: str) -> dict[str, Any] | None:
     return await fetchrow(f"SELECT {_FULL_COLS} FROM posts WHERE id = $1::uuid", post_id)
 
 
-async def release_claim(post_id: str) -> None:
-    """Revert a claimed ('sending') post to 'scheduled' without stamping a reason
-    (used when the caller bails before a real attempt)."""
-    await execute(
-        "UPDATE posts SET status = 'scheduled', updated_at = NOW() "
-        "WHERE id = $1::uuid AND status = 'sending'",
-        post_id,
+async def release_to_resolved(post_id: str, claim_stamp: str | None = None) -> bool:
+    """Hand a claimed post back to the POSTER's queue, not the resolver's.
+
+    A post-phase failure — no credits, an upstream 401, a rate limit — says
+    nothing about the body, which is finished and paid for. Sending it back to
+    ``scheduled`` throws it into the resolve queue instead, and the next claim
+    increments ``resolve_attempts``. Five such holds retire a healthy post at the
+    cap, which is how a weekend without credits could silence a daily post
+    permanently. Returning it to ``resolved`` retries the only part that failed.
+    """
+    r = await execute(
+        """
+        UPDATE posts SET status = 'resolved', updated_at = NOW()
+        WHERE id = $1::uuid AND status = 'sending'
+          AND ($2::timestamptz IS NULL OR last_attempt_at = $2::timestamptz)
+        """,
+        post_id, claim_stamp,
     )
+    return int(r.get("rowCount") or 0) > 0
 
 
 async def mark_sent(
@@ -665,7 +801,7 @@ async def mark_sent(
     A successful fire clears any prior ``last_attempt_reason`` (the hold is over).
 
     Test-and-set on the caller's claim. ``claim_stamp`` is the ``last_attempt_at``
-    the publisher read when it picked the post up — ``claim_due_post`` sets that to
+    the publisher read when it picked the post up — ``claim_for_post`` sets that to
     NOW() on every claim, so it doubles as a fencing token: if a later tick decided
     this publisher was dead and re-claimed the post, the stamp has moved and this
     write matches nothing. Returns whether the row was ours to advance; ``False``
@@ -759,7 +895,7 @@ async def record_occurrence_and_advance(
 
     The UPDATE is also the test-and-set: it matches only while we still hold the
     claim we were handed (``claim_stamp`` is the ``last_attempt_at`` stamped by
-    ``claim_due_post``). If a later tick re-claimed this post, the stamp moved, the
+    ``claim_for_post``). If a later tick re-claimed this post, the stamp moved, the
     CTE yields no row, the INSERT selects from an empty relation, and we return
     ``False`` rather than writing a second occurrence over someone else's work.
 
@@ -793,6 +929,7 @@ async def record_occurrence_and_advance(
                 render               = NULL,
                 resolve_attempts     = 0,
                 resolved_at          = NULL,
+                x_call_at            = NULL,
                 updated_at           = NOW()
             WHERE id = $1::uuid
               AND ($9::timestamptz IS NULL OR
@@ -820,13 +957,23 @@ async def record_occurrence_and_advance(
 
 async def mark_attempt(
     post_id: str, at_iso: str, reason: str, detail: str | None = None,
+    claim_stamp: str | None = None,
 ) -> None:
-    """Stamp a scheduled post the scheduler TRIED to fire but held back.
+    """Stamp a post the scheduler TRIED to fire but held back.
 
     Records when and why (the skip/error reason — access/finance/network/content)
     so the post visibly shows it was attempted, and the FE can surface the hold
-    instead of the post silently sitting ``scheduled``. Reverts a claimed
-    ('sending') post back to ``scheduled`` so the next due tick retries it."""
+    instead of it silently sitting ``scheduled``. Reverts a claimed ('sending')
+    post back to ``scheduled`` so the next due tick retries it — though the post
+    phase now prefers ``release_to_resolved``, which retries the half that
+    actually failed.
+
+    Fenced when a ``claim_stamp`` is given, like ``mark_sent``. Unfenced it will
+    stamp whoever owns the row now: a resolver presumed dead at its 20-minute
+    lease, waking to report a hold, would flip its REPLACEMENT's ``resolving``
+    row to ``scheduled`` mid-build. ``None`` keeps the old unfenced behaviour for
+    callers that hold no claim.
+    """
     await execute(
         """
         UPDATE posts
@@ -836,24 +983,31 @@ async def mark_attempt(
             status              = CASE WHEN status = 'sending' THEN 'scheduled' ELSE status END,
             updated_at          = NOW()
         WHERE id = $1::uuid
+          AND ($5::timestamptz IS NULL OR last_attempt_at = $5::timestamptz)
         """,
         post_id,
         at_iso,
         reason,
         detail,
+        claim_stamp,
     )
 
 
 async def mark_paused(
     post_id: str, at_iso: str, reason: str, detail: str | None = None,
+    claim_stamp: str | None = None,
 ) -> None:
-    """Pause a scheduled post the scheduler can't fire without human action.
+    """Pause a post the scheduler can't fire without human action.
 
-    For non-transient situations the next tick can't resolve — e.g. the owner's
-    upstream X subscription lapsed (HTTP 402). Sets ``status='paused'`` so
-    ``list_due`` stops returning it (ending the every-tick refire loop) and
-    stamps the attempt so the FE can surface why. The owner resumes by patching
-    ``status`` back to ``scheduled`` after renewing upstream."""
+    For non-transient situations no later tick can resolve — the owner's upstream
+    X subscription lapsed (HTTP 402), a send whose outcome is unknown, a prompt
+    destroyed before the doc/render split. Sets ``status='paused'`` so the
+    work-lists stop returning it (ending the every-tick refire loop) and stamps
+    the attempt so the FE can surface why. The owner resumes from the FE, which
+    patches ``status`` back to ``scheduled`` and clears the firing counters.
+
+    Fenced on ``claim_stamp`` for the same reason as ``mark_attempt``.
+    """
     await execute(
         """
         UPDATE posts
@@ -863,9 +1017,11 @@ async def mark_paused(
             last_attempt_detail = $4,
             updated_at          = NOW()
         WHERE id = $1::uuid
+          AND ($5::timestamptz IS NULL OR last_attempt_at = $5::timestamptz)
         """,
         post_id,
         at_iso,
         reason,
         detail,
+        claim_stamp,
     )

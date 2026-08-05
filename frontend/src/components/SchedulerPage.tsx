@@ -109,13 +109,22 @@ function RunCells({ summary: s }: { summary: SchedulerRun["summary"] }) {
       </>
     );
   }
-  const launched = s.launched?.length ?? 0;
+  // Track the scheduler's own key names — `launched` outlived the summary that
+  // emitted it and quietly rendered every tick as zero.
+  const posted = s.posted?.length ?? 0;
+  const resolving = s.resolving?.length ?? 0;
+  const repaired = Object.values(s.recovered ?? {}).reduce((n, e) => n + (e?.length ?? 0), 0);
   const contended = s.contended?.length ?? 0;
+  const did = [
+    posted && `${posted} posted`,
+    resolving && `${resolving} resolving`,
+    repaired && `${repaired} recovered`,
+  ].filter(Boolean).join(" · ");
   return (
     <>
       <td className={`${cell} text-stone-500 dark:text-zinc-400`}>tick</td>
       <td className={`${cell} text-stone-600 dark:text-zinc-300`}>
-        {s.processed ? `${s.processed} due · ${launched} launched` : "nothing due"}
+        {did || (s.processed ? `${s.processed} handled` : "nothing due")}
         {/* The forecast — what makes a quiet tick worth reading. */}
         {(() => {
           const up = s.upcoming;

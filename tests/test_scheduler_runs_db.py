@@ -127,10 +127,20 @@ BOB = "npub1bob"
 
 
 def _tick():
+    """A tick summary in the shape `scheduler.process_due_posts` ACTUALLY emits.
+
+    This helper built a `launched` list until 2026-08-04, long after the
+    resolve/post split renamed those keys to `posted`/`resolving`. Because the
+    fixture and `scope_runs` were wrong in the same direction, every test here
+    passed while real patrons saw an empty log — their own posts scoped away by a
+    key lookup that could never match. A fixture that mirrors the producer is the
+    only thing that makes these assertions mean anything.
+    """
     return {"run_at": "t", "summary": {
-        "kind": "tick", "processed": 2,
-        "launched": [{"post_id": "a1", "owner": ALICE, "claim_check": "cc-a"},
-                     {"post_id": "b1", "owner": BOB, "claim_check": "cc-b"}],
+        "kind": "tick", "processed": 3,
+        "posted": [{"post_id": "a1", "owner": ALICE, "outcome": "posted"},
+                   {"post_id": "b1", "owner": BOB, "outcome": "posted"}],
+        "resolving": [{"post_id": "a2", "owner": ALICE, "claim_check": "cc-a"}],
         "contended": [],
     }}
 
@@ -147,17 +157,33 @@ def test_operator_sees_everything_untouched():
     assert sr.scope_runs(runs, OP, OP) is runs
 
 
-def test_owner_sees_the_tick_heartbeat_with_only_their_launches():
+def test_owner_sees_the_tick_heartbeat_with_only_their_own_work():
     scoped = sr.scope_runs([_tick()], ALICE, OP)
     s = scoped[0]["summary"]
     assert scoped[0]["run_at"] == "t"  # heartbeat survives — proof the cron ran
-    assert [e["post_id"] for e in s["launched"]] == ["a1"]  # bob's is hidden
-    assert s["processed"] == 1  # alice's OWN count, never the global 2
+    assert [e["post_id"] for e in s["posted"]] == ["a1"]  # bob's is hidden
+    assert [e["post_id"] for e in s["resolving"]] == ["a2"]
+    assert s["processed"] == 2  # alice's OWN count, never the global 3
 
 
 def test_third_party_sees_the_heartbeat_but_no_counts_at_all():
     s = sr.scope_runs([_tick()], "npub1carol", OP)[0]["summary"]
-    assert s["processed"] == 0 and s["launched"] == [] and s["contended"] == []
+    assert s["processed"] == 0
+    assert s["posted"] == [] and s["resolving"] == [] and s["contended"] == []
+
+
+def test_a_recovered_post_is_scoped_to_its_owner_like_any_other():
+    """Phase 0's repairs are per-post, so they scope per-post. Without this the
+    `recovered` key would either leak Bob's stranded posts to Alice or vanish."""
+    tick = _tick()
+    tick["summary"]["recovered"] = {
+        "resumed": [{"post_id": "a3", "npub": ALICE, "owner": ALICE}],
+        "paused_unknown": [{"post_id": "b3", "npub": BOB, "owner": BOB}],
+    }
+    s = sr.scope_runs([tick], ALICE, OP)[0]["summary"]
+    assert [e["post_id"] for e in s["recovered"]["resumed"]] == ["a3"]
+    assert "paused_unknown" not in s["recovered"], "bob's repair is not alice's business"
+    assert s["processed"] == 3  # 1 posted + 1 resolving + 1 recovered
 
 
 def test_a_publication_reaches_only_its_own_owner():

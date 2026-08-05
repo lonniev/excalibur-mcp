@@ -214,6 +214,7 @@ async def resolve_one(runtime: Any, post_id: str) -> dict[str, Any]:
         try:
             await posts_db.mark_attempt(
                 post_id, _now().isoformat(), reason, detail or None,
+                claim_stamp=claim_stamp,
             )
         except Exception:  # noqa: BLE001 — stamping is never worth failing over
             logger.exception("resolver: failed to stamp attempt on %s", post_id)
@@ -232,6 +233,7 @@ async def resolve_one(runtime: Any, post_id: str) -> dict[str, Any]:
         try:
             await posts_db.mark_paused(
                 post_id, _now().isoformat(), reason, detail or None,
+                claim_stamp=claim_stamp,
             )
         except Exception:  # noqa: BLE001 — stamping is never worth failing over
             logger.exception("resolver: failed to pause %s", post_id)

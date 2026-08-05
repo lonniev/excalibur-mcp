@@ -20,14 +20,24 @@ resolving at publish_at guarantees the post is late by whatever the model took.
 Posting first is deliberate — a body finished during the previous tick goes out
 at the top of this one rather than waiting behind this tick's model work.
 
-Three guards, each earned:
+**Phase 0 — recover.** Before either, repair what a previous tick stranded. A
+publisher that dies leaves its post ``sending``, and no timer may re-fire that:
+one did on 2026-07-30 and tweeted twice. So recovery decides on evidence instead.
+``x_call_at`` records that a publisher was cleared to call X; only where it is
+absent — and the row is provably one this code claimed — is the post resumed.
+Everything ambiguous is paused, which is a state the owner can see and act on.
+
+Four guards, each earned:
 
 * ``claim_for_resolve`` and ``claim_for_post`` are atomic, so overlapping ticks
   can never double-start the same work.
 * the resolve lease (20 min, in ``posts.py``) hands back a slot whose worker died
   with its container. Nothing supervises workers; the lease is the recovery.
-* ``resolve_attempts`` caps how many times a body may fail to build, so a
-  permanently-broken prompt stops billing its owner every half hour.
+* ``mark_x_call_started`` is a fenced compare-and-set that AUTHORIZES the call,
+  so a superseded publisher stands down before touching X.
+* ``resolve_attempts`` caps how many times a post may fail to fire — and at the
+  cap it is now paused rather than silently dropped from the work-list, because a
+  row that reads ``scheduled`` and can never fire again is the worst of both.
 
 A recurrence that fires faster than its content can be built still needs no
 special handling: a template already ``resolving`` inside its lease is not due.
@@ -72,7 +82,7 @@ RESOLVE_RESULT_TTL_S = 3600
 # cached wheel layer serving old bytes under a new SHA. The commit read as
 # confirmation and confirmed nothing. Bump this string whenever the summary
 # changes, and a stale layer becomes visible in the heartbeat itself.
-_TICK_CONTRACT = "post-then-resolve-harvest/1"
+_TICK_CONTRACT = "recover-post-resolve-harvest/1"
 
 
 def _who() -> dict[str, str]:
@@ -163,6 +173,27 @@ async def process_due_posts(runtime: Any) -> dict[str, Any]:
     run_id = await scheduler_runs.begin_run()
     now = datetime.now(timezone.utc)
 
+    # -- Phase 0: repair whatever the last tick left stranded ----------------
+    #
+    # Runs first so a post recovered here is published by Phase 1 in this same
+    # tick rather than waiting half an hour for the next one. Best-effort: state
+    # repair is never worth losing a publication over.
+    #
+    # Both sweeps are bulk statements. Neither retries a send on a timer — the
+    # resume branch fires only where `x_call_at` proves the publisher died before
+    # reaching X, and everything ambiguous is paused for a human.
+    recovered: dict[str, Any] = {}
+    try:
+        recovered = await posts_db.recover_orphaned_sends()
+        recovered["exhausted"] = await posts_db.pause_exhausted_firings(
+            (now + timedelta(seconds=RESOLVE_LEAD_SECONDS)).isoformat(),
+        )
+    except Exception:  # noqa: BLE001 — a failed repair must never sink a tick
+        logger.exception("scheduler: recovery sweep failed")
+    recovered = {k: v for k, v in recovered.items() if v}
+    if recovered:
+        logger.info("scheduler: recovered %s", {k: len(v) for k, v in recovered.items()})
+
     # -- Phase 1: post finished bodies -------------------------------------
     posted: list[dict[str, Any]] = []
     ready = await posts_db.list_resolved_due(now.isoformat())
@@ -230,12 +261,15 @@ async def process_due_posts(runtime: Any) -> dict[str, Any]:
     summary = {"kind": "tick", "who": _who(),
                "posted": posted, "resolving": resolving, "contended": contended,
                "harvest": harvest,
-               "processed": len(posted) + len(resolving) + int(harvest.get("processed") or 0),
+               **({"recovered": recovered} if recovered else {}),
+               "processed": len(posted) + len(resolving) + int(harvest.get("processed") or 0)
+               + sum(len(v) for v in recovered.values()),
                "upcoming": await _upcoming(now)}
     logger.info(
-        "scheduler: posted=%d resolving=%d contended=%d harvest=%d",
+        "scheduler: posted=%d resolving=%d contended=%d harvest=%d recovered=%d",
         len(posted), len(resolving), len(contended),
         int(harvest.get("processed") or 0),
+        sum(len(v) for v in recovered.values()),
     )
     try:
         await scheduler_runs.complete_run(run_id, summary)

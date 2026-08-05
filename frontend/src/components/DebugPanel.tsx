@@ -71,10 +71,24 @@ function pushRun(run: SchedulerRun): void {
     return;
   }
 
-  const launched = s.launched ?? [];
+  // Keys must track `scheduler.process_due_posts`. `launched` was read here long
+  // after the scheduler stopped emitting it, so every tick logged "launched=0"
+  // regardless of what actually happened.
+  const posted = s.posted ?? [];
+  const resolving = s.resolving ?? [];
   const contended = s.contended ?? [];
+  const recovered = Object.entries(s.recovered ?? {});
   for (const e of contended) debugPush("error", outcome(e, "skip"));
-  for (const e of launched) debugPush("result", `  ↳ ${short(e.post_id)} launched`);
+  for (const [what, entries] of recovered) {
+    for (const e of entries ?? []) {
+      debugPush(
+        what.startsWith("paused") ? "error" : "result",
+        `  ↳ ${short(e.post_id)} recovered: ${what}`,
+      );
+    }
+  }
+  for (const e of posted) debugPush("result", `  ↳ ${short(e.post_id)} ${e.outcome ?? "posted"}`);
+  for (const e of resolving) debugPush("result", `  ↳ ${short(e.post_id)} resolving`);
   const processed = s.processed ?? 0;
   // A processed=0 tick is the Worker's heartbeat — say so plainly, otherwise a
   // row of zeroes reads like a failure when it just means nothing was due.
@@ -91,7 +105,9 @@ function pushRun(run: SchedulerRun): void {
       ? "started, never finished"
       : processed === 0
         ? `alive · nothing due · ${ahead}`
-        : `due=${processed} launched=${launched.length} · ${ahead}`;
+        : `did=${processed} posted=${posted.length} resolving=${resolving.length}` +
+          `${recovered.length ? ` recovered=${recovered.reduce((n, [, e]) => n + (e?.length ?? 0), 0)}` : ""}` +
+          ` · ${ahead}`;
   // Name the build. "alive" alone is noise you learn to skim past; "alive, and
   // it's THIS commit" is the line that settles a "did my deploy land?" question.
   const who = [s.who?.version && `v${s.who.version}`, s.who?.commit].filter(Boolean).join(" ");

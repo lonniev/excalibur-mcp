@@ -107,9 +107,10 @@ def scope_runs(
 ) -> list[dict[str, Any]]:
     """Owner-scope ring rows for the reader.
 
-    The ring carries two kinds of row. A **tick** is the scheduler dispatching:
-    it names every post it launched, across all owners. A **publication** is one
-    publisher's outcome for one post, and belongs to exactly one owner.
+    The ring carries two kinds of row. A **tick** is the scheduler working: what
+    it recovered, posted, and started resolving, across all owners. A
+    **publication** is one publisher's outcome for one post, and belongs to
+    exactly one owner.
 
     The operator sees everything. Any other reader sees every tick's heartbeat
     (``run_at`` — proof the cron is alive) with its per-post lists narrowed to
@@ -128,14 +129,32 @@ def scope_runs(
             if s.get("owner") == npub:
                 scoped.append(r)
             continue
-        launched = _owned(s.get("launched"), npub)
+        # These key names ARE the contract with the tick writer. They were
+        # `launched` until the resolve/post split renamed them, and this function
+        # was not updated: every tick then scoped to an empty list, so a patron's
+        # own posts vanished from their log and `processed` counted only
+        # contention. Nothing failed, because the tests here still built the old
+        # shape. If `scheduler.process_due_posts` renames a list again, this
+        # dictionary and those tests must move with it.
+        posted = _owned(s.get("posted"), npub)
+        resolving = _owned(s.get("resolving"), npub)
         contended = _owned(s.get("contended"), npub)
+        recovered = {
+            k: _owned(v, npub) for k, v in (s.get("recovered") or {}).items()
+        }
+        recovered = {k: v for k, v in recovered.items() if v}
         summary: dict[str, Any] = {
             "kind": "tick",
-            "processed": len(launched) + len(contended),
-            "launched": launched,
+            "processed": (
+                len(posted) + len(resolving) + len(contended)
+                + sum(len(v) for v in recovered.values())
+            ),
+            "posted": posted,
+            "resolving": resolving,
             "contended": contended,
         }
+        if recovered:
+            summary["recovered"] = recovered
         # Which build answered. Not owner-specific, and it's what makes a
         # heartbeat evidence instead of reassurance — every reader gets it.
         if s.get("who"):

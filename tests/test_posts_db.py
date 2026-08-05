@@ -207,6 +207,177 @@ async def test_re_authoring_a_flattened_block_clears_the_per_firing_mark():
     assert "resolved" not in saved["blocks"][1]
 
 
+class TestSendingIsNotADeadEnd:
+    """A publisher that dies must not strand its post forever.
+
+    Before the recovery sweep, `sending` had no lease, no work-list, and no exit:
+    post 1972b2e0 sat there from 2026-08-02 to 08-04, looking active and being
+    unreachable. The fix must not swing the other way — no timer may re-fire a
+    send, because one did on 2026-07-30 and tweeted the same post twice. So
+    recovery decides on evidence, and these pin which evidence means what.
+    """
+
+    @staticmethod
+    def _capture():
+        seen = []
+
+        async def fake_fetch(query, *args):
+            seen.append(query)
+            return []
+
+        return seen, fake_fetch
+
+    @pytest.mark.asyncio
+    async def test_the_call_mark_is_a_compare_and_set_not_a_stamp(self):
+        """It authorizes the call. A plain stamp would let an unconfirmed write
+        be followed by a post, leaving a row that reads 'nothing was sent'."""
+        captured = {}
+
+        async def fake_execute(query, *args):
+            captured["query"], captured["args"] = query, args
+            return {"rowCount": 0}
+
+        with patch.object(posts_db, "execute", fake_execute):
+            ok = await posts_db.mark_x_call_started(PID, "2026-08-02 01:30:20+00")
+
+        assert ok is False, "no row matched — the caller must NOT post"
+        q = captured["query"]
+        assert "SET x_call_at = NOW()" in q
+        assert "status = 'sending'" in q, "only a claimed post may be posted"
+        assert "x_call_at IS NULL" in q, "one authorization per firing"
+        assert "last_attempt_at = $2::timestamptz" in q, "and only by the current owner"
+
+    @pytest.mark.asyncio
+    async def test_a_send_that_may_have_reached_x_is_paused_never_resumed(self):
+        seen, fake = self._capture()
+        with patch.object(posts_db, "fetch", fake):
+            await posts_db.recover_orphaned_sends()
+        pause = next(q for q in seen if "x_post_outcome_unknown" in q)
+        assert "x_call_at IS NOT NULL" in pause
+        assert "status = 'paused'" in pause
+        assert "'resolved'" not in pause, "a possible live tweet is never retried"
+
+    @pytest.mark.asyncio
+    async def test_a_send_that_never_reached_x_is_resumed(self):
+        """The 1972b2e0 case. `resolved_at` is the co-discriminator: only a row
+        this code claimed for posting can have one, so a NULL x_call_at beside it
+        is proof of a pre-call death rather than proof of missing instrumentation.
+        """
+        seen, fake = self._capture()
+        with patch.object(posts_db, "fetch", fake):
+            await posts_db.recover_orphaned_sends()
+        resume = next(q for q in seen if "'resolved'" in q and "paused" not in q)
+        assert "x_call_at IS NULL" in resume
+        assert "resolved_at IS NOT NULL" in resume
+
+    @pytest.mark.asyncio
+    async def test_a_row_predating_the_marker_is_paused_not_reposted(self):
+        """The first sweep after deploy must not read 'no mark' as 'nothing sent'
+        for every historical row and repost them all."""
+        seen, fake = self._capture()
+        with patch.object(posts_db, "fetch", fake):
+            await posts_db.recover_orphaned_sends()
+        legacy = next(q for q in seen if "sending_orphaned_pre_split" in q)
+        assert "x_call_at IS NULL" in legacy and "resolved_at IS NULL" in legacy
+        assert "status = 'paused'" in legacy
+
+    @pytest.mark.asyncio
+    async def test_every_stale_send_matches_exactly_one_branch(self):
+        """Exhaustive and disjoint: `x_call_at` splits the first from the rest,
+        `resolved_at` splits the other two. A row matching none would be back to
+        being invisible, which is the whole defect."""
+        seen, fake = self._capture()
+        with patch.object(posts_db, "fetch", fake):
+            await posts_db.recover_orphaned_sends()
+        assert len(seen) == 3
+        assert all("status = 'sending'" in q for q in seen)
+        assert all("last_attempt_at <" in q for q in seen), "only stale claims"
+        assert sum("x_call_at IS NOT NULL" in q for q in seen) == 1
+        assert sum("x_call_at IS NULL" in q for q in seen) == 2
+        assert sum("resolved_at IS NOT NULL" in q for q in seen) == 1
+        assert sum("resolved_at IS NULL" in q for q in seen) == 1
+
+    @pytest.mark.asyncio
+    async def test_claiming_for_post_clears_the_previous_firings_mark(self):
+        """Otherwise a recurrence inherits the last occurrence's mark and is
+        paused for a send that completed days ago."""
+        captured = {}
+
+        async def fake_fetchrow(query, *args):
+            captured["query"] = query
+            return None
+
+        with patch.object(posts_db, "fetchrow", fake_fetchrow):
+            await posts_db.claim_for_post(PID)
+        assert "x_call_at = NULL" in captured["query"]
+
+    @pytest.mark.asyncio
+    async def test_a_post_phase_hold_returns_to_the_poster_not_the_resolver(self):
+        """`release_to_resolved` exists because `sending → scheduled` sent a
+        finished, paid-for body back to the resolve queue, burning one of five
+        lifetime firing attempts every time the publisher merely had a bad day."""
+        captured = {}
+
+        async def fake_execute(query, *args):
+            captured["query"] = query
+            return {"rowCount": 1}
+
+        with patch.object(posts_db, "execute", fake_execute):
+            ok = await posts_db.release_to_resolved(PID, "2026-08-02 01:30:20+00")
+        assert ok is True
+        assert "SET status = 'resolved'" in captured["query"]
+        assert "status = 'sending'" in captured["query"]
+        assert "last_attempt_at = $2::timestamptz" in captured["query"]
+
+
+@pytest.mark.asyncio
+async def test_a_post_at_the_firing_cap_is_paused_not_silently_dropped():
+    """At the cap both work-lists drop the row while it still reads `scheduled`.
+    It looks queued, is unreachable, and the only counter reset is a successful
+    advance that can now never happen. Pausing makes it visible and resumable."""
+    captured = {}
+
+    async def fake_fetch(query, *args):
+        captured["query"] = query
+        return []
+
+    with patch.object(posts_db, "fetch", fake_fetch):
+        await posts_db.pause_exhausted_firings("2026-08-05T00:00:00+00:00")
+    q = captured["query"]
+    assert "status = 'paused'" in q
+    assert "firing_attempts_exhausted" in q
+    assert f"resolve_attempts >= {posts_db.MAX_RESOLVE_ATTEMPTS}" in q
+    assert "COALESCE(last_attempt_reason" in q, "the real reason must survive"
+
+
+@pytest.mark.asyncio
+async def test_resuming_a_post_clears_the_firing_counters():
+    """Without this the pause has no exit: the sweep pauses a post at the cap,
+    the owner clicks Resume, and the next tick pauses it again on the same
+    counter. An infinite loop with a button in it."""
+    captured = {}
+
+    async def fake_fetchrow(query, *args):
+        captured["query"] = query
+        return {"post_id": PID, "status": "scheduled", "updated_at": "now"}
+
+    with patch.object(posts_db, "fetchrow", fake_fetchrow):
+        await posts_db.update_post("npub1x", PID, {"status": "scheduled"})
+    q = captured["query"]
+    assert "resolve_attempts = 0" in q
+    assert "x_call_at = NULL" in q and "resolved_at = NULL" in q
+    assert "last_attempt_reason = NULL" in q
+    assert "render = NULL" not in q, "Resume must not re-bill blocks already paid for"
+
+
+@pytest.mark.asyncio
+async def test_the_single_phase_publish_queries_are_gone():
+    """They carried the only `sending` recovery clause in the codebase and had no
+    callers, so the file read as though recovery existed while nothing ran it."""
+    for name in ("list_due", "claim_due_post", "release_claim"):
+        assert not hasattr(posts_db, name), f"{name} is dead and must not return"
+
+
 @pytest.mark.asyncio
 async def test_save_render_writes_render_and_never_doc():
     """The column boundary, asserted in SQL — the layer where it is real.
@@ -315,8 +486,71 @@ async def test_mark_attempt_stamps_reason_and_time():
     assert "last_attempt_detail = $4" in q
     assert "WHERE id = $1::uuid" in q
     assert captured["args"] == (
-        PID, "2026-06-21T20:00:00+00:00", "insufficient_balance", None,
+        PID, "2026-06-21T20:00:00+00:00", "insufficient_balance", None, None,
     )
+
+
+@pytest.mark.asyncio
+async def test_mark_attempt_hands_a_claimed_post_back():
+    """The transition nothing covered, and it is not a small one.
+
+    `sending → scheduled` puts a post back in the RESOLVE queue, and the next
+    claim there increments `resolve_attempts`. So this one CASE clause is why a
+    run of publisher holds — a weekend without credits — walks a healthy post to
+    the attempt cap and retires it.
+    """
+    captured = {}
+
+    async def fake_execute(query, *args):
+        captured["query"] = query
+        return {"rowCount": 1}
+
+    with patch.object(posts_db, "execute", fake_execute):
+        await posts_db.mark_attempt(PID, "2026-06-21T20:00:00+00:00", "x_api_error")
+    assert "CASE WHEN status = 'sending' THEN 'scheduled' ELSE status END" in captured["query"]
+
+
+@pytest.mark.asyncio
+async def test_mark_paused_stops_the_post():
+    """Also previously untested: that pausing actually pauses. Every non-transient
+    situation — a 402, an unconfirmed send, a destroyed prompt — depends on this
+    single SET reaching the column."""
+    captured = {}
+
+    async def fake_execute(query, *args):
+        captured["query"] = query
+        captured["args"] = args
+        return {"rowCount": 1}
+
+    with patch.object(posts_db, "execute", fake_execute):
+        await posts_db.mark_paused(
+            PID, "2026-06-21T20:00:00+00:00", "x_api_error: 402", "lapsed",
+        )
+    assert "status              = 'paused'" in captured["query"]
+    assert captured["args"][2] == "x_api_error: 402"
+
+
+@pytest.mark.asyncio
+async def test_the_state_stamps_are_fenced_by_the_claim_they_were_given():
+    """A worker presumed dead must not stamp its replacement's row.
+
+    Live today in the resolve phase: the lease is 20 minutes, so a slow resolver
+    wakes, reports a hold, and flips the REPLACEMENT's `resolving` row back to
+    `scheduled` mid-build. `None` stays unfenced for callers holding no claim.
+    """
+    captured = {}
+
+    async def fake_execute(query, *args):
+        captured["query"] = query
+        captured["args"] = args
+        return {"rowCount": 1}
+
+    for fn in (posts_db.mark_attempt, posts_db.mark_paused):
+        with patch.object(posts_db, "execute", fake_execute):
+            await fn(PID, "2026-06-21T20:00:00+00:00", "r", None,
+                     claim_stamp="2026-06-21 19:30:00+00")
+        assert "last_attempt_at = $5::timestamptz" in captured["query"], fn.__name__
+        assert captured["args"][4] == "2026-06-21 19:30:00+00", fn.__name__
 
 
 @pytest.mark.asyncio

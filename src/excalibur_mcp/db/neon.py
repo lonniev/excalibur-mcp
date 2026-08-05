@@ -136,6 +136,25 @@ async def _ensure_domain_schema(vault: Any) -> None:
         # after three of four paid blocks from re-billing the owner.
         f"ALTER TABLE {t('posts')} ADD COLUMN IF NOT EXISTS render JSONB",
 
+        # Evidence that a request MAY have reached X. Stamped by a fenced
+        # compare-and-set that authorizes the call itself, so its presence means
+        # "we were cleared to talk to X and may have done so".
+        #
+        # Its ABSENCE is not proof that nothing was sent — on a row written
+        # before this column existed there was nothing to stamp. That is why
+        # recovery pairs it with `resolved_at`: only a post-split row can have
+        # been claimed for posting, so `x_call_at IS NULL AND resolved_at IS NOT
+        # NULL` is the one combination that proves the publisher died before the
+        # call. Deliberately NOT backfilled: this runs on every boot, so any
+        # staleness-guarded backfill would keep re-converting recoverable
+        # orphans into pauses forever.
+        f"ALTER TABLE {t('posts')} ADD COLUMN IF NOT EXISTS x_call_at TIMESTAMPTZ",
+
+        # The recovery sweep's work-list. Partial, so the common tick that finds
+        # nothing orphaned is an index-only scan rather than a seq scan.
+        f"CREATE INDEX IF NOT EXISTS posts_sending_idx ON {t('posts')} "
+        "(last_attempt_at) WHERE status = 'sending'",
+
         # The poster's work-list: bodies finished resolving and now due. Narrow
         # and partial so the common tick is an index-only scan.
         f"CREATE INDEX IF NOT EXISTS posts_resolved_due_idx ON {t('posts')} "

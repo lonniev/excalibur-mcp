@@ -42,6 +42,30 @@ def _stub_mark_paused():
         yield m
 
 
+@pytest.fixture(autouse=True)
+def _stub_x_call_mark():
+    """The compare-and-set that AUTHORIZES the call to X.
+
+    Defaults to granted, so tests about everything downstream read normally.
+    Note what its absence proved: unstubbed, every publication stopped before
+    ``post_tweet`` — which is the gate behaving exactly as designed. A test that
+    wants to exercise a refusal sets ``.return_value = False`` or a side effect.
+    """
+    with patch.object(
+        publisher.posts_db, "mark_x_call_started", AsyncMock(return_value=True),
+    ) as m:
+        yield m
+
+
+@pytest.fixture(autouse=True)
+def _stub_release():
+    """A held post goes back to the poster's queue, not the resolver's."""
+    with patch.object(
+        publisher.posts_db, "release_to_resolved", AsyncMock(return_value=True),
+    ) as m:
+        yield m
+
+
 # -- recurrence math ---------------------------------------------------------
 
 def test_add_months_clamps_end_of_month():
@@ -226,7 +250,7 @@ def test_claim_lease_outlives_the_cron_period():
 
     from excalibur_mcp.db import posts as posts_db
 
-    lease_min = int(re.search(r"(\d+) minutes", posts_db._CLAIM_LEASE).group(1))
+    lease_min = int(re.search(r"(\d+) minutes", posts_db._SEND_LEASE).group(1))
 
     wrangler = Path(__file__).resolve().parent.parent / "scheduler-worker" / "wrangler.toml"
     crons = re.search(r'crons\s*=\s*\["\*/(\d+) ', wrangler.read_text())
@@ -331,6 +355,90 @@ async def test_delivered_but_unanswered_post_pauses_never_holds(
     rt.rollback_debit.assert_awaited_once()
 
 
+class TestNothingReachesXWithoutPermission:
+    """The compare-and-set before `post_tweet` is the authorization, not a log
+    line. Everything here pins a way the irreversible call could otherwise happen
+    without durable evidence that it was about to."""
+
+    @pytest.mark.asyncio
+    async def test_an_unrecordable_mark_stops_the_post(self, _stub_x_call_mark):
+        """The Neon-hiccup double-post. If the write's outcome is unknown and we
+        post anyway, the row still reads `x_call_at IS NULL` and recovery later
+        concludes nothing was sent — then sends it again."""
+        rt = _runtime()
+        _stub_x_call_mark.side_effect = RuntimeError("neon unreachable")
+        client = SimpleNamespace(post_tweet=AsyncMock())
+        with _claimed(), \
+             patch("excalibur_mcp.server._resolve_x_client",
+                   AsyncMock(return_value=(client, None))):
+            out = await publisher.publish_one(rt, "p1")
+
+        client.post_tweet.assert_not_awaited(), "never post without a durable mark"
+        assert out["outcome"] == "held" and out["reason"] == "x_call_mark_unavailable"
+        rt.rollback_debit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_a_superseded_publisher_stands_down_before_posting(
+        self, _stub_x_call_mark, _stub_mark_attempt, _stub_mark_paused,
+    ):
+        """A worker that stalled in OAuth or billing while its row was reassigned
+        must not post, and must not stamp state it no longer owns."""
+        rt = _runtime()
+        _stub_x_call_mark.return_value = False
+        client = SimpleNamespace(post_tweet=AsyncMock())
+        with _claimed(), \
+             patch("excalibur_mcp.server._resolve_x_client",
+                   AsyncMock(return_value=(client, None))):
+            out = await publisher.publish_one(rt, "p1")
+
+        client.post_tweet.assert_not_awaited()
+        assert out["outcome"] == "claim_lost_before_post"
+        _stub_mark_attempt.assert_not_awaited(), "the row belongs to someone else now"
+        _stub_mark_paused.assert_not_awaited()
+        rt.rollback_debit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_the_mark_is_taken_before_the_call(self, _stub_x_call_mark):
+        """Order is the whole point. Reversed, every orphan would read 'nothing
+        sent' and the sweep would repost tweets that are already live."""
+        order: list[str] = []
+        rt = _runtime()
+        _stub_x_call_mark.side_effect = lambda *a, **k: (order.append("mark"), True)[1]
+
+        async def _post(_text):
+            order.append("post")
+            return {"tweet_id": "1", "tweet_url": "u"}
+
+        client = SimpleNamespace(post_tweet=_post)
+        with _claimed(recurrence=None), \
+             patch.object(publisher.posts_db, "mark_sent", AsyncMock(return_value=True)), \
+             patch("excalibur_mcp.server._resolve_x_client",
+                   AsyncMock(return_value=(client, None))):
+            await publisher.publish_one(rt, "p1")
+
+        assert order == ["mark", "post"]
+
+    @pytest.mark.asyncio
+    async def test_a_hold_returns_the_body_to_the_poster_and_carries_the_claim(
+        self, _stub_mark_attempt, _stub_release,
+    ):
+        """A post-phase failure retries the post, not the resolve — and stamps
+        only while we still own the row."""
+        rt = _runtime()
+        client = SimpleNamespace(
+            post_tweet=AsyncMock(side_effect=XAPIError(429, "slow down")),
+        )
+        with _claimed(last_attempt_at="2026-08-02 01:30:20+00"), \
+             patch("excalibur_mcp.server._resolve_x_client",
+                   AsyncMock(return_value=(client, None))):
+            out = await publisher.publish_one(rt, "p1")
+
+        assert out["outcome"] == "held"
+        _stub_release.assert_awaited_once()
+        assert _stub_release.await_args.args[1] == "2026-08-02 01:30:20+00"
+        assert _stub_mark_attempt.await_args.kwargs["claim_stamp"] == "2026-08-02 01:30:20+00"
+
+
 @pytest.mark.asyncio
 async def test_connect_failure_still_holds_because_nothing_was_sent(_stub_mark_attempt):
     """The counter-case that keeps the rule honest.
@@ -353,7 +461,7 @@ async def test_connect_failure_still_holds_because_nothing_was_sent(_stub_mark_a
 @pytest.mark.asyncio
 async def test_402_pauses_post_and_refunds(_stub_mark_attempt, _stub_mark_paused):
     """A 402 (the owner's X subscription lapsed) is non-transient: refund, PAUSE
-    so list_due stops returning it, and report — never leave it scheduled to
+    so the work-lists stop returning it, and report — never leave it scheduled to
     re-fire and re-bill every tick."""
     rt = _runtime()
     client = SimpleNamespace(post_tweet=AsyncMock(side_effect=XAPIError(402, "subscription lapsed")))
