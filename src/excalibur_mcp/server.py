@@ -1306,22 +1306,6 @@ async def _resolve_dynamic_runner(
 runtime.register_job_runner("resolve_dynamic_block", _resolve_dynamic_runner)
 
 
-async def _publish_post_runner(post_id: str = "", **_: Any) -> dict:
-    """Carry one due post to X, as a background job.
-
-    The scheduler tick launches one of these per due post and returns; this is
-    where the minutes-long work actually happens, off the request clock. Its
-    value is its side effects — the tweet, and the post row it updates — so
-    nobody redeems the claim check it was handed.
-    """
-    from excalibur_mcp.publisher import publish_one
-
-    return await publish_one(runtime, post_id)
-
-
-runtime.register_job_runner("publish_post", _publish_post_runner)
-
-
 async def _resolve_post_body_runner(npub: str = "", post_id: str = "") -> dict:
     """Build one post's body — the slow half, run as a background job.
 

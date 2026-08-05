@@ -52,6 +52,12 @@ const statusStyle: Record<string, string> = {
   archived: "bg-stone-100 text-stone-400 dark:bg-zinc-800 dark:text-zinc-500",
 };
 
+// Pauses where the post MAY already be live on X. Resuming one of these is the
+// one click in this UI that can publish a duplicate, so it gets the opposite
+// advice from every other pause: check the timeline before acting, don't fix
+// anything at the provider.
+const UNCONFIRMED_SEND = ["x_post_outcome_unknown", "sending_orphaned_pre_split"];
+
 // Friendly labels for a held-attempt reason recorded by the scheduler Worker.
 // Anything unmapped (e.g. a raw x_api_error string) shows verbatim.
 function attemptLabel(reason: string): string {
@@ -105,6 +111,18 @@ function attemptLabel(reason: string): string {
       // must NOT be retried automatically. Only a human looking at the timeline
       // can say whether it went out, so the label sends them there.
       x_post_outcome_unknown: "X didn't confirm — check your timeline",
+      // Same hazard, found by the recovery sweep rather than by the publisher:
+      // a post stranded mid-send before send-tracking existed, so whether it
+      // reached X is simply unrecorded. Sends the owner to the timeline too.
+      sending_orphaned_pre_split: "send unrecorded — check your timeline",
+      // Gave up after repeated failures to fire. The real cause is in the
+      // detail; this only says the post stopped trying, and that Resume is
+      // what starts it again.
+      firing_attempts_exhausted: "gave up retrying — resume when fixed",
+      // The publisher refused to post because it could not durably record that
+      // it was about to. Deliberate: posting without that record is how an
+      // orphan later reads as "nothing sent" and goes out twice.
+      x_call_mark_unavailable: "couldn't confirm send state — retrying",
       empty_text_cache: "empty content",
       pricing_unavailable: "pricing unavailable",
       // Situations where the service couldn't answer — NOT the owner's doing.
@@ -590,7 +608,12 @@ export default function PostsPage() {
                     <span className={`text-xs px-2 py-0.5 rounded-full capitalize ${statusStyle[p.status] ?? statusStyle.draft}`}>
                       {p.status}
                     </span>
-                    {p.status === "scheduled" && p.last_attempt_reason && (
+                    {/* Also on `resolved`/`resolving`: a post the recovery sweep
+                        returned to the poster carries the reason it stalled, and
+                        gating this on `scheduled` alone would hide exactly the
+                        rows whose history the owner most needs. */}
+                    {["scheduled", "resolved", "resolving"].includes(p.status)
+                      && p.last_attempt_reason && (
                       <span
                         className={`mt-1 flex items-center gap-1 text-[11px] ${
                           oauthResolved
@@ -607,7 +630,7 @@ export default function PostsPage() {
                     {p.status === "paused" && p.last_attempt_reason && (
                       <span
                         className="mt-1 flex items-center gap-1 text-[11px] text-rose-600 dark:text-rose-400"
-                        title={`Scheduler paused this post${p.last_attempt_at ? ` at ${fmt(p.last_attempt_at)}` : ""}: ${p.last_attempt_reason}.${p.last_attempt_detail ? `\n\n${p.last_attempt_detail}` : ""}\n\nFix the cause at the provider, then Resume to reschedule it.`}
+                        title={`Scheduler paused this post${p.last_attempt_at ? ` at ${fmt(p.last_attempt_at)}` : ""}: ${p.last_attempt_reason}.${p.last_attempt_detail ? `\n\n${p.last_attempt_detail}` : ""}\n\n${UNCONFIRMED_SEND.includes(p.last_attempt_reason) ? "The publisher never confirmed, so this post MAY already be live on X. Check your timeline first — resuming a post that did go out publishes it twice." : "Fix the cause at the provider, then Resume to reschedule it."}`}
                       >
                         ⏸ {attemptLabel(p.last_attempt_reason)}
                       </span>

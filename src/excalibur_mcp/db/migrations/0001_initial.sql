@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS posts (
     title         TEXT,                        -- optional human label; falls back to first body line
     doc           JSONB       NOT NULL,        -- authored Doc (source of truth; human edits only)
     render        JSONB,                       -- THIS firing's resolved doc; cleared each recurrence
+    x_call_at     TIMESTAMPTZ,                 -- a request MAY have reached X; absence ≠ "nothing sent"
     text_cache    TEXT,                        -- composed text (scheduler + excerpts)
     publish_at    TIMESTAMPTZ,                 -- first/next intended publish
     recurrence    JSONB,                       -- {"freq": "...", "interval": n} | null

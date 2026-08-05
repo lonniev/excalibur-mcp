@@ -97,10 +97,34 @@ export function deriveSchedulerState(runs: SchedulerRun[]): SchedulerState {
       }
       continue;
     }
-    for (const l of row.launched ?? []) {
+    // Work a tick STARTED. `posted` entries whose publication row hasn't been
+    // met yet are genuinely in flight; `resolving` ones are still building.
+    // Both read as "in progress" to the reader, which is what Sending means.
+    //
+    // This read `row.launched` until 2026-08-04 — a key the scheduler stopped
+    // emitting when publishing split in two. The list was therefore always
+    // empty, so a post could sit in Sending for days with this panel insisting
+    // nothing was in flight. One did.
+    for (const l of [...(row.posted ?? []), ...(row.resolving ?? [])]) {
       if (!l.post_id || accounted.has(l.post_id)) continue;
       accounted.add(l.post_id);
       publishing.push(l.post_id.slice(0, 8));
+    }
+    // A tick that repaired a stranded post is reporting something the owner has
+    // to act on: a pause means a tweet may already be live.
+    for (const [what, entries] of Object.entries(row.recovered ?? {})) {
+      if (!what.startsWith("paused")) continue;
+      for (const e of entries ?? []) {
+        if (!e.post_id || accounted.has(e.post_id)) continue;
+        accounted.add(e.post_id);
+        stuck.push({
+          id: e.post_id.slice(0, 8),
+          reason: what === "paused_unknown"
+            ? "x_post_outcome_unknown" : "sending_orphaned_pre_split",
+          detail: "The publisher never confirmed. Check your X timeline before resuming.",
+          paused: true,
+        });
+      }
     }
   }
 

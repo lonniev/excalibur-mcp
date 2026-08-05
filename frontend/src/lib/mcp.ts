@@ -1114,6 +1114,9 @@ export interface SchedulerOutcome {
   // `reason` alone is a verdict with its evidence stripped, and stripping it is
   // how five unrelated OAuth failures all read as "X access expired".
   detail?: string;
+  // What the publisher settled on for this post: posted / held / paused / gone,
+  // or `claim_lost_before_post` when it stood down rather than risk a duplicate.
+  outcome?: string;
   next_status?: string;
   tweet_url?: string | null;
   // Present on a POSTED entry when a dynamic block didn't resolve and the
@@ -1137,14 +1140,24 @@ export interface SchedulerRun {
     // --- tick rows ---
     // Which build answered this tick. A heartbeat that only says "alive" can't
     // tell you WHICH deployment is alive.
-    who?: { version?: string; commit?: string };
+    who?: { version?: string; commit?: string; contract?: string };
     // The forecast: posts still ahead of the scheduler, and how far off the
     // soonest is. Owner-scoped before it reaches us — a patron sees their own
     // queue, the operator sees everyone's.
     upcoming?: { count?: number; next_in_minutes?: number };
     processed?: number;
-    launched?: SchedulerOutcome[];
+    // These names must track `scheduler.process_due_posts`. A single `launched`
+    // list became `posted` + `resolving` when publishing split into two phases,
+    // and nothing here followed: every tick rendered as "0 launched" and the
+    // Sending list derived from it was always empty — for months, including for
+    // the operator. If the tick summary is renamed again, this type and the
+    // readers below move with it.
+    posted?: SchedulerOutcome[];
+    resolving?: SchedulerOutcome[];
     contended?: SchedulerOutcome[];
+    // Phase 0: posts a tick rescued from a stranded state, keyed by what was
+    // done — `resumed`, `paused_unknown`, `paused_legacy`, `exhausted`.
+    recovered?: Record<string, SchedulerOutcome[]>;
 
     // --- publication rows ---
     post_id?: string;

@@ -305,7 +305,7 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
     if row is None:
         return await _record({"post_id": post_id, "outcome": "gone"})
     owner = row["npub"]
-    # The fencing token for every write we make about this post. `claim_due_post`
+    # The fencing token for every write we make about this post. `claim_for_post`
     # stamps `last_attempt_at = NOW()` on each claim, so it identifies OUR claim
     # specifically: if a later tick decides we died and re-claims, the stamp moves
     # and our writes stop matching. Captured once, here, rather than re-read later
@@ -336,7 +336,14 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
             reason = _stated(reason, post_id)
             await posts_db.mark_attempt(
                 post_id, _now().isoformat(), reason, detail or None,
+                claim_stamp=claim_stamp,
             )
+            # Retry the half that failed. A post-phase hold says nothing about
+            # the body — it is finished and already paid for — so the row goes
+            # back to the POSTER's queue. `mark_attempt`'s blanket
+            # sending → scheduled sent it to the resolver instead, and each
+            # re-claim there burned one of five lifetime firing attempts.
+            await posts_db.release_to_resolved(post_id, claim_stamp)
         except Exception:  # noqa: BLE001 — stamping is non-critical
             logger.exception("publisher: failed to stamp attempt on %s", post_id)
         return await _record({"post_id": post_id, "owner": owner, "outcome": "held",
@@ -349,6 +356,7 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
         try:
             await posts_db.mark_paused(
                 post_id, _now().isoformat(), _stated(reason, post_id), detail or None,
+                claim_stamp=claim_stamp,
             )
         except Exception:  # noqa: BLE001 — stamping is non-critical
             logger.exception("publisher: failed to stamp attempt on %s", post_id)
@@ -396,7 +404,7 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
     if not text:
         return await _hold("empty_after_resolve")
 
-    # 3. Price + bill the owner for post_tweet (tranche-expiry guard inside).
+    # 2. Price + bill the owner for post_tweet (tranche-expiry guard inside).
     cost, denial = await runtime._resolve_pricing(post_tweet_id, "post_tweet", "write", {})
     if denial is not None:
         return await _hold(
@@ -413,7 +421,38 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
             stage="post", cost_sats=cost,
         )
 
-    # 4. Post. On failure, refund the owner and leave the post scheduled. — network reason
+    # 4. Take permission to call X, and only then call it.
+    #
+    # This is the last instruction before the irreversible one, and its answer is
+    # the authorization — not a log line. `mark_x_call_started` is a fenced
+    # compare-and-set: it writes the evidence recovery will read, and it succeeds
+    # only if we still own the claim. So a publisher that stalled in OAuth or
+    # billing while a sweep reassigned its row finds zero rows matched and stands
+    # down here, rather than posting a second copy of something already sent.
+    #
+    # An exception is treated exactly like a refusal. If the write's outcome is
+    # unknown and we posted anyway, the row would still read `x_call_at IS NULL`
+    # and recovery would conclude nothing was sent — which is the 2026-07-30
+    # double-post rebuilt out of new parts.
+    try:
+        cleared = await posts_db.mark_x_call_started(post_id, claim_stamp)
+    except Exception as exc:  # noqa: BLE001 — unknown write outcome, never post
+        await runtime.rollback_debit(post_tweet_id, owner)
+        logger.warning("publisher: could not record the send mark for %s: %s", post_id, exc)
+        return await _hold("x_call_mark_unavailable", detail=str(exc) or type(exc).__name__)
+    if not cleared:
+        # The row is not ours any more. Say so and touch nothing: stamping an
+        # attempt here would overwrite the state of whoever owns it now.
+        await runtime.rollback_debit(post_tweet_id, owner)
+        logger.warning(
+            "publisher: claim on %s was taken before the send; standing down", post_id,
+        )
+        return await _record({
+            "post_id": post_id, "owner": owner,
+            "outcome": "claim_lost_before_post", "reason": "claim_reassigned_before_send",
+        })
+
+    # 5. Post. On failure, refund the owner and leave the post retryable. — network reason
     try:
         result = await client.post_tweet(markdown_to_unicode(text))
     except XAPIError as exc:
@@ -457,7 +496,7 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
         # An exception can carry an empty message; its type still names it.
         return await _hold(str(exc) or type(exc).__name__)
 
-    # 5. Stamp the fire and reschedule (or retire past cease_at).
+    # 6. Stamp the fire and reschedule (or retire past cease_at).
     sent_at = _now()
     # Anchored on the SCHEDULED slot, not on `sent_at`. See _next_state: using
     # the success moment compounds every delay into the next occurrence.

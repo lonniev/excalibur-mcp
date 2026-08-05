@@ -68,6 +68,20 @@ def _stub_ready():
 
 
 @pytest.fixture(autouse=True)
+def _stub_recovery():
+    """Phase 0 (repairing stranded rows) finds nothing unless a test says so.
+
+    Both sweeps are bulk statements against Neon, so leaving them live would
+    drag the whole vault bootstrap into every tick assertion."""
+    with patch.object(
+        scheduler.posts_db, "recover_orphaned_sends", AsyncMock(return_value={}),
+    ) as sends, patch.object(
+        scheduler.posts_db, "pause_exhausted_firings", AsyncMock(return_value=[]),
+    ) as exhausted:
+        yield SimpleNamespace(sends=sends, exhausted=exhausted)
+
+
+@pytest.fixture(autouse=True)
 def _stub_harvest():
     """Phase 3 (metrics harvest) is a no-op unless a test opts in — keeps ticks
     off Neon and off patron OAuth while asserting post/resolve behaviour."""
@@ -185,7 +199,7 @@ async def test_harvest_phase_runs_after_resolve(_stub_harvest):
     _stub_harvest.assert_awaited_once_with(rt)
     assert out["harvest"]["processed"] == 1
     assert out["processed"] == 1  # resolve 0 + harvest 1
-    assert out["who"]["contract"] == "post-then-resolve-harvest/1"
+    assert out["who"]["contract"] == "recover-post-resolve-harvest/1"
 
 
 @pytest.mark.asyncio
@@ -301,6 +315,66 @@ async def test_the_heartbeat_carries_a_marker_the_environment_cannot_fake(_stub_
     # and the shape it names is the shape actually produced
     assert "posted" in out and "resolving" in out
     assert "launched" not in out, "the single-phase key must be gone"
+
+
+class TestPhaseZeroRepairsWhatWasStranded:
+    """Recovery runs first so a repaired post publishes in the same tick, and is
+    best-effort so a failed repair never costs a publication."""
+
+    @pytest.mark.asyncio
+    async def test_a_recovered_body_is_posted_in_the_same_tick(
+        self, _stub_run_ring, _stub_recovery, _stub_post_claim, _stub_ready,
+    ):
+        """The point of Phase 0 running before Phase 1. Sequenced the other way, a
+        post rescued from `sending` would wait another half hour for the next
+        cron — on top of however long it was already stranded."""
+        _stub_recovery.sends.return_value = {
+            "resumed": [{"post_id": "p1", "npub": NPUB}],
+        }
+        _stub_ready.return_value = [{"post_id": "p1", "npub": NPUB}]
+        rt = _runtime()
+        posted = AsyncMock(return_value={"outcome": "posted"})
+        with _list_due(), patch("excalibur_mcp.publisher.publish_one", posted):
+            out = await scheduler.process_due_posts(rt)
+
+        posted.assert_awaited_once()
+        assert out["recovered"]["resumed"][0]["post_id"] == "p1"
+        assert out["processed"] == 2, "the repair and the publication both count"
+
+    @pytest.mark.asyncio
+    async def test_a_failed_sweep_never_sinks_the_tick(
+        self, _stub_run_ring, _stub_recovery, _stub_post_claim,
+    ):
+        _stub_recovery.sends.side_effect = RuntimeError("neon down")
+        rt = _runtime()
+        with _list_due("p1"):
+            out = await scheduler.process_due_posts(rt)
+        assert [x["post_id"] for x in out["resolving"]] == ["p1"]
+        assert "recovered" not in out
+
+    @pytest.mark.asyncio
+    async def test_an_exhausted_post_is_paused_on_the_resolve_horizon(
+        self, _stub_run_ring, _stub_recovery,
+    ):
+        """Paused on the same horizon the resolver would have picked it up, so the
+        stop lands exactly where the silence used to begin."""
+        _stub_recovery.exhausted.return_value = [{"post_id": "p9", "npub": NPUB}]
+        rt = _runtime()
+        with _list_due():
+            out = await scheduler.process_due_posts(rt)
+        assert out["recovered"]["exhausted"][0]["post_id"] == "p9"
+        _stub_recovery.exhausted.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_a_quiet_tick_reports_no_recovery_key_at_all(
+        self, _stub_run_ring, _stub_recovery,
+    ):
+        """Nothing stranded is the normal case; it must not add noise to every
+        heartbeat, or the key stops meaning anything when it does appear."""
+        rt = _runtime()
+        with _list_due():
+            out = await scheduler.process_due_posts(rt)
+        assert "recovered" not in out
 
 
 @pytest.mark.asyncio
