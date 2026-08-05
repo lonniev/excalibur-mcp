@@ -4,6 +4,7 @@ import { useTheme, type Theme } from "../lib/theme";
 import { getAccountStatement, type AccountStatementResult } from "../lib/mcp";
 import NostrProfilePanel from "./NostrProfilePanel";
 import XConnectPanel from "./XConnectPanel";
+import { PatronFundingStatus, OperatorFundingStatus } from "./FundingStatusPanels";
 import CouponsPanel from "./CouponsPanel";
 import BuildLicensePanel from "./BuildLicensePanel";
 
@@ -44,6 +45,13 @@ export default function ProfilePage() {
 
       {/* X account — per-patron OAuth2 connection (required to post) */}
       <XConnectPanel />
+
+      {/* Identity & credential health — OAuth, proof expiry, credits.
+          Composed from existing tools; checked_at on every row. */}
+      <PatronFundingStatus />
+
+      {/* Operator-only upstream dependencies (gated like scheduler_pending). */}
+      <OperatorFundingStatus />
 
       {/* Theme selection */}
       <div className={`${card} p-5`}>

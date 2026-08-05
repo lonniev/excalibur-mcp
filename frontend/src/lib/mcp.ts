@@ -243,6 +243,13 @@ const BOOTSTRAP_TOOLS = new Set([
   // Public kind-0 profile reads/relays — take explicit npub, no proof envelope.
   "get_nostr_profile",
   "publish_nostr_profile",
+  // Free operator diagnostics — no npub/proof envelope (operator identity is
+  // the process's own nsec; a patron calling these just sees empty/error).
+  "get_operator_onboarding_status",
+  "check_authority_balance",
+  // Takes explicit patron_npub + dpop_token (the cached phrase), not the
+  // injected envelope — same shape as receive_npub_proof.
+  "check_proof_status",
 ]);
 
 /// Tools too noisy/background to clutter the debug log (polled liveness +
@@ -360,6 +367,23 @@ export interface ServiceStatus {
   process_id?: number;
   service?: string;
   slug?: string;
+  vault_configured?: boolean;
+  courier_has_vault?: boolean;
+  // Durable long-runner diagnostics (operator only; present when op_npub resolves).
+  durable_jobs?: {
+    key_id?: string;
+    closure_key_block?: string;
+    deployment?: string;
+    detached_executor_active?: boolean;
+    detached_executor_resolved?: boolean;
+    detached_executor_error?: string | null;
+  };
+  // FastMCP Docket backend — durable_across_recycles is the real signal.
+  async_jobs?: {
+    docket_url_set?: boolean;
+    backend?: string;
+    durable_across_recycles?: boolean;
+  };
   build_info?: {
     fastmcp_cloud_url?: string;
     fastmcp_cloud_git_commit_sha?: string;
@@ -433,6 +457,9 @@ export interface CheckBalanceResult {
   active_tranches?: number;
   tranches?: CreditTranche[];
   next_expiration_iso?: string;
+  /** Sats in active tranches that expire within 24h (wheel check_balance). */
+  expiring_within_24h_sats?: number;
+  total_expired_api_sats?: number;
   seed_balance_granted?: boolean;
   vault_unavailable?: boolean;
   warning?: string;
@@ -443,6 +470,107 @@ export interface CheckBalanceResult {
 
 export async function checkBalance(): Promise<CheckBalanceResult> {
   return callTool<CheckBalanceResult>("check_balance", {});
+}
+
+// ─── Funding / credential status probes (compose into StatusSurface) ─────────
+// All free. Patron rows use check_balance + session_status + check_proof_status.
+// Operator rows use service_status + get_operator_onboarding_status +
+// check_authority_balance, gated client-side to the operator npub the same way
+// scheduler_pending is (getSchedulerStatus().operator_npub === stored npub).
+
+export interface ProofStatusResult {
+  success?: boolean;
+  status?: "valid" | "expired" | "unknown" | string;
+  expires_in_seconds?: number | null;
+  message?: string;
+  error?: string;
+  error_code?: string;
+}
+
+/// Whether the cached DM proof_token is still accepted. For session-nsec logins
+/// there is nothing to check (fresh inline proof each call) — callers should
+/// skip this and treat the proof row as ok. Free; takes explicit args so the
+/// envelope is not double-injected.
+export async function checkProofStatus(
+  patronNpub: string,
+  dpopToken: string,
+): Promise<ProofStatusResult> {
+  return callTool<ProofStatusResult>(
+    "check_proof_status",
+    { patron_npub: patronNpub, dpop_token: dpopToken },
+    { bestEffort: true },
+  );
+}
+
+export interface OnboardingField {
+  field: string;
+  category?: string;
+  status?: string;
+  lifecycle?: string;
+  how?: string;
+}
+
+export interface OperatorOnboardingResult {
+  ready?: boolean;
+  configured?: OnboardingField[];
+  missing?: OnboardingField[];
+  optional_missing?: OnboardingField[];
+  summary?: string;
+  bootstrap_error?: string;
+  vault_ok?: boolean;
+  credential_service?: string;
+  operator_name?: string;
+  error?: string;
+}
+
+/// Operator credential readiness (BTCPay / X app / llm_api_key present-or-not).
+/// Free, no proof. A non-operator still gets the structural answer; the FE hides
+/// the panel unless the viewer is the operator npub.
+export async function getOperatorOnboardingStatus(): Promise<OperatorOnboardingResult> {
+  return callTool<OperatorOnboardingResult>(
+    "get_operator_onboarding_status",
+    {},
+    { bestEffort: true },
+  );
+}
+
+export interface AuthorityBalanceResult {
+  success?: boolean;
+  balance_api_sats?: number;
+  balance_sats?: number;
+  error?: string;
+  message?: string;
+}
+
+/// This operator's tax balance at the Authority (sats available to certify
+/// patron purchases). Free. Best-effort — a failure is itself a status signal.
+export async function checkAuthorityBalance(): Promise<AuthorityBalanceResult> {
+  return callTool<AuthorityBalanceResult>(
+    "check_authority_balance",
+    {},
+    { bestEffort: true },
+  );
+}
+
+export interface SessionLifecycleResult {
+  success?: boolean;
+  lifecycle?: string;
+  message?: string;
+  detail?: string;
+  operator_npub?: string;
+  upstream_oauth?: UpstreamOauth;
+}
+
+/// Operator lifecycle (ready / warming_up / misconfigured / quota_exceeded / …).
+/// Free. Optional patron_npub also yields upstream_oauth (used by getXConnection).
+export async function getSessionLifecycle(
+  patronNpub?: string,
+): Promise<SessionLifecycleResult> {
+  return callTool<SessionLifecycleResult>(
+    "session_status",
+    patronNpub ? { patron_npub: patronNpub } : {},
+    { bestEffort: true },
+  );
 }
 
 export interface CheckPriceResult {

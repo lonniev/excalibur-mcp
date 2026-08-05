@@ -6,6 +6,7 @@ import {
   type CheckBalanceResult,
   type PurchaseCreditsResult,
 } from "../lib/mcp";
+import { PatronFundingStatus, OperatorFundingStatus } from "./FundingStatusPanels";
 
 const card = "rounded-xl border border-stone-200 dark:border-zinc-800 bg-white dark:bg-zinc-900";
 const primary =
@@ -70,6 +71,11 @@ export default function WalletPage() {
   return (
     <div className="max-w-3xl mx-auto px-4 py-6 space-y-5">
       <h1 className="text-lg font-semibold">Wallet</h1>
+
+      {/* Funding health first — tranche expiry is the thing a headline balance
+          hides. Operator panel only renders for the operator npub. */}
+      <PatronFundingStatus />
+      <OperatorFundingStatus />
 
       <div className={`${card} p-5`}>
         <div className="text-xs text-stone-400 dark:text-zinc-500">Balance</div>
