@@ -21,6 +21,26 @@ from excalibur_mcp.db.neon import execute, fetch, fetchrow
 
 logger = logging.getLogger(__name__)
 
+
+def _as_list(value: Any) -> list[Any]:
+    """Neon may hand JSONB back parsed or raw — normalize to a list.
+
+    Same convention as ``resolver._as_dict`` / ``publisher._as_dict``. A shape
+    that is neither a list nor a JSON array of one is dropped rather than
+    guessed at: this feeds a UI badge, and a badge built on a misread is worse
+    than no badge.
+    """
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (ValueError, TypeError):
+            return []
+        return parsed if isinstance(parsed, list) else []
+    return []
+
+
 # Columns returned for a full single-post read.
 _FULL_COLS = (
     "id::text AS post_id, npub, status, title, doc, render, text_cache, "
@@ -242,7 +262,29 @@ async def list_posts(
                last_attempt_at, last_attempt_reason, last_attempt_detail,
                template_id::text AS template_id,
                (recurrence IS NOT NULL) AS is_recurring,
-               COALESCE(doc->'blocks' @> '[{{"dynamic":true}}]'::jsonb, false) AS has_dynamic
+               COALESCE(doc->'blocks' @> '[{{"dynamic":true}}]'::jsonb, false) AS has_dynamic,
+               -- Which blocks went out as the author's FALLBACK rather than as the
+               -- post they wrote, and why. Without this the list can only say
+               -- "Sent" in green: a degraded send and a real one were
+               -- indistinguishable, and the only way to tell was to open the post
+               -- and recognise the fallback wording by eye. That is how four
+               -- flattened templates published their barista line for days.
+               --
+               -- `render` is THIS firing's working copy and wins when present; a
+               -- sent occurrence is snapshotted with the rendered blocks in `doc`,
+               -- so it is the fallback source. An advanced recurring template has
+               -- render = NULL and an authored doc, and correctly reports nothing.
+               COALESCE((
+                   SELECT jsonb_agg(b->'fellBack')
+                   FROM jsonb_array_elements(
+                       COALESCE(render->'blocks', doc->'blocks', '[]'::jsonb)
+                   ) AS b
+                   -- `jsonb_exists(b, 'fellBack')`, not `b ? 'fellBack'`: the two
+                   -- are identical to Postgres, but a bare `?` is a placeholder
+                   -- token to several drivers and this statement is already
+                   -- carrying $n parameters. Not worth finding out at runtime.
+                   WHERE jsonb_exists(b, 'fellBack')
+               ), '[]'::jsonb) AS fell_back
         FROM posts
         WHERE {where}
         ORDER BY {sort_expr} {row_dir}, created_at DESC
@@ -267,6 +309,7 @@ async def list_posts(
             "template_id": r.get("template_id") or None,
             "is_recurring": bool(r.get("is_recurring")),
             "has_dynamic": bool(r.get("has_dynamic")),
+            "fell_back": _as_list(r.get("fell_back")),
         }
         for r in rows
     ]
