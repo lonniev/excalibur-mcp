@@ -1271,9 +1271,9 @@ async def _resolve_dynamic_runner(
     Loads the operator's vaulted LLM key (never stored in the job params)
     and resolves the fragment via the shared ``resolve_block`` core — the same
     code the scheduler calls directly. On failure it raises an ``AsyncJobSituation``
-    so the wheel refunds AND the frontend gets a curated reason (mirrors the
-    detached path's ``_resolve_shape_result``). Registered at import so any fresh
-    container can resume an orphaned job when it's next polled.
+    so the wheel refunds AND the frontend gets a curated reason. Registered at
+    import so any fresh container can resume an orphaned job when it's next
+    polled — and so ModalExecutor can spawn THIS function detached, unchanged.
     """
     import httpx
 
@@ -1323,75 +1323,13 @@ async def _resolve_post_body_runner(npub: str = "", post_id: str = "") -> dict:
 runtime.register_job_runner("resolve_post_body", _resolve_post_body_runner)
 
 
-async def _resolve_build_closure(
-    npub: str = "",
-    prompt: str = "",
-    context: str = "",
-    voice: str = "",
-    bans: list | None = None,
-    allowed_domains: list | None = None,
-    max_fetches: int = 5,
-    runtime_limit_seconds: int = 0,
-    **_,
-) -> dict:
-    """Build the sealed-closure job spec for the durable long-runner path.
-
-    Runs in-process with full vault access: loads the operator's LLM key
-    and bakes a fully-formed provider request into a declarative ``http_request``
-    spec. The wheel seals this (AES-256-GCM) before it leaves the process, so the
-    key reaches detached compute only as ciphertext. Uses the same
-    ``build_resolve_request`` the in-process runner does, so both paths issue an
-    identical call.
-    """
-    creds = await runtime.load_credentials(["llm_api_key"])
-    key = creds.get("llm_api_key")
-    if not key:
-        raise RuntimeError("operator llm_api_key not configured")
-
-    from excalibur_mcp.resolve import build_resolve_request
-
-    return {
-        "op": "http_request",
-        "request": build_resolve_request(
-            api_key=key, prompt=prompt, context=context, voice=voice,
-            bans=bans or [], allowed_domains=allowed_domains or [],
-            max_fetches=max_fetches, timeout_seconds=runtime_limit_seconds,
-        ),
-    }
-
-
-def _resolve_shape_result(raw: dict | None, params: dict | None = None) -> dict:
-    """Shape the detached flow's raw result into the stored job result.
-
-    ``raw`` is the generic flow's return for ANY status —
-    ``{"status": <code>, "json"|"text": <body>}``. On 2xx, extract the X-ready
-    fragment. On non-2xx (the flow is a faithful messenger and no longer raises),
-    curate the upstream error into a frontend-facing ``AsyncJobSituation`` — the
-    raw status/body stay operator-side (Prefect logs); the patron sees only the
-    machine ``error_code`` + safe copy. Symmetric with the in-process runner.
-
-    ``params`` (the job's persisted kwargs) is threaded in by the wheel for
-    stateful jobs; resolving a dynamic block is stateless, so it's ignored here.
-    """
-    from excalibur_mcp.resolve import extract_resolved_text
-
-    raw = raw or {}
-    status = raw.get("status")
-    if status == 200:
-        try:
-            return {"text": extract_resolved_text(raw.get("json", {}))}
-        except ValueError as exc:
-            raise _empty_result_situation() from exc
-    raise _resolve_failure_situation(status, llm_error_message(raw.get("json")))
-
-
-# Register the closure (detached) path for the same kind. The wheel auto-installs
-# a detached executor when the operator has couriered the dpyc-longrunner creds;
-# until then the in-process runner above serves. No set_async_executor() here.
-runtime.register_job_spec(
-    "resolve_dynamic_block", _resolve_build_closure, _resolve_shape_result
-)
-
+# The closure/spec path is gone (tollbooth-dpyc 0.82.0). `_resolve_build_closure`
+# baked a fully-formed provider request into a sealed job spec, and
+# `_resolve_shape_result` interpreted the flow's raw HTTP response back into a
+# domain result — both existed only because a generic Prefect flow could not run
+# this module's code. ModalExecutor spawns `_resolve_dynamic_runner` itself, so
+# the runner registered above is the whole story and there is nothing to seal,
+# nothing to shape and no second code path to keep in step with the first.
 
 # ---------------------------------------------------------------------------
 # Scheduler entrypoint — operator-only (restricted). Triggered by the
