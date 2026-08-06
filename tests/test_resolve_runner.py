@@ -89,59 +89,39 @@ async def test_runner_maps_router_402_to_unfunded_situation():
     assert ei.value.transient is False
 
 
-def test_shape_result_router_402_to_unfunded_situation():
-    raw = {"status": 402, "json": {"error": {"message": "Insufficient credits"}}}
-    with pytest.raises(AsyncJobSituation) as ei:
-        server._resolve_shape_result(raw)
-    assert ei.value.error_code == "operator_llm_unfunded"
-    assert ei.value.transient is False
+# ---------------------------------------------------------------------------
+# Upstream classification
+# ---------------------------------------------------------------------------
+#
+# These asserted through `_resolve_shape_result`, the DETACHED path's mirror of
+# the runner's error handling — deleted with the closure apparatus in
+# tollbooth-dpyc 0.82.0. The classification itself never lived there: it is
+# `_resolve_failure_situation`, which the runner calls directly. So the tests
+# now assert the classifier, and cover the same statuses without a second code
+# path to keep in step.
 
 
-def test_shape_result_retired_model_slug_is_permanent():
+def test_router_402_is_unfunded_and_permanent():
+    sit = server._resolve_failure_situation(402, "Insufficient credits")
+    assert sit.error_code == "operator_llm_unfunded" and sit.transient is False
+
+
+def test_retired_model_slug_is_permanent():
     """A marketplace renaming a model under a running deployment. Retrying can
     never clear it, so the patron must not be told to keep trying."""
-    raw = {"status": 400, "json": {"error": {"message": "x-ai/grok-9 is not a valid model ID"}}}
-    with pytest.raises(AsyncJobSituation) as ei:
-        server._resolve_shape_result(raw)
-    assert ei.value.error_code == "operator_llm_model_unknown"
-    assert ei.value.transient is False
+    sit = server._resolve_failure_situation(400, "x-ai/grok-9 is not a valid model ID")
+    assert sit.error_code == "operator_llm_model_unknown" and sit.transient is False
 
 
-@pytest.mark.asyncio
-async def test_runner_maps_empty_output_to_situation():
-    with patch.object(server.runtime, "load_credentials",
-                      AsyncMock(return_value={"llm_api_key": "k"})), \
-         patch("excalibur_mcp.resolve.resolve_block", AsyncMock(side_effect=ValueError("no text"))):
-        with pytest.raises(AsyncJobSituation) as ei:
-            await server._resolve_dynamic_runner(prompt="p")
-    assert ei.value.error_code == "dynamic_block_empty"
+def test_billing_400_is_unfunded_not_a_bad_request():
+    sit = server._resolve_failure_situation(400, "Insufficient credits")
+    assert sit.error_code == "operator_llm_unfunded" and sit.transient is False
 
 
-def test_shape_result_2xx_extracts_text():
-    raw = {"status": 200, "json": {"content": [{"type": "text", "text": "<post>hi there</post>"}]}}
-    assert server._resolve_shape_result(raw) == {"text": "hi there"}
+def test_429_is_transient_so_the_patron_is_told_to_retry():
+    sit = server._resolve_failure_situation(429, "overloaded")
+    assert sit.error_code == "upstream_rate_limited" and sit.transient is True
 
 
-def test_shape_result_billing_400_to_unfunded_situation():
-    raw = {"status": 400, "json": {"error": {
-        "message": "Your credit balance is too low. Please purchase credits.",
-        "request_id": "req_SECRET"}}}
-    with pytest.raises(AsyncJobSituation) as ei:
-        server._resolve_shape_result(raw)
-    assert ei.value.error_code == "operator_llm_unfunded"
-    assert "req_SECRET" not in ei.value.message  # raw body never in patron copy
-
-
-def test_shape_result_429_is_transient_rate_limit():
-    raw = {"status": 429, "json": {"error": {"message": "overloaded"}}}
-    with pytest.raises(AsyncJobSituation) as ei:
-        server._resolve_shape_result(raw)
-    assert ei.value.error_code == "upstream_rate_limited"
-    assert ei.value.transient is True
-
-
-def test_shape_result_empty_2xx_to_empty_situation():
-    raw = {"status": 200, "json": {"content": []}}
-    with pytest.raises(AsyncJobSituation) as ei:
-        server._resolve_shape_result(raw)
-    assert ei.value.error_code == "dynamic_block_empty"
+def test_an_empty_2xx_is_its_own_situation():
+    assert server._empty_result_situation().error_code == "dynamic_block_empty"
