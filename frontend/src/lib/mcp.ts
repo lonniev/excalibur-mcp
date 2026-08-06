@@ -671,6 +671,12 @@ export interface PostSummary {
   has_dynamic?: boolean;
   // Set on a sent occurrence → the id of the recurring template it fired from.
   template_id?: string | null;
+  // Blocks that went out as the author's FALLBACK instead of the post they wrote,
+  // with the reason resolution gave up. A degraded send still reads "Sent" — the
+  // tweet did go out — so without this the list showed a healthy green pill and
+  // the only way to notice was to open the post and recognise the fallback
+  // wording. One reason per block; empty on a clean send.
+  fell_back?: { reason?: string | null; budget_s?: number | null }[];
 }
 
 export type SortDir = "asc" | "desc";

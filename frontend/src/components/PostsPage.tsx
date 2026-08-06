@@ -61,6 +61,22 @@ const UNCONFIRMED_SEND = ["x_post_outcome_unknown", "sending_orphaned_pre_split"
 // Friendly labels for a held-attempt reason recorded by the scheduler Worker.
 // Anything unmapped (e.g. a raw x_api_error string) shows verbatim.
 function attemptLabel(reason: string): string {
+  // Two reason families carry a value in the string itself, and the difference
+  // between them is the whole point — `_fallback_reason` says so: whether the
+  // block ran out of ITS OWN time, which the author can fix by raising
+  // runtimeLimit, or the provider failed, which is an outage and no edit helps.
+  // Reported as one undifferentiated raw token they read as the same event.
+  const timedOut = reason.match(/^resolve_timed_out_at_(\d+)s$/);
+  if (timedOut) return `ran out of its own ${timedOut[1]}s budget — raise the block's time limit`;
+  if (reason.startsWith("resolve_failed:")) {
+    const kind = reason.slice("resolve_failed:".length);
+    const known: Record<string, string> = {
+      ConnectError: "couldn't reach the model provider",
+      ReadError: "lost the connection to the model provider",
+      RemoteProtocolError: "the model provider closed the connection early",
+    };
+    return known[kind] ?? `the model provider failed (${kind})`;
+  }
   if (reason.startsWith("x_api_error")) {
     // The reason now carries X's status code and nothing else; X's own sentence
     // rides in `detail` and reaches the tooltip. So these labels name WHAT
@@ -608,6 +624,26 @@ export default function PostsPage() {
                     <span className={`text-xs px-2 py-0.5 rounded-full capitalize ${statusStyle[p.status] ?? statusStyle.draft}`}>
                       {p.status}
                     </span>
+                    {/* A degraded send is still a send, so `status` reads "Sent"
+                        in green and is RIGHT to. What it cannot say is that the
+                        words that went out were the author's fallback rather
+                        than the post they wrote. Until this badge existed the
+                        only way to notice was to open the post and recognise
+                        the fallback wording by eye — which is how four
+                        flattened templates published their barista line on
+                        schedule for days. */}
+                    {(p.fell_back?.length ?? 0) > 0 && (
+                      <span
+                        className="mt-1 flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400"
+                        title={`This post went out with the author's FALLBACK text, not the post as written.\n\n${p.fell_back!
+                          .map((f, i) => `Block ${i + 1}: ${attemptLabel(f.reason ?? "unreported")}${
+                            f.budget_s ? ` (gave up within a ${f.budget_s}s budget)` : ""
+                          }`)
+                          .join("\n")}\n\nThe tweet is live; the content is the consolation copy. Open the post to see what was published.`}
+                      >
+                        ⚠ fell back to fallback text
+                      </span>
+                    )}
                     {/* Also on `resolved`/`resolving`: a post the recovery sweep
                         returned to the poster carries the reason it stalled, and
                         gating this on `scheduled` alone would hide exactly the
