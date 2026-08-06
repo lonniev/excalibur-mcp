@@ -18,6 +18,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 
 from excalibur_mcp import resolver
@@ -362,3 +363,73 @@ class TestTheAuthoredDocIsNeverWritten:
             out = await resolver.resolve_one(rt, "p1")
 
         assert out["blocks_resolved"] == 2, "both blocks rebuilt from the doc"
+
+
+# ---------------------------------------------------------------------------
+# One retry — and only where the request was never delivered
+# ---------------------------------------------------------------------------
+
+
+class TestConnectRetry:
+    """A connect-class failure is the one kind that is free to try again.
+
+    On 2026-08-06 a single `ConnectError` cost post 844c6b64 its content 135s
+    into a 480s budget, and the identical request reproduced cleanly minutes
+    later. Nothing retried, so 72% of the author's time went unspent and the
+    reader got the fallback.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_connect_error_is_retried_once_and_can_succeed(self):
+        rt = _runtime()
+        calls: list[float] = []
+
+        async def flaky(**kw):
+            calls.append(kw["timeout_seconds"])
+            if len(calls) == 1:
+                raise httpx.ConnectError("connection refused")
+            return "the resolved words"
+
+        with _claimed(_doc(_STATIC, {**_DYN, "runtimeLimit": 480})), \
+             patch("excalibur_mcp.resolve.resolve_block", side_effect=flaky):
+            out = await resolver.resolve_one(rt, "p1")
+
+        assert out["outcome"] == "resolved"
+        assert "degraded" not in out, "a recovered block is not a degradation"
+        assert len(calls) == 2, "one retry, not zero and not a loop"
+        # The retry runs inside the block's OWN remaining budget — it may not
+        # hand itself a fresh 480s and double the author's ceiling.
+        assert calls[1] <= calls[0]
+        rt.rollback_debit.assert_not_awaited()  # the fare bought something
+
+    @pytest.mark.asyncio
+    async def test_a_timeout_is_not_retried(self):
+        # The provider may have been mid-generation; a second attempt re-bills
+        # upstream and can duplicate work. Fall back, as before.
+        rt = _runtime()
+        calls: list[float] = []
+
+        async def timing_out(**kw):
+            calls.append(kw["timeout_seconds"])
+            raise httpx.ReadTimeout("took too long")
+
+        with _claimed(_doc(_STATIC, {**_DYN, "runtimeLimit": 480})), \
+             patch("excalibur_mcp.resolve.resolve_block", side_effect=timing_out):
+            out = await resolver.resolve_one(rt, "p1")
+
+        assert len(calls) == 1, "a timeout must not be retried"
+        assert out["degraded"][0]["reason"] == "resolve_timed_out_at_480s"
+
+    @pytest.mark.asyncio
+    async def test_both_attempts_failing_reports_the_retrys_reason(self):
+        rt = _runtime()
+
+        async def always_refused(**kw):
+            raise httpx.ConnectError("connection refused")
+
+        with _claimed(_doc(_STATIC, {**_DYN, "runtimeLimit": 480})), \
+             patch("excalibur_mcp.resolve.resolve_block", side_effect=always_refused):
+            out = await resolver.resolve_one(rt, "p1")
+
+        assert out["degraded"][0]["reason"] == "resolve_failed:ConnectError"
+        rt.rollback_debit.assert_awaited()  # bought nothing, so refunded

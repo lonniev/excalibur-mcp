@@ -43,13 +43,34 @@ cleared the moment the recurrence advances.
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any
+
+import httpx
 
 from excalibur_mcp.db import posts as posts_db
 from excalibur_mcp.db import scheduler_runs
 
 logger = logging.getLogger(__name__)
+
+# Failures where the request was PROVABLY never delivered: the connection was
+# never established, so no tokens were spent, no generation started, and a second
+# attempt has no side effect to duplicate. These and only these are safe to retry.
+#
+# Deliberately NOT retried: a read/protocol/write error interrupted a request the
+# provider had already accepted and may be part-way through answering, and an
+# auth/funding refusal will refuse identically. Retrying either spends the owner's
+# budget to reach the same fallback one attempt later.
+#
+# Earned on 2026-08-06. A single `ConnectError` cost post 844c6b64 its content
+# 135s into a 480s budget — 72% of the author's time unspent — and the identical
+# request (same URL, same 8 fetches) reproduced cleanly minutes afterwards.
+_RETRYABLE_CONNECT = (httpx.ConnectError, httpx.ConnectTimeout)
+
+# Floor for a second attempt. Below this the retry cannot plausibly finish, so it
+# would burn the remainder and fall back anyway — later, and having spent more.
+_MIN_RETRY_BUDGET_S = 20.0
 
 
 def _now() -> datetime:
@@ -358,16 +379,51 @@ async def resolve_one(runtime: Any, post_id: str) -> dict[str, Any]:
         if not api_key:
             why = "no_operator_llm_key"
         else:
-            try:
-                resolved_text = await resolve_block(
+            async def _attempt(seconds: float) -> str:
+                return await resolve_block(
                     api_key=api_key, prompt=prompt,
                     context=_body_text(blocks[:i]),
                     voice=voice, bans=bans, allowed_domains=_domains(src),
                     max_fetches=clamp_fetches(src.get("maxFetches", 5)),
-                    timeout_seconds=budget,
+                    timeout_seconds=seconds,
                 )
+
+            started = time.monotonic()
+            try:
+                resolved_text = await _attempt(budget)
                 if not resolved_text:
                     why = "empty_resolution"
+            except _RETRYABLE_CONNECT as exc:
+                # One retry, and only here. The fare was debited before this
+                # block began, so the second attempt costs the owner nothing
+                # extra — it is the same block resolution, not a new one.
+                left = budget - (time.monotonic() - started)
+                if left < _MIN_RETRY_BUDGET_S:
+                    logger.warning(
+                        "resolver: block %d could not reach the provider for %s (%s) "
+                        "with %.0fs left — too little to retry", i, owner,
+                        type(exc).__name__, left,
+                    )
+                    why = _fallback_reason(exc, budget)
+                else:
+                    logger.warning(
+                        "resolver: block %d could not reach the provider for %s (%s); "
+                        "retrying once within the block's remaining %.0fs",
+                        i, owner, type(exc).__name__, left,
+                    )
+                    try:
+                        resolved_text = await _attempt(left)
+                        if not resolved_text:
+                            why = "empty_resolution"
+                    except Exception as retry_exc:  # noqa: BLE001 — now fall back
+                        logger.warning(
+                            "resolver: block %d retry failed for %s: %s",
+                            i, owner, retry_exc,
+                        )
+                        # Report the RETRY's reason against the time it actually
+                        # had. Naming the first failure would hide that a second
+                        # attempt was made and also lost.
+                        why = _fallback_reason(retry_exc, left)
             except Exception as exc:  # noqa: BLE001 — fall back, keep the reason
                 logger.warning("resolver: block %d failed for %s: %s", i, owner, exc)
                 why = _fallback_reason(exc, budget)
