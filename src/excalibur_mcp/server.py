@@ -31,6 +31,7 @@ from tollbooth.tool_identity import STANDARD_IDENTITIES, ToolIdentity, capabilit
 from tollbooth.upstream_payment import upstream_payment_situation
 
 from excalibur_mcp import __version__
+from excalibur_mcp.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -199,18 +200,6 @@ TOOL_REGISTRY: dict[str, ToolIdentity] = {ti.tool_id: ti for ti in _DOMAIN_TOOLS
 # Settings singleton
 # ---------------------------------------------------------------------------
 
-_settings = None
-
-
-def get_settings():
-    """Get or create the Settings singleton."""
-    global _settings
-    if _settings is not None:
-        return _settings
-    from excalibur_mcp.config import Settings
-
-    _settings = Settings()
-    return _settings
 
 
 # ---------------------------------------------------------------------------
@@ -993,7 +982,12 @@ async def resolve_dynamic_block(
     allowed_domains: str = "",
     max_fetches: int = 5,
     runtime_limit_seconds: Annotated[int, Field(
-        description="Author's time budget for this block in seconds (60–900). "
+        # Tool metadata is a contract, so the stated range has to be the range actually
+        # enforced. Hardcoding "900" here would keep advertising a ceiling the operator
+        # had already reconfigured, and a caller that believed it would silently
+        # under-ask.
+        description="Author's time budget for this block in seconds "
+                    f"(60–{get_settings().resolve_block_budget_max_s}). "
                     "Bounds how long the job may run AND sets the poll cadence; "
                     "the operator may price it ad valorem.",
     )] = 210,
@@ -1027,7 +1021,8 @@ async def resolve_dynamic_block(
         allowed_domains: Author allowlist for web_fetch — JSON array or
             comma-separated. Blank = fetch any URL the prompt references.
         max_fetches: Author budget for web lookups (search + fetch), 1..25.
-        runtime_limit_seconds: Author's time budget (clamped 60..900). Sets the
+        runtime_limit_seconds: Author's time budget (clamped to the operator's
+            configured block ceiling; see config.resolve_block_budget_max_s). Sets the
             job's runtime ceiling and the poll cadence (first poll ~75% of it),
             and is available to the operator's pricing model for ad-valorem fares.
         npub: Your DPYC patron npub for credit billing.
@@ -1089,7 +1084,9 @@ async def resolve_dynamic_block(
 
     # Author's declared time budget bounds both the runtime ceiling and the poll
     # cadence (passed as expected_seconds so the first poll waits ~75% of it).
-    budget = max(60, min(int(runtime_limit_seconds or 210), 900))
+    # The ceiling is the innermost configured ring, not a literal — see config.py.
+    budget = max(60, min(int(runtime_limit_seconds or 210),
+                         get_settings().resolve_block_budget_max_s))
 
     # Kick the slow resolve into a background job and hand back a claim check.
     # Params are persisted in Neon — never the API key (the runner loads it).
@@ -1547,8 +1544,23 @@ async def scheduler_status(
     """
     import httpx
 
-    out: dict = {"operator_npub": runtime.operator_npub()}
-    url = f"{get_settings().scheduler_worker_url.rstrip('/')}/status"
+    settings = get_settings()
+    # The budget rings, served rather than duplicated. The editor needs the block
+    # ceiling to bound its input and the FE's scheduler view needs the lease to decide
+    # whether a `resolving` row is still alive; both used to carry hand-copied literals
+    # that drifted the moment either was retuned here. Derived values only — no secrets,
+    # and this tool is already free to any proven patron.
+    out: dict = {
+        "operator_npub": runtime.operator_npub(),
+        "resolve_budgets": {
+            "block_max_seconds": settings.resolve_block_budget_max_s,
+            "job_attempt_seconds": settings.resolve_job_attempt_s,
+            "lease_seconds": settings.resolve_lease_s,
+            "runner_timeout_seconds": settings.resolve_runner_timeout_s,
+            "lead_seconds": settings.resolve_lead_s,
+        },
+    }
+    url = f"{settings.scheduler_worker_url.rstrip('/')}/status"
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(url)

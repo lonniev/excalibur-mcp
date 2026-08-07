@@ -35,6 +35,7 @@ from tollbooth.llm_route import (
     web_search_tool,
 )
 
+from excalibur_mcp.config import get_settings
 from excalibur_mcp.formatter import to_x_text
 
 logger = logging.getLogger(__name__)
@@ -192,12 +193,9 @@ def build_resolve_request(
 ) -> dict[str, Any]:
     """Build the fully-formed messages request for one dynamic block.
 
-    Returns a declarative, JSON-serializable request envelope (method, url,
-    headers, json body, timeout) — exactly the shape the durable long-runner's
-    generic ``http_request`` op executes. The operator's ``api_key`` is baked in
-    here, in-process, where it can be sealed into the closure before it ever
-    leaves the server; it appears in the request only as the ``x-api-key`` header.
-    Raises ``ValueError`` on empty prompt.
+    Returns a declarative, JSON-serializable request envelope (method, url, headers,
+    json body, timeout). The operator's ``api_key`` is baked in here, in-process, and
+    appears only as the ``x-api-key`` header. Raises ``ValueError`` on empty prompt.
     """
     bans = bans or []
     if not prompt.strip():
@@ -211,6 +209,9 @@ def build_resolve_request(
         max_tokens=_MAX_TOKENS,
         tools=_build_tools(allowed_domains, clamp_fetches(max_fetches)),
         timeout_seconds=timeout_seconds,
+        # Same reason as resolver.py: the envelope clamps too, so a ceiling supplied to
+        # one and not the other would reintroduce the cut it was meant to remove.
+        timeout_max_seconds=get_settings().resolve_block_budget_max_s,
     )
 
 

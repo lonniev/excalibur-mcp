@@ -53,13 +53,19 @@ export interface SchedulerState {
   soon: number;
 }
 
-// How long a resolve claim is honoured before the scheduler hands the slot back
-// (`_RESOLVE_LEASE` in db/posts.py). A `resolving` entry older than this is no
-// longer evidence of live work — its worker is presumed dead and the row has been
-// re-claimed or released. Without this bound the badge can only ever be cleared by
-// a publication row, so it over-reports for the whole gap between "resolve
-// finished" and "post sent", which for an early resolve is the entire wait.
-const RESOLVE_LEASE_MS = 20 * 60 * 1000;
+// How long a resolve claim is honoured before the scheduler hands the slot back. A
+// `resolving` entry older than this is no longer evidence of live work — its worker is
+// presumed dead and the row has been re-claimed or released. Without this bound the
+// badge can only ever be cleared by a publication row, so it over-reports for the whole
+// gap between "resolve finished" and "post sent", which for an early resolve is the
+// entire wait.
+//
+// The real value is SERVED (`scheduler_status.resolve_budgets.lease_seconds`), derived
+// there from the block budget ring. This is only the pre-fetch fallback, and it is
+// deliberately generous: guessing SHORT would declare live resolves dead and blank a
+// badge that is doing its job, whereas guessing long merely lets a finished one linger
+// until the next poll.
+const FALLBACK_RESOLVE_LEASE_MS = 60 * 60 * 1000;
 
 export const UNKNOWN_STATE: SchedulerState = {
   health: "unknown", lastRun: null, stuck: [], resolving: [], soon: 0,
@@ -78,7 +84,13 @@ export function relative(fromIso: string): string {
 }
 
 /** Turn raw log rows into everything any surface needs to describe the scheduler. */
-export function deriveSchedulerState(runs: SchedulerRun[]): SchedulerState {
+export function deriveSchedulerState(
+  runs: SchedulerRun[],
+  // The server's configured lease. Callers that have already fetched
+  // scheduler_status should pass it; the fallback exists only for surfaces that
+  // render before that round trip lands.
+  leaseMs: number = FALLBACK_RESOLVE_LEASE_MS,
+): SchedulerState {
   // Freshness must come from a TICK. A publication finishes minutes after the
   // tick that launched it, so reading its timestamp as the heartbeat would make
   // a dying cron look livelier than it is.
@@ -128,7 +140,7 @@ export function deriveSchedulerState(runs: SchedulerRun[]): SchedulerState {
     // Scoped to the resolving loop only — a stale row's `recovered` entries are
     // still worth reporting, and an early `continue` here would swallow them.
     const startedAt = Date.parse(r.run_at ?? "");
-    const withinLease = isNaN(startedAt) || now - startedAt <= RESOLVE_LEASE_MS;
+    const withinLease = isNaN(startedAt) || now - startedAt <= leaseMs;
     if (withinLease) {
       for (const l of row.resolving ?? []) {
         if (!l.post_id || accounted.has(l.post_id)) continue;

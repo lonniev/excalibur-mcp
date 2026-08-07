@@ -8,6 +8,7 @@ import {
   Wand2, Loader2, Swords, Save, Bold, Italic, Code, Smile, Star, Minus,
   CopyPlus, X,
 } from "lucide-react";
+import { getResolveBudgets } from "../lib/mcp";
 import { useSession } from "../App";
 import Avatar from "./Avatar";
 import { avatarFor } from "../lib/avatar";
@@ -1667,6 +1668,15 @@ function BlockView({
   const ref = useRef<HTMLParagraphElement>(null);
   const editRef = useRef<HTMLTextAreaElement>(null);
   const [showEmoji, setShowEmoji] = useState(false);
+  // The time-budget ceiling is the SERVER's, fetched once and shared. Hardcoding it
+  // here is what made the editor quietly refuse budgets the operator had already
+  // raised — the input said 900 because this file said 900.
+  const [budgetMax, setBudgetMax] = useState<number | null>(null);
+  useEffect(() => {
+    let live = true;
+    getResolveBudgets().then((b) => { if (live) setBudgetMax(b?.block_max_seconds ?? null); });
+    return () => { live = false; };
+  }, []);
   const segs = useMemo(() => segmentize(block.text, block.flags), [block.text, block.flags]);
 
   if (preview) {
@@ -1766,11 +1776,11 @@ function BlockView({
             <input
               type="number"
               min={60}
-              max={900}
+              {...(budgetMax ? { max: budgetMax } : {})}
               step={30}
               value={block.runtimeLimit ?? 210}
               onChange={(e) => onChangeRuntimeLimit(Number(e.target.value) || 0)}
-              title="Time budget in seconds (60–900). Bounds runtime and may affect the fare."
+              title={`Time budget in seconds (60${budgetMax ? `–${budgetMax}` : ""}). Bounds runtime and may affect the fare.`}
               className="w-16 flex-none rounded-sm border border-violet-200 bg-white px-2 py-1 text-[12px] text-violet-800 outline-hidden focus:border-violet-400"
             />
             <span className="flex-none text-[10px] text-violet-400">sec</span>

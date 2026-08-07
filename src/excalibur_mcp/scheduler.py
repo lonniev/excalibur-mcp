@@ -50,21 +50,28 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from excalibur_mcp.config import get_settings
 from excalibur_mcp.db import posts as posts_db
 from excalibur_mcp.db import scheduler_runs
 
 logger = logging.getLogger(__name__)
 
-# How long one publication may run before the wheel's watchdog considers it
-# stale. Comfortably over the 900s ceiling a single dynamic block can ask for,
-# and under the claim lease that would otherwise hand the post to another tick.
-RESOLVE_MAX_RUNTIME_S = 960
+# Two of the resolve budget rings. Both are DERIVED from the single configured
+# block ceiling (config.Settings) rather than authored here — see the ring
+# comment there for why an inversion between them is dangerous rather than
+# merely untidy. Read once at import: settings come from the environment and do
+# not change under a running process.
+_budgets = get_settings()
 
-# How far ahead of publish_at to start building a body. One tick: long enough
-# that a finished body is waiting when the moment arrives, short enough that a
-# block asking for "the price now" is not badly stale. The cost of a longer lead
-# is staleness; the cost of none is lateness.
-RESOLVE_LEAD_SECONDS = 30 * 60
+# How long one publication may run before the wheel's watchdog considers it
+# stale. Sits outside the largest block a template may ask for, and inside the
+# claim lease that would otherwise hand the post to another tick.
+RESOLVE_MAX_RUNTIME_S = _budgets.resolve_job_attempt_s
+
+# How far ahead of publish_at to start building a body. A tick, or a full-budget
+# block, whichever is longer. The cost of a longer lead is staleness; the cost of
+# too short a one is lateness.
+RESOLVE_LEAD_SECONDS = _budgets.resolve_lead_s
 
 # A publisher's value is its side effects — the tweet and the post row it
 # updates. Nobody redeems its claim check, so the result only needs to outlive

@@ -17,6 +17,7 @@ import json
 import logging
 from typing import Any
 
+from excalibur_mcp.config import get_settings
 from excalibur_mcp.db.neon import execute, fetch, fetchrow
 
 logger = logging.getLogger(__name__)
@@ -465,12 +466,12 @@ async def hard_delete(npub: str, post_id: str) -> bool:
 _SEND_LEASE = "interval '45 minutes'"
 
 
-# A resolve claim covers ONLY the slow half — building a body from its blocks.
-# Bounded by the per-block runtimeLimit (900s ceiling) times a handful of
-# blocks, not by anything that touches X. Deliberately far shorter than the old
-# whole-publication lease: a worker that dies mid-resolve should hand its slot
-# back in minutes, not three quarters of an hour.
-_RESOLVE_LEASE = "interval '20 minutes'"
+# A resolve claim covers ONLY the slow half — building a body from its blocks —
+# so it is bounded by the block budget rings, never by anything that touches X.
+# Derived, not authored: it must strictly outlast one job attempt, or a resolve
+# still running gets declared orphaned and handed to a second worker. Built as a
+# seconds interval because the ring arithmetic does not land on whole minutes.
+_RESOLVE_LEASE = f"interval '{get_settings().resolve_lease_s} seconds'"
 
 # How many times a body may fail to resolve before it stops being retried. A
 # dynamic block costs a real LLM fare per attempt, so a permanently-broken

@@ -300,11 +300,23 @@ def _fallback_reason(exc: Exception, budget_s: float) -> str:
     name = type(exc).__name__
     if "Timeout" in name or isinstance(exc, TimeoutError):
         return f"resolve_timed_out_at_{int(budget_s)}s"
-    # All this path ever holds is a client library's exception text — no status
-    # code survived. The wheel classifies on the message alone so the audit ring
-    # names an empty provider account the same way the patron-facing path does,
-    # whichever provider phrased the refusal.
-    return classify_llm_failure(message=str(exc)) or f"resolve_failed:{name}"
+    # Hand the classifier the STATUS whenever the exception carries one. It is
+    # the premise of the wheel's bare-402 rule ("a metered LLM provider means
+    # exactly one thing: the account is empty"), and that rule was unreachable
+    # from here: httpx renders an HTTPStatusError as only the generic
+    # "Client error '402 Payment Required' for url …", which holds none of the
+    # provider's own wording that _UNFUNDED_NEEDLES matches on. So the message
+    # alone matched nothing, and an empty OpenRouter account fell out as the
+    # shrug `resolve_failed:HTTPStatusError` — the one cause a fallback most
+    # needs to name, because unlike a small runtimeLimit no edit to the post can
+    # fix it. Read the status off the response rather than regexing it back out
+    # of the rendered string: the structured value is right here.
+    # Observed 2026-08-07, after an OpenRouter balance ran dry.
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    return (
+        classify_llm_failure(status=status, message=str(exc))
+        or f"resolve_failed:{name}"
+    )
 
 
 # -- one publication ---------------------------------------------------------

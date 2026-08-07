@@ -573,14 +573,45 @@ def test_fallback_reason_separates_the_blocks_budget_from_an_outage():
 
 
 def test_fallback_reason_names_an_empty_account_whoever_phrased_it():
-    """This path holds only an exception string — no status code survives it — so
-    an empty account here is recognised by wording alone. It read only the lab's
-    phrasing before the wheel took over, which left a model router's exhausted
-    account recorded in the audit ring as an anonymous failure."""
+    """A bare exception carries no status, so an empty account is recognised by
+    wording alone. It read only the lab's phrasing before the wheel took over,
+    which left a model router's exhausted account recorded in the audit ring as
+    an anonymous failure."""
     assert publisher._fallback_reason(Exception("Insufficient credits"), 60) == "operator_llm_unfunded"
     assert publisher._fallback_reason(
         Exception("This request requires more credits than are available"), 60,
     ) == "operator_llm_unfunded"
+
+
+def test_fallback_reason_reads_the_status_off_an_http_error():
+    """An httpx.HTTPStatusError renders as the provider's STATUS and none of its
+    wording, so no needle list can match it. Passing only ``str(exc)`` therefore
+    hid an empty account behind ``resolve_failed:HTTPStatusError`` while the
+    wheel's bare-402 rule sat right there, unreachable for want of an argument
+    the caller already held. Real 402 from OpenRouter, 2026-08-07."""
+    import httpx
+
+    request = httpx.Request("POST", "https://openrouter.ai/api/v1/messages")
+    exc = httpx.HTTPStatusError(
+        "Client error '402 Payment Required' for url "
+        "'https://openrouter.ai/api/v1/messages'",
+        request=request, response=httpx.Response(402, request=request),
+    )
+    assert publisher._fallback_reason(exc, 480.0) == "operator_llm_unfunded"
+
+
+def test_fallback_reason_still_shrugs_when_the_status_says_nothing_definite():
+    """A 500 is an outage, not a diagnosis. Reading the status must not tempt the
+    classifier into borrowing whichever verdict sits nearest in the rule order —
+    an honest shrug outranks a confident wrong cause."""
+    import httpx
+
+    request = httpx.Request("POST", "https://openrouter.ai/api/v1/messages")
+    exc = httpx.HTTPStatusError(
+        "Server error '500 Internal Server Error'",
+        request=request, response=httpx.Response(500, request=request),
+    )
+    assert publisher._fallback_reason(exc, 480.0) == "resolve_failed:HTTPStatusError"
 
 
 # -- a hold always says why --------------------------------------------------

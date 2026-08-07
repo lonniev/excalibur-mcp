@@ -2,8 +2,10 @@
 
 A post is two jobs wearing one name. Turning an author's template into finished
 text can take minutes: each dynamic block is a prompt the model runs, with web
-lookups, bounded by the author's own ``runtimeLimit`` (900s ceiling). Handing
-that text to X is one HTTPS call — tens of milliseconds.
+lookups, bounded by the author's own ``runtimeLimit`` (itself bounded by the
+operator's configured block ceiling — see the budget rings in
+``excalibur_mcp.config``). Handing that text to X is one HTTPS call — tens of
+milliseconds.
 
 Carrying both under one claim made every publication a long-runner. It forced a
 45-minute lease over work that is mostly instantaneous, made a container recycle
@@ -49,6 +51,7 @@ from typing import Any
 
 import httpx
 
+from excalibur_mcp.config import get_settings
 from excalibur_mcp.db import posts as posts_db
 from excalibur_mcp.db import scheduler_runs
 
@@ -348,7 +351,13 @@ async def resolve_one(runtime: Any, post_id: str) -> dict[str, Any]:
         src = authored[i]
         prompt = str(src.get("text", "")).strip()
         fallback = str(src.get("fallback", "")).strip()
-        budget = clamp_timeout(src.get("runtimeLimit"))
+        # The operator's configured ceiling governs, not the wheel's stalled-provider
+        # fallback: without `maximum` an author's 1800s budget came back as 900s with
+        # nothing anywhere recording that it had been halved.
+        budget = clamp_timeout(
+            src.get("runtimeLimit"),
+            maximum=get_settings().resolve_block_budget_max_s,
+        )
 
         if not prompt:
             # Nothing was asked for. Not a degradation, and not worth a fare.
