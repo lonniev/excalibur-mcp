@@ -5,6 +5,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+
 ### Fixed — the release reached Horizon but not the container that does the work
 
 `modal_app.py` is where scheduled dynamic posts are *resolved* — the LLM call, the web
@@ -56,6 +57,7 @@ of the day.
 
 ## 0.38.0 — 2026-08-07
 
+
 ### Changed — resolve budgets are derived from one configured ceiling
 
 Five coupled durations were authored independently in three Python modules and two
@@ -83,19 +85,6 @@ stringifying an `httpx.HTTPStatusError` and discarding the status it was holding
 wheel's bare-402 rule was unreachable. It now passes the status, and the badge reads
 "the operator's model provider is out of credit — top it up". Cost an evening of posts on
 2026-08-06.
-
-### Changed — track tollbooth-dpyc 0.83.0
-
-Consumes the caller-supplied `maximum` on `clamp_timeout`, without which the configured
-block ceiling would still be cut to the wheel's 900s fallback.
-
-## 0.34.4 — 2026-07-16
-
-### Changed — track tollbooth-dpyc 0.63.3
-
-- Bumped the pinned SDK to 0.63.3 (npub-proof challenge DM now stamps the request time). Also cuts a release for changes accumulated since the last tag.
-
-## [Unreleased]
 
 ### Fixed — resolution consumed the template it was building from
 
@@ -212,7 +201,13 @@ baseline build. One deliberate visual change: the hero `<h1>` carries
 v3 let `text-4xl`'s bundled line-height override it, so the heading renders at
 the 45px it asks for instead of 40px.
 
+### Changed — track tollbooth-dpyc 0.83.0
+
+Consumes the caller-supplied `maximum` on `clamp_timeout`, without which the configured
+block ceiling would still be cut to the wheel's 900s fallback.
+
 ## 0.37.3 — 2026-08-01
+
 
 ### Fixed — X's reason for declining a post is no longer thrown away
 
@@ -247,6 +242,7 @@ the status code survives.
 
 ## 0.37.2 — 2026-08-01
 
+
 ### Fixed — the scheduler Worker was undeployable, and nothing checked
 
 v0.37.1 merged green and `deploy-worker.yml` then failed on `npm ci`:
@@ -276,6 +272,7 @@ New `worker` job runs `npm ci` (which fails outright on lock drift) and
 `frontend` job added after #285, in the one corner that still lacked it.
 
 ## 0.37.1 — 2026-07-31
+
 
 ### Fixed — the scheduler could never spend an authorization it held
 
@@ -336,6 +333,7 @@ muted, and prefixed `last attempt:` instead of the warning glyph.
 
 ## 0.37.0 — 2026-07-31
 
+
 ### Fixed — a held post says why, in the words of whatever refused
 
 The scheduler reported `oauth_token_expired` on held posts; the operator
@@ -383,6 +381,7 @@ rather than a string.
 
 ## 0.36.3 — 2026-07-31
 
+
 ### Fixed — a post X never confirmed was retried, and went out twice
 
 X created tweet `…0735014637900` at 20:06:16 on 2026-07-30. The read timed out,
@@ -409,6 +408,7 @@ that is safe to retry has already been retried, and pausing a post for a blip
 would strand it. The rule is about ambiguity, not about timeouts.
 
 ## 0.36.2 — 2026-07-30
+
 
 ### Fixed — one scheduled slot published two tweets
 
@@ -453,6 +453,7 @@ logged failure is the finding, not noise.
 
 ## 0.36.1 — 2026-07-30
 
+
 ### Fixed — the Scheduler page said less about the scheduler than Posts did
 
 Both pages answer the same question from the same `get_scheduler_log` rows, but
@@ -478,6 +479,7 @@ An empty log reads "Scheduler quiet" rather than the page's own "No tick logged
 yet" — one vocabulary instead of two; the tooltip still says no run is logged.
 
 ## 0.36.0 — 2026-07-30
+
 
 Three controls and labels that didn't mean what they said.
 
@@ -517,6 +519,7 @@ and the accessible name in one place so they cannot drift again; `size` is the
 only knob. SchedulerPage gains the busy state it never had.
 
 ## 0.35.0 — 2026-07-30
+
 
 Ships everything below, which had been sitting merged-but-unreleased on `main` —
 including the label work that was inert until the wheel bump landed with it.
@@ -944,26 +947,37 @@ to overrun again, indefinitely.
 - New operator-gated MCP tool `scheduler_pending`: the FE calls it with the operator-npub proof it already holds from an ordinary npub login, and the MCP reads the Worker's `/pending` **as the operator** (signing with the operator key it holds — no shared secret, no browser signing). This means the operator sees the pending phrase after a plain npub-DM login; no nsec ever touches the browser, and the FE↔MCP call is same-origin so there is no CORS or `verify_at` domain to reconcile.
 - FE: a `SchedulerPendingCard` on the Posts page shows that phrase, its reason, and the match-gate, so the operator can confirm their own scheduler (not an impostor) before approving in Studio. Hidden unless pending and the viewer is the operator. `FE_URL` (the Worker's `verify_at` venue) points at the canonical FE domain.
 
-## [0.34.3] — 2026-07-12
+## 0.34.4 — 2026-07-16
+
+
+### Changed — track tollbooth-dpyc 0.63.3
+
+- Bumped the pinned SDK to 0.63.3 (npub-proof challenge DM now stamps the request time). Also cuts a release for changes accumulated since the last tag.
+
+## 0.34.3 — 2026-07-12
+
 
 ### Changed — SDK 0.62.4 (durable-jobs observability + missing-extra safety net)
 
 - Pinned `tollbooth-dpyc[nostr,prefect]==0.62.4`. The SDK now degrades gracefully when the `[prefect]` extra is absent (loud warning + in-process fallback instead of crashing the first drill) and reports `detached_executor_resolved` / `detached_executor_error` in `service_status.durable_jobs`. eXcalibur already ships the `[prefect]` extra, so this is purely the new diagnostics for the sibling long-runner consumer. No excalibur code change.
 
-## [0.34.2] — 2026-07-11
+## 0.34.2 — 2026-07-11
+
 
 ### Fixed — durable long-runner activates reliably on cold containers
 
 - Pinned `tollbooth-dpyc[nostr,prefect]==0.62.3`. The SDK's `_ensure_async_executor` cached a *transient* creds-load failure (a cold vault on a container's first job), permanently pinning that container to in-process execution despite the long-runner creds being present — every dynamic-block resolve on it would then risk the in-process hard-cap. 0.62.3 retries the probe on a transient failure. No excalibur code change.
 
-## [0.34.1] — 2026-07-11
+## 0.34.1 — 2026-07-11
+
 
 ### Changed — SDK 0.62.2 pin + forward-compatible shape callback signature
 
 - Pinned `tollbooth-dpyc[nostr,prefect]==0.62.2`.
 - `_resolve_shape_result` now accepts the second `params` argument the wheel threads through as of tollbooth-dpyc 0.62.2 (`shape_result(raw, params)`). Resolving a dynamic block is stateless, so `params` is ignored — but the signature must be in place before the SDK pin bumps, or the live detached (long-runner) path would break on the two-argument call. Defaulted (`params=None`), so the same code also ran unchanged on the prior 0.62.1 pin.
 
-## [0.34.0] — 2026-07-10
+## 0.34.0 — 2026-07-10
+
 
 ### Added — published postings now link back to their recurring template
 
@@ -973,7 +987,8 @@ to overrun again, indefinitely.
 - The **editor** shows a banner in both directions: opening a published snapshot offers **"Edit the template →"** (so you don't edit a frozen record expecting future effect), and opening a live recurring template offers **"View published postings →"** (a `?template=<id>` filtered list of everything it has fired). `get_post` now returns `template_id`.
 - **Caveat:** the back-link is forward-only. Occurrences fired before this release have no stored `template_id`, so they show no "from series" link; new postings do. The recurring/dynamic chips apply retroactively (derived from existing data).
 
-## [0.33.0] — 2026-07-10
+## 0.33.0 — 2026-07-10
+
 
 ### Changed — Posts status filter is now a set of toggle chiclets
 
@@ -981,14 +996,16 @@ to overrun again, indefinitely.
 - The selected set drives **server-side** filtering: the frontend sends the chosen statuses to `list_posts`, which matches them as set membership (`status = ANY(...)`) inside the same `WHERE` that feeds `COUNT`, `ORDER BY`, and the `LIMIT`/`OFFSET` page slice. So the total and every page reflect the filtered set — no client-side hiding of already-fetched rows. An empty selection short-circuits to the empty state without a round trip.
 - The empty-state call-to-action now reads **"Compose a new post →"** (was "Compose your first post") in every no-results view, and shows "No posts match this filter." whenever a filter — including a partial chiclet selection — is active.
 
-## [0.32.0] — 2026-07-10
+## 0.32.0 — 2026-07-10
+
 
 ### Changed — Posts table: a dedicated "Posted" column and icon actions
 
 - The green "posted" indicator moved out of the Post cell into its own **Posted** column, alongside Scheduled and Edited. A sent post shows a green **peek** link (👁 + date, opens the tweet preview) when it has a tweet URL, or a **✓ date** otherwise; unsent rows show `—` like the other date columns.
 - The row actions are now **Material Design icons** (inlined `currentColor` SVG paths, so the hover accent and light/dark themes flow through) instead of command words: Duplicate (`content_copy`), Resume (`play_arrow`), Return-to-Draft (`event_busy`), Repost (`repeat`), Archive (`archive`), Delete (`delete`). Each keeps its full tooltip and `aria-label`. Dropping the word labels frees the horizontal room the new Posted column needs; an in-flight action pulses its glyph rather than swapping to "…", so there's no layout shift.
 
-## [0.31.1] — 2026-07-10
+## 0.31.1 — 2026-07-10
+
 
 ### Fixed — the expired-sign-in bounce now actually fires
 
@@ -998,7 +1015,8 @@ to overrun again, indefinitely.
 
 - The Posts Manager footer showed a frozen `v0.1.0` (the never-bumped `frontend/package.json`) while the service reported the real release version, which was confusing as the UI evolved. The frontend version is now unified with the repo release version, so the footer reflects each shipped build.
 
-## [0.31.0] — 2026-07-10
+## 0.31.0 — 2026-07-10
+
 
 ### Added — an expired sign-in re-presents the login screen instead of stranding you
 
@@ -1006,7 +1024,8 @@ to overrun again, indefinitely.
 - The bounce is wired globally: the MCP client fires a proof-expiry signal that the app subscribes to, so it fires no matter which page the lapsed call came from. An in-browser nsec session re-signs each call inline and is left untouched — only a lapsed cached DM proof triggers the re-auth gate.
 - The stale cached proof is also evicted from the "Recent identities" one-tap list on bounce, so the returning-user shortcut can't immediately replay the token the server just rejected.
 
-## [0.30.1] — 2026-07-09
+## 0.30.1 — 2026-07-09
+
 
 ### Changed
 
@@ -1016,7 +1035,8 @@ to overrun again, indefinitely.
 
 - Deleted the unused `vault.py` (a dead PBKDF2 + Fernet credential vault that mirrored an old pattern). Credentials flow through the SDK's `NeonCredentialVault` / `VaultCipher`; the local reimplementation was never wired in.
 
-## [0.30.0] — 2026-07-07
+## 0.30.0 — 2026-07-07
+
 
 ### Changed — editing a scheduled post no longer silently unschedules it
 
@@ -1026,20 +1046,23 @@ to overrun again, indefinitely.
 
 - The Schedule tab now shows an **"Unschedule (keep as draft)"** button for any scheduled post. It clears the schedule (publish time / recurrence / cease date) and returns the post to a plain draft **while preserving your current content**, so nothing is lost and the post reliably leaves the queue. Reschedule anytime from the same tab. When a post is already scheduled, the primary schedule button reads **"Update schedule"** so its effect is unambiguous.
 
-## [0.29.2] — 2026-07-06
+## 0.29.2 — 2026-07-06
+
 
 ### Added — fast-fail + operator alert when the AI provider is unfunded
 
 - Previewing or scheduling a post with a dynamic block no longer waits ~90 seconds to fall back when the operator's Anthropic account is out of credits. `resolve_dynamic_block` now runs a cheap synchronous probe first (a 1-token call — a 400 "credit balance too low" bills nothing) and, on a definitive provider-down result (unfunded or auth), returns "aborted — fee refunded" in ~1 second **with the reason**, instead of handing back a claim check that fails only on a later poll. Transient blips (429/5xx) still fall through to the real attempt.
 - When that fast-fail trips, the operator gets a self-DM (operator npub → operator npub, surfaced in Pricing Studio): *"⚡ eXcalibur can't resolve dynamic post blocks — your Anthropic account is out of credits. Add credit at console.anthropic.com."* Best-effort and non-blocking (relay I/O runs off the response path).
 
-## [0.29.1] — 2026-07-01
+## 0.29.1 — 2026-07-01
+
 
 ### Fixed — flagging a selection is no longer a one-shot
 
 - The "Flag for AI" affordance used to vanish on the first stray tap or scroll (the chiclet was pinned to the live browser selection, and a scroll listener plus every empty tap cleared it). Now the selection is CAPTURED and PERSISTS: flag it via a stable bar fixed to the bottom of the screen (shows a preview of what you selected, with a Cancel ×). Scroll, miss a tap, or take your time — it stays until you flag it, dismiss it, make a new selection, or start editing a block.
 
-## [0.29.0] — 2026-07-01
+## 0.29.0 — 2026-07-01
+
 
 ### Changed — a cross-block flag is ONE region / ONE LLM context
 
@@ -1050,20 +1073,23 @@ to overrun again, indefinitely.
 
 - The "Flag for AI" chiclet now appears BELOW the selection (Safari puts its own callout above), so the two no longer stack.
 
-## [0.28.2] — 2026-07-01
+## 0.28.2 — 2026-07-01
+
 
 ### Fixed — flag a selection that spans multiple blocks
 
 - Selecting text across 2+ blocks used to be rejected for flagging (the handler required the whole selection to sit inside one block). The selection is now mapped onto every block it covers — the start block's tail, any whole middle blocks, and the end block's head — and the "Flag for AI" chiclet creates a flag in each. Single-block selections are unchanged. Parts that overlap an existing flag are skipped.
 
-## [0.28.1] — 2026-07-01
+## 0.28.1 — 2026-07-01
+
 
 ### Changed — bigger, always-visible block action bar (was tiny hover-only icons over the text)
 
 - The per-block actions (Edit, Make Dynamic, Flag, Delete, move) were tiny (14px) icons in a hover-only overlay positioned ON the block text — hard to hit (especially on touch, where there is no hover) and they obscured the words. Replaced with an always-visible action bar BELOW each block: touch-sized labelled buttons that never cover the text. Dynamic-block cards get the same treatment (visible Run / Make static / Delete row). Cross-block text selection is unchanged.
 - Added a per-block "Flag" button (flags the whole block for AI review) so flagging no longer requires a precise text selection — the floating select-to-flag pill still works for phrases.
 
-## [0.28.0] — 2026-06-30
+## 0.28.0 — 2026-06-30
+
 
 ### Added — long dynamic-block posts defer to the scheduler; the runtime budget reaches the LLM
 
@@ -1078,21 +1104,24 @@ to overrun again, indefinitely.
 ### Note
 This is the pragmatic half of an on-demand long-running-task design (HTTP/TCP wants seconds; these resolves want wall-time). Budgets beyond what the worker can wait on are covered by the planned durable-executor follow-up; until then such a post's tick may time out and reclaim/retry — never double-post.
 
-## [0.27.2] — 2026-06-30
+## 0.27.2 — 2026-06-30
+
 
 ### Changed — the resolve poll loop now follows the backend's cadence (one algorithm)
 
 - `resolveDynamicBlock` used its own client-side backoff (`4s → ×1.6 → 15s`) and **ignored** the `poll_after_seconds` the backend returns. The backend now has the better, budget-aware algorithm (a long first wait sized to the author's declared runtime, then tightening as the deadline nears), so the FE follows that value **verbatim** — seeded from `start.poll_after_seconds` and updated from each `fetch_dynamic_block`'s `poll_after_seconds`. One cadence, owned server-side; no duplicate client backoff to drift.
 - Dropped `POLL_START_MS`/`POLL_CEILING_MS`/`POLL_FACTOR`; added a `DEFAULT_POLL_SECONDS = 5` fallback used only if an older server omits the field. The overall client deadline (sized to the budget) is unchanged.
 
-## [0.27.1] — 2026-06-30
+## 0.27.1 — 2026-06-30
+
 
 ### Fixed — Post Now no longer silently drops the Sent record (frontend-only)
 
 - `handlePostNow` recorded a post as Sent after a successful tweet via `create_post`/`update_post`, but a soft-fail there (the tool's `catch_errors` returns `{success:false,…}` rather than throwing) was swallowed: a new post got only a quiet hint, and an **existing** post's `updatePost` result was ignored outright. So the tweet went out while the row silently stayed a draft and the UI still said "Posted." (This is what made the recent scheduler/dpop_token breakage so hard to trace from the browser.)
 - Now both branches check the result and, on failure, **surface the `error_code` to the editor's error banner and `debugPush` it** to the debug panel — while still showing the live tweet URL — so an after-send save failure can never again be invisible.
 
-## [0.27.0] — 2026-06-30
+## 0.27.0 — 2026-06-30
+
 
 ### Added — author-declared time budget per dynamic block (ad-valorem ready)
 
@@ -1104,7 +1133,8 @@ This is the pragmatic half of an on-demand long-running-task design (HTTP/TCP wa
 
 - Picks up `start_async_job(expected_seconds=...)` and the budget-aware `poll_backoff_seconds`.
 
-## [0.26.0] — 2026-06-29
+## 0.26.0 — 2026-06-29
+
 
 ### Changed — adopt the wheel's `dpop_token` rename (lockstep with tollbooth-dpyc 0.57.0)
 
@@ -1121,7 +1151,8 @@ This is the pragmatic half of an on-demand long-running-task design (HTTP/TCP wa
   is unchanged — symbol/wire-field rename only. The inline kind-27235 signing
   tactic keeps "proof" naming (it is a genuine proof).
 
-## [0.25.1] — 2026-06-29
+## 0.25.1 — 2026-06-29
+
 
 ### Changed — editor surfaces the dynamic-block failure hint
 
@@ -1131,7 +1162,8 @@ This is the pragmatic half of an on-demand long-running-task design (HTTP/TCP wa
   and the `resolveDynamicBlock` wrapper passes the structured `error_code` /
   `transient` through, so future UX can branch on them. Frontend-only.
 
-## [0.25.0] — 2026-06-29
+## 0.25.0 — 2026-06-29
+
 
 ### Added — dynamic-block failures become informative UX, not blank errors
 
@@ -1148,7 +1180,8 @@ This is the pragmatic half of an on-demand long-running-task design (HTTP/TCP wa
   `dynamic_block_unresolved` fallback. `fetch_dynamic_block` returns these so the
   Posts Manager can branch its UX (retry vs. "service temporarily unavailable").
 
-## [0.24.2] — 2026-06-29
+## 0.24.2 — 2026-06-29
+
 
 ### Changed — long-runner secrets are normal operator secrets
 
@@ -1162,7 +1195,8 @@ This is the pragmatic half of an on-demand long-running-task design (HTTP/TCP wa
 - **Migration:** the three values, previously couriered under the `dpyc-longrunner`
   service, must be re-couriered once under `excalibur-operator`.
 
-## [0.24.1] — 2026-06-29
+## 0.24.1 — 2026-06-29
+
 
 ### Fixed — dynamic-block resolution now actually runs on detached compute
 
@@ -1173,7 +1207,8 @@ This is the pragmatic half of an on-demand long-running-task design (HTTP/TCP wa
   resolve jobs ran on the recycling front after all (quick ones completed before a
   recycle and masked it). With 0.55.2 the dispatch reaches the detached pool.
 
-## [0.24.0] — 2026-06-29
+## 0.24.0 — 2026-06-29
+
 
 ### Added — dynamic-block resolution runs on durable detached compute
 
@@ -1193,7 +1228,8 @@ This is the pragmatic half of an on-demand long-running-task design (HTTP/TCP wa
 - Pin `tollbooth-dpyc[nostr,prefect]==0.55.1` (the `prefect` extra ships the
   `run_deployment` client used to dispatch detached runs).
 
-## [0.23.1] — 2026-06-27
+## 0.23.1 — 2026-06-27
+
 
 ### Fixed — Posts list shows a loading state on every filter change
 
@@ -1205,7 +1241,8 @@ This is the pragmatic half of an on-demand long-running-task design (HTTP/TCP wa
   tab still highlights so the action reads as registered), and the refresh icon
   spins.
 
-## [0.23.0] — 2026-06-27
+## 0.23.0 — 2026-06-27
+
 
 ### Added — dynamic-block resolution is async (claim check), surviving the edge cap
 
@@ -1230,7 +1267,8 @@ This is the pragmatic half of an on-demand long-running-task design (HTTP/TCP wa
 - Operator: price `fetch_dynamic_block` is free; `resolve_dynamic_block` keeps
   its existing price (charged on start).
 
-## [0.22.0] — 2026-06-27
+## 0.22.0 — 2026-06-27
+
 
 ### Changed — dynamic blocks resolve in parallel, with sane timeouts
 
@@ -1377,7 +1415,8 @@ This is the pragmatic half of an on-demand long-running-task design (HTTP/TCP wa
   migration**. Operator prices `resolve_dynamic_block` in Pricing Studio (new
   tools start unpriced).
 
-## [0.21.0] — 2026-06-25
+## 0.21.0 — 2026-06-25
+
 
 ### Fixed — X API 402 now reads as "renew your subscription," and the scheduler stops looping on it
 
@@ -1389,7 +1428,8 @@ This is the pragmatic half of an on-demand long-running-task design (HTTP/TCP wa
   - The scheduler **pauses** a 402'd post (`posts.mark_paused` → `status='paused'`) so `list_due` stops returning it. The owner resumes by patching `status` back to `scheduled` after renewing. This ends the every-tick refire/refund loop.
 - Requires `tollbooth-dpyc==0.53.0` (adds the generic upstream-402 handler). 401/403 behavior (re-authorize) is unchanged.
 
-## [0.20.0] — 2026-06-22
+## 0.20.0 — 2026-06-22
+
 
 ### Added — server-persisted writing Voice (editable bans)
 
@@ -1408,7 +1448,8 @@ This is the pragmatic half of an on-demand long-running-task design (HTTP/TCP wa
   (pencil, inline), remove (minus), and toggle (tap) — with an explicit **Save
   Voice** button, dirty/saving/saved status, and error surfacing.
 
-## [0.19.0] — 2026-06-21
+## 0.19.0 — 2026-06-21
+
 
 ### Added — show the connected X @handle (personalization)
 
@@ -1420,7 +1461,8 @@ This is the pragmatic half of an on-demand long-running-task design (HTTP/TCP wa
   open; falls back to the placeholder when X isn't connected). The Profile page's
   X panel shows "Connected · @handle".
 
-## [0.18.0] — 2026-06-21
+## 0.18.0 — 2026-06-21
+
 
 ### Added — server-side regex + date filtering for Posts and Snippets
 
@@ -1443,7 +1485,8 @@ the filtered set (the TaxSort pattern).
   SnippetsPage; every filter change resets to page 0; filtered-empty shows
   "No … match this filter."
 
-## [0.17.1] — 2026-06-21
+## 0.17.1 — 2026-06-21
+
 
 ### Security — no cross-patron leak in the scheduler log
 
@@ -1454,7 +1497,8 @@ cross-patron aggregate. `scheduler_runs.scope_runs` now recomputes `processed` t
 the reader's own entry count; a patron's heartbeat is conveyed by `run_at` alone.
 The operator still sees every tick in full.
 
-## [0.17.0] — 2026-06-21
+## 0.17.0 — 2026-06-21
+
 
 ### Changed — every recurring posting becomes a visible Sent record
 
@@ -1485,7 +1529,8 @@ the operator npub) always saw the misleading "no new ticks".
 - DebugPanel empty/error messages reworded ("no ticks recorded yet (the Worker
   runs every 10 min)" / proof-needed) — no more "no new ticks".
 
-## [0.16.0] — 2026-06-21
+## 0.16.0 — 2026-06-21
+
 
 ### Fixed — scheduler audit ring wrote/read nothing (the "no new ticks" bug)
 
@@ -1510,7 +1555,8 @@ stamps the post instead of leaving it silently `scheduled`.
 - DebugPanel renders a `processed=0` tick as "scheduler … · alive · nothing due"
   so the heartbeat reads as life, not failure.
 
-## [0.15.0] — 2026-06-21
+## 0.15.0 — 2026-06-21
+
 
 ### Added — scheduler-tick visibility in the FE debug log
 
@@ -1530,7 +1576,8 @@ the existing DebugPanel.
   merges Worker ticks into the log, red-highlighting skips/errors. Non-operator
   sessions see nothing (the tool is operator-gated).
 
-## [0.14.1] — 2026-06-21
+## 0.14.1 — 2026-06-21
+
 
 ### Fixed — scheduled-post fire surfaces its tweet URL/id (found by a live test)
 
@@ -1550,7 +1597,8 @@ the existing DebugPanel.
   recurrence math (daily/weekly add days; monthly adds months, clamped to month
   length).
 
-## [0.14.0] — 2026-06-21
+## 0.14.0 — 2026-06-21
+
 
 ### Added — Snippets are a first-class peer of Posts
 
@@ -1576,7 +1624,8 @@ the existing DebugPanel.
   a key, never reaching the query as raw SQL. `list_snippets` returns full rows
   (incl. `doc`) so editor chiclets can insert text directly.
 
-## [0.13.0] — 2026-06-20
+## 0.13.0 — 2026-06-20
+
 
 ### Added — every send stamps last_sent_at + stores the tweet URL
 
@@ -1589,7 +1638,8 @@ the existing DebugPanel.
   and `update_post` accept it, `mark_sent` persists it (COALESCE-guarded for
   recurrence), and it's returned by `get_post` and `list_posts`.
 
-## [0.12.1] — 2026-06-20
+## 0.12.1 — 2026-06-20
+
 
 ### Fixed — posts can be marked "sent" (Post It now flips the row)
 
@@ -1598,7 +1648,8 @@ the existing DebugPanel.
   `sent` is a valid terminal status (it's in the table contract and the
   scheduler sets it) — added it to the create and patch allow-lists.
 
-## [0.12.0] — 2026-06-20
+## 0.12.0 — 2026-06-20
+
 
 ### Added — Neon-backed snippet library (server-side, npub-scoped)
 
@@ -1615,7 +1666,8 @@ the existing DebugPanel.
   only ever read or write their own snippets. The browser previously kept these
   in `localStorage` (device-local, unsynced) — they now follow the npub.
 
-## [0.11.0] — 2026-06-20
+## 0.11.0 — 2026-06-20
+
 
 ### Changed — "Refine with Claude" is now server-side + metered (BREAKING)
 
@@ -1634,7 +1686,8 @@ the existing DebugPanel.
   to price the new `refine_post_region` tool (seed hint: flat 25 sats) and drop
   the stale `get_anthropic_key` entry.
 
-## [0.10.1] — 2026-06-19
+## 0.10.1 — 2026-06-19
+
 
 ### Added — FE-direct "Refine with Claude" key delivery (TaxSort tactic)
 
@@ -1650,7 +1703,8 @@ the existing DebugPanel.
 - Bumped tollbooth-dpyc pin to **0.48.1** (picks up the `check_price`
   tool_not_priced fix).
 
-## [0.10.0] — 2026-06-19
+## 0.10.0 — 2026-06-19
+
 
 ### Added — stored posts + priced CRUD (editorial face-lift, backend)
 
@@ -1685,10 +1739,12 @@ the existing DebugPanel.
 - Refactored the X-post path into a shared `_resolve_x_client` helper used by both
   the interactive `post_tweet` tool and the scheduler (DRY); no wire-API change.
 
-## [0.9.1] — 2026-06-11
+## 0.9.1 — 2026-06-11
+
 - chore: track tollbooth-dpyc through 0.44.15 — SDK audit hardening (correctness fixes for credit-tranche expiration in 0.44.9 and proof-reply handling in 0.44.10; blocking mypy + coverage gates). No wire-API changes.
 
-## [0.9.0] — 2026-05-19
+## 0.9.0 — 2026-05-19
+
 
 ### Changed — sync with tollbooth-dpyc 0.25.0
 
@@ -1702,31 +1758,36 @@ Picks up the wheel's runtime-name + DRY pass:
 - **`register_standard_tools` returns the `@tool` decorator** — the slug
   literal now appears exactly once in this server's bootstrap. (wheel 0.25.0)
 
+## 0.8.0 — 2026-04-13
 
-## [0.8.0] — 2026-04-13
 
 - security: add proof parameter to all tools with npub
 - update debit_or_deny call for Either return type
 - chore: pin tollbooth-dpyc>=0.5.0
 
-## [0.7.0] — 2026-04-12
+## 0.7.0 — 2026-04-12
+
 
 - remove Horizon OAuth — sessions keyed by npub, no fallback code
 
-## [0.6.36] — 2026-04-11
+## 0.6.36 — 2026-04-11
+
 
 - chore: pin tollbooth-dpyc>=0.4.9 — credential validator fix
 
-## [0.6.35] — 2026-04-11
+## 0.6.35 — 2026-04-11
+
 
 - chore: pin tollbooth-dpyc>=0.4.8 — ncred fix, courier diagnostics
 
-## [0.6.34] — 2026-04-11
+## 0.6.34 — 2026-04-11
+
 
 - chore: pin tollbooth-dpyc>=0.4.6
 - Add credential_validator: validates btcpay + client_id + client_secret
 
-## [0.6.33] — 2026-04-11
+## 0.6.33 — 2026-04-11
+
 
 - chore: pin tollbooth-dpyc>=0.4.0, rename debit_or_error to debit_or_deny
 - split post_tweet into two proper MCP tools
@@ -1782,7 +1843,8 @@ Picks up the wheel's runtime-name + DRY pass:
 - fix: lifecycle-aware session guidance for all patron-facing states
 - fix: .fastmcp.yaml must declare TOLLBOOTH_NOSTR_OPERATOR_NSEC for bootstrap
 
-## [0.6.31] — 2026-03-29
+## 0.6.31 — 2026-03-29
+
 
 - chore: pin tollbooth-dpyc>=0.1.159, bump to v0.6.31
 - refactor: adopt SessionCache from tollbooth wheel
@@ -1821,12 +1883,14 @@ Picks up the wheel's runtime-name + DRY pass:
 - refactor: npub is required on all credit tools — no session cache
 - refactor: _ensure_dpyc_session accepts explicit npub override
 
-## [0.6.30] — 2026-03-22
+## 0.6.30 — 2026-03-22
+
 
 - chore: bump version to 0.6.30 for release
 - chore: bump tollbooth-dpyc to >=0.1.100 (notarization catalog + remove get_tax_rate)
 
-## [0.6.29] — 2026-03-22
+## 0.6.29 — 2026-03-22
+
 
 - chore: bump tollbooth-dpyc to >=0.1.98 (cache migration fix)
 - chore: bump tollbooth-dpyc to >=0.1.97 (tranche TTL expiry)
@@ -1843,40 +1907,47 @@ Picks up the wheel's runtime-name + DRY pass:
 - fix: extract operator_proof from model_json instead of separate tool arg (#57)
 - feat: wire operator catalog conformance check at startup, bump to 0.6.29
 
-## [0.6.28] — 2026-03-14
+## 0.6.28 — 2026-03-14
+
 
 - chore: bump tollbooth-dpyc to >=0.1.91
 - feat: gate set_pricing_model to operator-only (Step 0C)
 - feat: wire pricing CRUD tools for operator self-service (#56)
 - chore: bump tollbooth-dpyc to >=0.1.83 (#55)
 
-## [0.6.27] — 2026-03-09
+## 0.6.27 — 2026-03-09
+
 
 - chore: bump tollbooth-dpyc to >=0.1.82, version 0.6.27 (#54)
 - chore: bump tollbooth-dpyc to >=0.1.81, version 0.6.26 (#53)
 
-## [0.6.25] — 2026-03-08
+## 0.6.25 — 2026-03-08
+
 
 - chore: bump version to 0.6.25
 - Merge pull request #52 from lonniev/refactor/lookup-cache-path
 - refactor: remove redundant dpyc_registry_url config
 
-## [0.6.24] — 2026-03-07
+## 0.6.24 — 2026-03-07
+
 
 - chore: bump version to 0.6.24
 - docs: add instructions block + clarify patron npub in tool docstrings (#51)
 
-## [0.6.23] — 2026-03-07
+## 0.6.23 — 2026-03-07
+
 
 - Merge pull request #50 from lonniev/feat/invoice-dm-delivery
 - feat: wire invoice DM delivery via Secure Courier
 - chore: bump version to 0.6.22 (#49)
 
-## [0.6.22] — 2026-03-07
+## 0.6.22 — 2026-03-07
+
 
 - feat: add EXPIRES column to account statement infographic (#48)
 
-## [0.6.21] — 2026-03-07
+## 0.6.21 — 2026-03-07
+
 
 - fix: remove legacy royalty payout config and params (#47)
 - chore: bump to v0.6.20 for clean deploy (native Twitter media for banners)
@@ -1888,28 +1959,33 @@ Picks up the wheel's runtime-name + DRY pass:
 - fix: pin svglib<1.6.0 to avoid pycairo C dep on FastMCP Cloud
 - chore: force redeploy for v0.6.14 (svglib+reportlab)
 
-## [0.6.14] — 2026-03-06
+## 0.6.14 — 2026-03-06
+
 
 - Merge pull request #46 from lonniev/fix/svglib-renderer
 - fix: replace Playwright with svglib+reportlab for banner SVG→PNG
 
-## [0.6.13] — 2026-03-06
+## 0.6.13 — 2026-03-06
+
 
 - Merge pull request #45 from lonniev/fix/playwright-renderer
 - fix: replace cairosvg with Playwright for banner rendering
 
-## [0.6.12] — 2026-03-06
+## 0.6.12 — 2026-03-06
+
 
 - Merge pull request #44 from lonniev/fix/banner-svg-only
 - fix: simplify banner to SVG-only, make cairosvg a required dep
 
-## [0.6.11] — 2026-03-06
+## 0.6.11 — 2026-03-06
+
 
 - Merge pull request #43 from lonniev/feat/banner-postimg
 - chore: bump version to 0.6.11
 - feat: add banner_svg_or_png to post_tweet via PostImages upload
 
-## [0.6.10] — 2026-03-06
+## 0.6.10 — 2026-03-06
+
 
 - chore: bump version to 0.6.10, pin tollbooth-dpyc>=0.1.76
 - fix: resolve 22 pre-existing test failures across 4 test files (#42)
@@ -1922,7 +1998,8 @@ Picks up the wheel's runtime-name + DRY pass:
 - chore: pin tollbooth-dpyc>=0.1.74 for ECOSYSTEM_LINKS
 - chore: add ecosystem_links to service_status response
 
-## [0.6.9] — 2026-03-04
+## 0.6.9 — 2026-03-04
+
 
 - Merge pull request #37 from lonniev/fix/post-tweet-cost
 - fix: set post_tweet cost to 5 api_sats, post_tweet_image to 10
@@ -1934,12 +2011,14 @@ Picks up the wheel's runtime-name + DRY pass:
 - feat: auto-restore DPYC identity from vault on cold start (#34)
 - chore: trigger FastMCP Cloud redeploy for tollbooth-dpyc 0.1.66
 
-## [0.6.8] — 2026-03-03
+## 0.6.8 — 2026-03-03
+
 
 - Merge pull request #33 from lonniev/feat/auto-certify-purchase
 - feat: auto-certify purchase_credits via server-to-server OAuth
 
-## [0.6.7] — 2026-03-03
+## 0.6.7 — 2026-03-03
+
 
 - Merge pull request #32 from lonniev/feat/slug-prefixing
 - feat: slug-prefix all MCP tools with "excalibur_" to avoid name collisions
@@ -1952,13 +2031,15 @@ Picks up the wheel's runtime-name + DRY pass:
 - Merge pull request #27 from lonniev/chore/bump-tollbooth-dpyc-0.1.52
 - chore: bump tollbooth-dpyc to >=0.1.52
 
-## [0.6.5] — 2026-03-01
+## 0.6.5 — 2026-03-01
+
 
 - chore: force redeploy after NSEC-only identity migration
 - Merge pull request #26 from lonniev/feat/nsec-only-registry-resolution
 - NSEC-only registry resolution: derive authority npub at runtime (v0.6.5)
 
-## [0.6.4] — 2026-03-01
+## 0.6.4 — 2026-03-01
+
 
 - Merge pull request #25 from lonniev/feat/courier-greeting
 - Resolve merge conflict, bump to v0.6.4
@@ -1966,16 +2047,19 @@ Picks up the wheel's runtime-name + DRY pass:
 - Bump tollbooth-dpyc minimum to >=0.1.49 (scan-all-DMs fix) (#24)
 - Bump tollbooth-dpyc minimum to >=0.1.49 (scan-all-DMs fix)
 
-## [0.6.3] — 2026-02-28
+## 0.6.3 — 2026-02-28
+
 
 - Bump tollbooth-dpyc to >=0.1.48 (NIP-44v2 cipher fix) (#23)
 
-## [0.6.2] — 2026-02-28
+## 0.6.2 — 2026-02-28
+
 
 - Merge pull request #22 from lonniev/refactor/dry-version
 - DRY version: read from importlib.metadata, bump to 0.6.2
 
-## [0.6.1] — 2026-02-28
+## 0.6.1 — 2026-02-28
+
 
 - Fix __init__.py version to match pyproject.toml (0.6.1)
 - Bump version to 0.6.1
@@ -1989,15 +2073,22 @@ Picks up the wheel's runtime-name + DRY pass:
 - Bump tollbooth-dpyc minimum to >=0.1.43 (lenient JSON parsing) (#17)
 - Bump tollbooth-dpyc minimum to >=0.1.42 (smart-quote sanitization) (#16)
 
-## [0.6.0] — 2026-02-27
+## 0.6.0 — 2026-02-27
+
 
 - Add service_status tool + bump tollbooth-dpyc to >=0.1.41 (#15)
 
-## [0.5.0] — 2026-02-27
+## 0.5.0 — 2026-02-27
+
 
 - Release 0.5.0
 
-## [0.4.2] — 2026-03-09
+## Appendix — raw commit log, 0.6.1 → 0.6.27 (2026-02-28 → 2026-03-09)
+
+Kept verbatim, and deliberately last. It was previously headed `## [0.4.2] — 2026-03-09`,
+which is neither its version nor a position any reader could follow. Most of it is also
+covered by the per-version sections above, but it is the only surviving record of
+0.6.15–0.6.20 and 0.6.26, so it is not safe to drop.
 
 - chore: bump tollbooth-dpyc to >=0.1.82, version 0.6.27 (#54)
 - chore: bump tollbooth-dpyc to >=0.1.81, version 0.6.26 (#53)
@@ -2119,4 +2210,3 @@ Picks up the wheel's runtime-name + DRY pass:
 - Fix OAuth 1.0a signing: manual header instead of authlib
 - Add post_tweet tool with markdown → Unicode formatting
 - Initial project scaffolding for eXcaliber-mcp
-
