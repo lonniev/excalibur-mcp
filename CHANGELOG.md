@@ -41,6 +41,14 @@ The cost is that the deploy can no longer compare the app name it deploys agains
 instead, so a rename fails loudly until the vault half is acknowledged rather than
 silently leaving the scheduler dispatching to a function that does not exist.
 
+The post-deploy assertion is "the live container runs this commit's content", not "a
+version stamped with this commit exists" — the two differ, and the first run of the
+workflow failed on the difference. Modal deduplicates: when the image, the function spec
+and the mounted source are byte-identical to what is live it cuts no new version. That is
+the invariant holding, and it is the *common* case, because the paths filter is
+deliberately wider than the image — a merge touching only CI config, tests or docs
+correctly changes nothing to run.
+
 Also pins the **outermost** budget ring in tests. Every other ring had one; this one was
 invisible to in-process assertions because the timeout is baked into the deployment. The
 first deployed version carried a literal `timeout=3600`, nesting by luck at the ceiling
