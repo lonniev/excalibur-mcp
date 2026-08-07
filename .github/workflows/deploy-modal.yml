@@ -91,26 +91,17 @@ jobs:
           fi
           uv run python -c "from excalibur_mcp.config import get_settings as g; s=g(); print(f'block={s.resolve_block_budget_max_s} attempt={s.resolve_job_attempt_s} lease={s.resolve_lease_s} runner={s.resolve_runner_timeout_s}')"
 
-      - name: Deploy to Modal
+      # ONE secret, and it is the one the Modal container already mounts. The Modal
+      # tokens are not GitHub secrets: their delivery is codified as Secure Courier into
+      # the operator vault, and the script reads them with the same
+      # `runtime.load_credentials` call the runtime uses to decide whether to dispatch
+      # detached. A second copy in GitHub would be a credential with no delivery story,
+      # free to drift from the one the runtime obeys.
+      #
+      # The script also asserts the vaulted `modal_app_name` matches the app this source
+      # declares — the wheel resolves the function by that name, so a mismatch means the
+      # runtime dispatches to something this deploy never created.
+      - name: Deploy to Modal and verify the live version
         env:
-          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-        run: uv run modal deploy modal_app.py
-
-      # A deploy that silently no-ops leaves exactly the drift this workflow exists to
-      # end, and looks green doing it. Modal stamps each version with the commit it was
-      # deployed from, so assert the live version is THIS one.
-      - name: The live version is this commit
-        env:
-          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-        run: |
-          set -euo pipefail
-          EXPECTED=$(git rev-parse --short HEAD)
-          HISTORY=$(COLUMNS=200 uv run modal app history excalibur-render)
-          echo "$HISTORY"
-          if ! echo "$HISTORY" | grep -q "$EXPECTED"; then
-            echo "::error::Modal has no version at $EXPECTED — the deploy did not take"
-            exit 1
-          fi
-          echo "excalibur-render is live at $EXPECTED"
+          TOLLBOOTH_NOSTR_OPERATOR_NSEC: ${{ secrets.TOLLBOOTH_NOSTR_OPERATOR_NSEC }}
+        run: uv run python scripts/deploy_modal.py
