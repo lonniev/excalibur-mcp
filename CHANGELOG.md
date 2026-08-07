@@ -3,6 +3,37 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed — the release reached Horizon but not the container that does the work
+
+`modal_app.py` is where scheduled dynamic posts are *resolved* — the LLM call, the web
+lookups, the fare. Horizon only dispatches. Nothing ever deployed it: it was pushed by
+hand once, on 2026-08-06, and then main moved.
+
+0.38.0 raised the block ceiling 900s → 1800s and bumped the SDK to 0.83.0, the version
+that makes `clamp_timeout` honour a caller-supplied maximum. Both shipped to Horizon.
+Neither reached Modal. For a day the scheduler dispatched intending 1800s while the
+container cut every block back to 900s, and the "provider is out of credit" message from
+the same release stayed invisible. The release was green, tagged, and inert.
+
+The image builds from `pyproject.toml` and mounts `excalibur_mcp` at **deploy** time.
+`add_local_python_source(copy=False)` skips an image *rebuild* on a code change, not the
+redeploy — so a source change with no redeploy leaves Modal running code that exists
+nowhere else. `deploy-modal.yml` therefore triggers on "what Modal executes changed",
+not on "modal_app.py changed", and again on `release: published` — checking out the
+released tag, so the container ends up on the commit that was actually released.
+
+CI holds one secret, `TOLLBOOTH_NOSTR_OPERATOR_NSEC`, the same one the container mounts.
+The Modal tokens stay where their delivery is codified — the operator vault, read with
+the same `runtime.load_credentials` call the runtime uses. A second copy in GitHub would
+be a credential with no delivery story, free to drift from the pair the runtime obeys.
+
+Also pins the **outermost** budget ring in tests. Every other ring had one; this one was
+invisible to in-process assertions because the timeout is baked into the deployment. The
+first deployed version carried a literal `timeout=3600`, nesting by luck at the ceiling
+of the day.
+
 ## 0.38.0 — 2026-08-07
 
 ### Changed — resolve budgets are derived from one configured ceiling
