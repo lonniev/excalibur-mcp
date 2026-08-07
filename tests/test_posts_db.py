@@ -378,9 +378,12 @@ async def test_resolving_at_the_firing_cap_has_an_automatic_exit():
     # Must match the stranded resolving-at-cap shape, not only scheduled.
     assert "'resolving'" in q
     # Do not yank a live resolve still inside its lease — only orphaned ones.
-    # The resolve lease is interval '20 minutes' (_RESOLVE_LEASE).
+    # Assert the query embeds THE configured lease, not a copy of today's value: the
+    # lease is derived from the block budget ring (config.resolve_lease_s), so a
+    # literal here would fail the moment an operator retunes the ceiling and would be
+    # asserting the number rather than the coupling.
     assert "last_attempt_at" in q
-    assert "20 minutes" in q
+    assert posts_db._RESOLVE_LEASE in q
 
 
 @pytest.mark.asyncio

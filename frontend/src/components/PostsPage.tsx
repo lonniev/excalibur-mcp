@@ -95,6 +95,18 @@ function attemptLabel(reason: string): string {
     {
       insufficient_balance: "out of credits",
       insufficient_balance_resolve: "out of credits",
+      // The operator's MODEL PROVIDER account, not the post owner's API sats —
+      // the two must never read alike. "out of credits" above is the reader's
+      // own balance and they top it up here; these are the operator's account
+      // at OpenRouter and no action in this UI touches them. Unmapped, they
+      // reached the badge as the raw shrug `resolve_failed:HTTPStatusError`,
+      // which said only that something upstream broke and hid the single fact
+      // that mattered: renders will keep falling back until someone funds the
+      // provider. Cost a full evening of posts on 2026-08-06.
+      operator_llm_unfunded: "the operator's model provider is out of credit — top it up",
+      operator_llm_auth: "the model provider rejected the operator's API key",
+      operator_llm_model_unknown: "the configured model no longer exists at the provider",
+      upstream_rate_limited: "the model provider rate-limited us — retrying",
       oauth_token_expired: "X access expired",
       oauth_unavailable: "X not connected",
       oauth_not_yet_authorized: "X not connected",

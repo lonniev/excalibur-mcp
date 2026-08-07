@@ -35,6 +35,11 @@ the operator vault; the runtime installs ModalExecutor on its next job.
 
 import modal
 
+# Safe at module scope in both places this file is imported: at deploy time from the
+# project venv, and at container import via `add_local_python_source`. `config` pulls in
+# only pydantic-settings and reads the environment — no runtime, no server, no I/O.
+from excalibur_mcp.config import get_settings
+
 # Must match the vaulted ``modal_app_name``; the wheel resolves the function by
 # (app_name, "run_job").
 app = modal.App("excalibur-render")
@@ -58,10 +63,13 @@ operator_identity = modal.Secret.from_name("excalibur-operator")
 @app.function(
     image=image,
     secrets=[operator_identity],
-    # A render is bounded by the author's own runtimeLimit (900s ceiling) times a
-    # handful of blocks. 3600 is headroom, not an expectation — and it is the only
-    # ceiling in the path, since nothing here is bound to an HTTP response.
-    timeout=3600,
+    # The OUTERMOST budget ring, derived from the operator's configured block ceiling
+    # (see the ring comment in excalibur_mcp.config). It must sit outside the
+    # scheduler's claim lease: a runner that gives up while the scheduler still
+    # believes it owns the job strands that post until the lease lapses, which reads
+    # as a hang rather than as a timeout. Nothing here is bound to an HTTP response,
+    # so this is the only ceiling in the path.
+    timeout=get_settings().resolve_runner_timeout_s,
     # Renders are I/O-bound: one provider call per block, with the provider running
     # its own tool loop server-side. Requesting more CPU would buy nothing.
     cpu=1.0,

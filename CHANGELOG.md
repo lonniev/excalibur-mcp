@@ -3,6 +3,41 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.38.0 — 2026-08-07
+
+### Changed — resolve budgets are derived from one configured ceiling
+
+Five coupled durations were authored independently in three Python modules and two
+frontend files, each comment quoting the others' values. They are nested rings — a
+block's LLM budget inside a job attempt, inside the claim lease, inside the runner's
+timeout — and inverting any adjacent pair has a specific failure: a lease shorter than
+the attempt it guards declares a live resolve orphaned and hands it to a second worker.
+
+Now only the innermost is authored (`RESOLVE_BLOCK_BUDGET_MAX_S`, default 1800s, up from
+a hardcoded 900). `Settings` derives the rest, and `gt=1.0` on the safety factor makes an
+inversion unrepresentable rather than merely tested for. Retuning the ceiling moves every
+ring with no code edit.
+
+`scheduler_status` now serves `resolve_budgets`, so the editor's time-budget input and
+the scheduler view's lease bound are **fetched** rather than hand-copied. The frontend's
+duplicate clamp is gone: a second ceiling carrying its own copy of the first is how a
+legal budget got silently cut back.
+
+### Fixed — an unfunded model provider says so
+
+A dynamic block that failed because the operator's provider account was empty reported
+`resolve_failed:HTTPStatusError` — the one cause a fallback most needs to name, because
+unlike a short `runtimeLimit` no edit to the post can fix it. `_fallback_reason` was
+stringifying an `httpx.HTTPStatusError` and discarding the status it was holding, so the
+wheel's bare-402 rule was unreachable. It now passes the status, and the badge reads
+"the operator's model provider is out of credit — top it up". Cost an evening of posts on
+2026-08-06.
+
+### Changed — track tollbooth-dpyc 0.83.0
+
+Consumes the caller-supplied `maximum` on `clamp_timeout`, without which the configured
+block ceiling would still be cut to the wheel's 900s fallback.
+
 ## 0.34.4 — 2026-07-16
 
 ### Changed — track tollbooth-dpyc 0.63.3

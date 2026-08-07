@@ -242,7 +242,11 @@ export default function SchedulerPage() {
     };
   }, [refresh]);
 
-  const schedState = deriveSchedulerState(runs);
+  // This page already has the status in hand, so it can bound "still resolving" by the
+  // lease the server actually enforces instead of a copy of it.
+  const leaseSeconds = status?.resolve_budgets?.lease_seconds;
+  const schedState = deriveSchedulerState(
+    runs, leaseSeconds ? leaseSeconds * 1000 : undefined);
   const workerDown = status?.worker === "unavailable";
 
   return (

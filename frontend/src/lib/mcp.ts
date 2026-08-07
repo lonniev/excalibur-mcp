@@ -948,7 +948,10 @@ export async function resolveDynamicBlock(args: {
   maxFetches?: number;
   runtimeLimitSeconds?: number;
 }): Promise<ResolveDynamicResult> {
-  const budgetSeconds = Math.max(60, Math.min(args.runtimeLimitSeconds ?? 210, 900));
+  // Floor only. The CEILING is the server's, and a second clamp here carrying its own
+  // copy of it is how a legal budget got silently cut back to a bound this file
+  // happened to still believe in.
+  const budgetSeconds = Math.max(60, args.runtimeLimitSeconds ?? 210);
   const start = await callTool<ClaimCheckStart>("resolve_dynamic_block", {
     prompt: args.prompt,
     context: args.context ?? "",
@@ -1342,10 +1345,21 @@ export async function getSchedulerPending(): Promise<SchedulerPending | null> {
 /// current authorization phase) plus the operator npub it acts for. Free +
 /// proof-gated; global config, so any proven patron sees it. No challenge
 /// phrase (that's getSchedulerPending, operator-only). Null on failure.
+/** The server's derived resolve budget rings. Served, never mirrored: these used to be
+ *  hand-copied literals here and drifted the moment the server retuned them. */
+export interface ResolveBudgets {
+  block_max_seconds: number;
+  job_attempt_seconds: number;
+  lease_seconds: number;
+  runner_timeout_seconds: number;
+  lead_seconds: number;
+}
+
 export interface SchedulerStatus {
   operator_npub?: string;
   version?: string;
   cadence?: string;
+  resolve_budgets?: ResolveBudgets;
   // Renewal lead as a PERCENTAGE of whatever lifetime the operator granted —
   // not a fixed number of hours. How long an authorization lasts is a human's
   // choice at reply time, so a constant window silently refused to spend every
@@ -1371,6 +1385,16 @@ export async function getSchedulerStatus(): Promise<SchedulerStatus | null> {
   } catch {
     return null;
   }
+}
+
+// Budgets are deployment configuration, not per-session state: they cannot change while
+// this tab is open, so fetch once and share. Surfaces that only need a bound (the
+// editor's time-budget input) should not each pay for a round trip.
+let _budgetsPromise: Promise<ResolveBudgets | null> | null = null;
+
+export function getResolveBudgets(): Promise<ResolveBudgets | null> {
+  _budgetsPromise ??= getSchedulerStatus().then((s) => s?.resolve_budgets ?? null);
+  return _budgetsPromise;
 }
 
 /// Poke the scheduler to run one tick now — claims a pending proof reply
