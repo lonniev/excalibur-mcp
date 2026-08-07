@@ -104,17 +104,16 @@ jobs:
       # would hand a build runner the credential that unlocks every operator secret — X
       # API keys, BTCPay, patron sessions — in order to obtain the weakest one in the
       # system. A Modal token can redeploy an app; it cannot open the vault.
-      - name: Deploy to Modal
-        env:
-          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-        run: uv run modal deploy modal_app.py
-
-      # A deploy that silently no-ops leaves exactly the drift this workflow exists to
-      # end, and looks green doing it. Modal stamps each version with the commit it was
-      # deployed from, so assert the live version is THIS one. The app name comes from the
-      # source rather than a literal here, so the two cannot disagree.
-      - name: The live version is this commit
+      # The invariant is "the live container runs THIS commit's content" — which is not
+      # the same as "a version stamped with this commit exists", and the difference is
+      # what broke the first run of this workflow (575f211).
+      #
+      # Modal deduplicates: when the image, the function spec and the mounted source are
+      # byte-identical to what is already live, it creates no new version and says
+      # "no changes detected". That is the invariant HOLDING, not failing. It is also the
+      # common case, because the paths filter above is deliberately wider than the image:
+      # a merge touching only CI config, tests or docs correctly changes nothing to run.
+      - name: Deploy to Modal and verify the live version
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
@@ -122,10 +121,22 @@ jobs:
           set -euo pipefail
           APP=$(uv run python -c "import modal_app; print(modal_app.app.name)")
           EXPECTED=$(git rev-parse --short HEAD)
+
+          # tee so the deploy output is still in the log we are asserting against.
+          uv run modal deploy modal_app.py 2>&1 | tee "$RUNNER_TEMP/modal-deploy.log"
+
+          if grep -q 'no changes detected' "$RUNNER_TEMP/modal-deploy.log"; then
+            echo "$APP already runs this commit's content — Modal cut no new version."
+            exit 0
+          fi
+
+          # A new version WAS cut, so it must carry this commit. Modal stamps each
+          # version with the commit it was deployed from; anything else means the deploy
+          # took from a tree that is not the one we checked out.
           HISTORY=$(COLUMNS=200 uv run modal app history "$APP")
           echo "$HISTORY"
           if ! echo "$HISTORY" | grep -q "$EXPECTED"; then
-            echo "::error::$APP has no version at $EXPECTED — the deploy did not take"
+            echo "::error::$APP cut a new version, but not at $EXPECTED"
             exit 1
           fi
           echo "$APP is live at $EXPECTED"
