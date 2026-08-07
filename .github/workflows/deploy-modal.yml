@@ -91,17 +91,41 @@ jobs:
           fi
           uv run python -c "from excalibur_mcp.config import get_settings as g; s=g(); print(f'block={s.resolve_block_budget_max_s} attempt={s.resolve_job_attempt_s} lease={s.resolve_lease_s} runner={s.resolve_runner_timeout_s}')"
 
-      # ONE secret, and it is the one the Modal container already mounts. The Modal
-      # tokens are not GitHub secrets: their delivery is codified as Secure Courier into
-      # the operator vault, and the script reads them with the same
-      # `runtime.load_credentials` call the runtime uses to decide whether to dispatch
-      # detached. A second copy in GitHub would be a credential with no delivery story,
-      # free to drift from the one the runtime obeys.
+      # A DEPLOY credential, deliberately not the operator's identity.
       #
-      # The script also asserts the vaulted `modal_app_name` matches the app this source
-      # declares — the wheel resolves the function by that name, so a mismatch means the
-      # runtime dispatches to something this deploy never created.
-      - name: Deploy to Modal and verify the live version
+      # Two different things are needed to run a service, and the platforms already keep
+      # them apart. What the service RUNS AS is the operator nsec — set once in Horizon's
+      # env and, for the container, in the Modal Secret `excalibur-operator`. What
+      # AUTHORIZES a deploy is a platform token. This job only performs the second, so it
+      # holds only the second.
+      #
+      # The tempting alternative was to give CI the nsec and read the Modal tokens out of
+      # the operator vault, which is where their delivery to the RUNTIME is codified. That
+      # would hand a build runner the credential that unlocks every operator secret — X
+      # API keys, BTCPay, patron sessions — in order to obtain the weakest one in the
+      # system. A Modal token can redeploy an app; it cannot open the vault.
+      - name: Deploy to Modal
         env:
-          TOLLBOOTH_NOSTR_OPERATOR_NSEC: ${{ secrets.TOLLBOOTH_NOSTR_OPERATOR_NSEC }}
-        run: uv run python scripts/deploy_modal.py
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: uv run modal deploy modal_app.py
+
+      # A deploy that silently no-ops leaves exactly the drift this workflow exists to
+      # end, and looks green doing it. Modal stamps each version with the commit it was
+      # deployed from, so assert the live version is THIS one. The app name comes from the
+      # source rather than a literal here, so the two cannot disagree.
+      - name: The live version is this commit
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: |
+          set -euo pipefail
+          APP=$(uv run python -c "import modal_app; print(modal_app.app.name)")
+          EXPECTED=$(git rev-parse --short HEAD)
+          HISTORY=$(COLUMNS=200 uv run modal app history "$APP")
+          echo "$HISTORY"
+          if ! echo "$HISTORY" | grep -q "$EXPECTED"; then
+            echo "::error::$APP has no version at $EXPECTED — the deploy did not take"
+            exit 1
+          fi
+          echo "$APP is live at $EXPECTED"
