@@ -1,0 +1,116 @@
+name: Deploy Modal Render App
+
+# `modal_app.py` is where scheduled dynamic posts are actually RESOLVED — the LLM call,
+# the web lookups, the fare. Horizon only dispatches; the work runs in this container.
+#
+# Nothing deployed it. It was pushed by hand once, on 2026-08-06, and then main moved:
+# release 0.38.0 raised the resolve block ceiling 900s -> 1800s and bumped the SDK to
+# 0.83.0, which is the version that makes `clamp_timeout` honour a caller-supplied
+# maximum. Both shipped to Horizon. Neither reached Modal. For a full day the scheduler
+# dispatched intending 1800s and the container silently cut every block back to 900s,
+# while the "provider is out of credit" message from the same release stayed invisible.
+# The release was green, tagged, and inert.
+#
+# The image is built from `pyproject.toml` and mounts `excalibur_mcp` at DEPLOY time.
+# `add_local_python_source(copy=False)` skips an image *rebuild* on a code change — it
+# does not skip the redeploy. So a source change with no redeploy means Modal is running
+# code that no longer exists anywhere else. Hence the broad paths filter below: this is
+# not a "modal_app.py changed" trigger, it is a "what Modal executes changed" trigger.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "modal_app.py"
+      - "src/excalibur_mcp/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/deploy-modal.yml"
+  # The release gate. `release.yml` creates the GitHub Release on a `v*` tag; this fires
+  # on that, and checks out the RELEASED tag rather than whatever main has drifted to —
+  # so the container ends up running the commit that was actually released.
+  release:
+    types: [published]
+  workflow_dispatch:
+
+concurrency:
+  # Two deploys racing would leave the live version decided by whichever finished last.
+  group: deploy-modal
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      # The image runs `pip_install_from_pyproject`, so a pin that has not landed on PyPI
+      # yet fails the build rather than merely resolving late. Same wait as ci.yml.
+      - name: Wait for tollbooth-dpyc on PyPI
+        run: |
+          REQUIRED=$(grep 'tollbooth-dpyc' pyproject.toml | grep -oP '==\K[0-9.]+')
+          if [ -n "$REQUIRED" ]; then
+            echo "Waiting for tollbooth-dpyc==$REQUIRED on PyPI..."
+            for i in $(seq 1 30); do
+              if pip index versions tollbooth-dpyc 2>/dev/null | grep -q "$REQUIRED"; then
+                echo "Found tollbooth-dpyc==$REQUIRED on PyPI"
+                break
+              fi
+              echo "Attempt $i/30 — not yet available, waiting 10s..."
+              sleep 10
+            done
+          fi
+
+      - uses: astral-sh/setup-uv@v9.0.0
+
+      # From the lockfile, for the same reason ci.yml does: the `modal` client that
+      # performs the deploy should be the one this project pins, not a floating latest.
+      - name: Install dependencies (the lockfile Horizon deploys)
+        run: uv sync --locked --extra dev
+
+      # `timeout=get_settings().resolve_runner_timeout_s` in modal_app.py is evaluated on
+      # THIS runner at deploy time, not in the container. An env override here would bake
+      # an outermost ring that disagrees with the scheduler's lease — a resolve killed
+      # while the scheduler still thinks it owns the job. Deploy with the defaults the
+      # service runs, and say which rings are being baked in.
+      - name: Show the rings being baked in
+        run: |
+          set -euo pipefail
+          if env | grep -qi '^RESOLVE_'; then
+            echo "::error::RESOLVE_* is set on the runner; the baked timeout would not match the service"
+            env | grep -i '^RESOLVE_'
+            exit 1
+          fi
+          uv run python -c "from excalibur_mcp.config import get_settings as g; s=g(); print(f'block={s.resolve_block_budget_max_s} attempt={s.resolve_job_attempt_s} lease={s.resolve_lease_s} runner={s.resolve_runner_timeout_s}')"
+
+      - name: Deploy to Modal
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: uv run modal deploy modal_app.py
+
+      # A deploy that silently no-ops leaves exactly the drift this workflow exists to
+      # end, and looks green doing it. Modal stamps each version with the commit it was
+      # deployed from, so assert the live version is THIS one.
+      - name: The live version is this commit
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: |
+          set -euo pipefail
+          EXPECTED=$(git rev-parse --short HEAD)
+          HISTORY=$(COLUMNS=200 uv run modal app history excalibur-render)
+          echo "$HISTORY"
+          if ! echo "$HISTORY" | grep -q "$EXPECTED"; then
+            echo "::error::Modal has no version at $EXPECTED — the deploy did not take"
+            exit 1
+          fi
+          echo "excalibur-render is live at $EXPECTED"
