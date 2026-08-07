@@ -3,6 +3,49 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed — the release reached Horizon but not the container that does the work
+
+`modal_app.py` is where scheduled dynamic posts are *resolved* — the LLM call, the web
+lookups, the fare. Horizon only dispatches. Nothing ever deployed it: it was pushed by
+hand once, on 2026-08-06, and then main moved.
+
+0.38.0 raised the block ceiling 900s → 1800s and bumped the SDK to 0.83.0, the version
+that makes `clamp_timeout` honour a caller-supplied maximum. Both shipped to Horizon.
+Neither reached Modal. For a day the scheduler dispatched intending 1800s while the
+container cut every block back to 900s, and the "provider is out of credit" message from
+the same release stayed invisible. The release was green, tagged, and inert.
+
+The image builds from `pyproject.toml` and mounts `excalibur_mcp` at **deploy** time.
+`add_local_python_source(copy=False)` skips an image *rebuild* on a code change, not the
+redeploy — so a source change with no redeploy leaves Modal running code that exists
+nowhere else. `deploy-modal.yml` therefore triggers on "what Modal executes changed",
+not on "modal_app.py changed", and again on `release: published` — checking out the
+released tag, so the container ends up on the commit that was actually released.
+
+CI holds a **deploy** credential, deliberately not the operator's identity. Two different
+things are needed to run a service and the platforms already keep them apart: what the
+service *runs as* is the nsec, set once in Horizon's env and in the Modal Secret
+`excalibur-operator`; what *authorizes a deploy* is a platform token. This job only
+performs the second, so it holds only the second.
+
+The considered alternative was to give CI the nsec and read the Modal tokens out of the
+operator vault, where their delivery to the **runtime** is codified. That would hand a
+build runner the credential unlocking every operator secret — X API keys, BTCPay, patron
+sessions — to obtain the weakest one in the system. A Modal token can redeploy an app; it
+cannot open the vault.
+
+The cost is that the deploy can no longer compare the app name it deploys against the
+`modal_app_name` the runtime resolves from the vault. `tests/test_modal_app.py` pins it
+instead, so a rename fails loudly until the vault half is acknowledged rather than
+silently leaving the scheduler dispatching to a function that does not exist.
+
+Also pins the **outermost** budget ring in tests. Every other ring had one; this one was
+invisible to in-process assertions because the timeout is baked into the deployment. The
+first deployed version carried a literal `timeout=3600`, nesting by luck at the ceiling
+of the day.
+
 ## 0.38.0 — 2026-08-07
 
 ### Changed — resolve budgets are derived from one configured ceiling

@@ -59,6 +59,18 @@ jobs:
       - name: Test
         run: uv run pytest tests/ -v
 
+      # `modal_app.py` sits outside `src/`, so nothing imported it — ruff read it as text
+      # and no test touched it. Its deploy graph (image, mounted source, function spec)
+      # was therefore first evaluated during `modal deploy`, i.e. after merge, and a
+      # renamed settings property or a bad pyproject reference would surface there.
+      #
+      # Building the objects needs no Modal credentials: App, Image, and Secret.from_name
+      # are all lazy references until a real API call, so this is safe on fork PRs where
+      # no token is available. It asserts the deploy would be *attemptable*, not that it
+      # succeeded — deploy-modal.yml owns that.
+      - name: The detached runner's deploy graph builds
+        run: uv run python -c "import modal_app; print('modal_app builds:', modal_app.app.name)"
+
   # The frontend had no pre-merge build of any kind, so a dependency PR could take a
   # MAJOR version, go green on the Python suite, auto-merge on the `frontend/` low-risk
   # path, and leave the site undeployable for a week before anyone noticed. That is

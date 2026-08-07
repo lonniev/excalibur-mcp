@@ -18,9 +18,14 @@ person making the same mistake it exists to catch.
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pytest
 
 from excalibur_mcp.config import Settings
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # Deliberately spans the old hardcoded ceiling (900), the new default (1800) and well
 # past it. A derivation can be wrong in a way that happens to hold at one value —
@@ -86,3 +91,24 @@ def test_scheduler_and_persistence_read_the_derived_rings():
     assert scheduler.RESOLVE_MAX_RUNTIME_S == s.resolve_job_attempt_s
     assert scheduler.RESOLVE_LEAD_SECONDS == s.resolve_lead_s
     assert str(s.resolve_lease_s) in posts_db._RESOLVE_LEASE
+
+
+def test_the_detached_runner_reads_the_outermost_ring():
+    """`modal_app.py` holds the OUTERMOST ring, and it is the one ring no other test
+    could see: the function's `timeout=` is baked into the Modal deployment at deploy
+    time, so a wrong value is invisible to every in-process assertion and surfaces only
+    as a resolve killed while the scheduler still believes it owns the job.
+
+    The first deployed version carried a literal `timeout=3600`. It nested correctly by
+    luck at the ceiling of the day and would have inverted the moment the ceiling was
+    raised past it. Modal's public `Function.spec` does not expose the timeout, so this
+    reads the source — the same tactic as the `_RESOLVE_LEASE` assertion above.
+    """
+    source = (_REPO_ROOT / "modal_app.py").read_text()
+    assert "resolve_runner_timeout_s" in source, (
+        "modal_app.py must derive its timeout from the configured ceiling"
+    )
+    literal = re.search(r"timeout\s*=\s*\d", source)
+    assert literal is None, (
+        f"modal_app.py re-authored its timeout as a literal: {literal.group(0)!r}"
+    )
