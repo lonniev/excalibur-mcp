@@ -318,8 +318,12 @@ def breakout_ratio(
     return float(impressions) / med
 
 
-def link_placement_cohort(rows: list[dict[str, Any]]) -> dict[str, float]:
-    """Median impressions by ``link_placement`` over the patron's corpus."""
+def link_placement_cohort(rows: list[dict[str, Any]]) -> dict[str, dict[str, float | int]]:
+    """Median impressions by ``link_placement`` over the patron's corpus.
+
+    Each bucket is ``{"median": float, "n": int}`` so the FE can dim underpowered
+    groups (n<3) instead of presenting a single-post "median" as authoritative.
+    """
     buckets: dict[str, list[float]] = {}
     for r in rows:
         place = str(r.get("link_placement") or "none")
@@ -331,7 +335,9 @@ def link_placement_cohort(rows: list[dict[str, Any]]) -> dict[str, float]:
         except (TypeError, ValueError):
             continue
     return {
-        k: float(statistics.median(v)) for k, v in buckets.items() if v
+        k: {"median": float(statistics.median(v)), "n": len(v)}
+        for k, v in buckets.items()
+        if v
     }
 
 
@@ -384,11 +390,14 @@ def quote_to_repost_ratio(
     return _rate(quotes, reposts)
 
 
-def time_of_day_cohort(rows: list[dict[str, Any]]) -> dict[str, float]:
+def time_of_day_cohort(rows: list[dict[str, Any]]) -> dict[str, dict[str, float | int]]:
     """Median impressions by UTC send hour (``HH`` keys) over the corpus.
 
     Each row needs ``last_sent_at`` (ISO) and ``impressions``. Bad timestamps
     and missing impressions are skipped — underpowered cohorts still accumulate.
+
+    Each bucket is ``{"median": float, "n": int}`` so charts can encode sample
+    size (opacity / count label) instead of treating n=1 as a solid median.
     """
     buckets: dict[str, list[float]] = {}
     for r in rows:
@@ -409,7 +418,11 @@ def time_of_day_cohort(rows: list[dict[str, Any]]) -> dict[str, float]:
             dt = dt.replace(tzinfo=timezone.utc)
         hour = dt.astimezone(timezone.utc).strftime("%H")
         buckets.setdefault(hour, []).append(val)
-    return {k: float(statistics.median(v)) for k, v in buckets.items() if v}
+    return {
+        k: {"median": float(statistics.median(v)), "n": len(v)}
+        for k, v in buckets.items()
+        if v
+    }
 
 
 def _median(values: list[int | float]) -> float | None:
@@ -746,11 +759,27 @@ def render_performance_infographic(data: dict[str, Any]) -> str:
             )
         )
         y = cy + 48
-        for place, med_imp in sorted(cohorts.items(), key=lambda kv: -kv[1]):
+
+        def _cohort_median(v: Any) -> float:
+            # #364 shape is {"median", "n"}; tolerate legacy bare floats.
+            if isinstance(v, dict):
+                try:
+                    return float(v.get("median") or 0)
+                except (TypeError, ValueError):
+                    return 0.0
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return 0.0
+
+        for place, bucket in sorted(cohorts.items(), key=lambda kv: -_cohort_median(kv[1])):
+            med_imp = _cohort_median(bucket)
+            n = int(bucket.get("n") or 0) if isinstance(bucket, dict) else 0
+            label = f"{place}: {med_imp:.0f}" + (f" (n={n})" if n else "")
             parts.append(
                 _text(
                     CARD_X + 16, y,
-                    f"{place}: {med_imp:.0f}",
+                    label,
                     size=12, fill=theme.text_white, family="monospace",
                 )
             )
