@@ -34,11 +34,11 @@ const TIPS = {
   medianT15:
     "Your personal baseline: the rolling median of impressions in the first 15 minutes across your harvested posts. This is the denominator of escape velocity — why the number is on the page at all. Unit: impressions.",
   followers:
-    "Your current X follower count (best-effort from the account lookup). Denominator of breakout ratio. When this is unavailable, breakout ratio cells stay empty rather than guessing.",
+    "Your current X follower count (best-effort from the account lookup). Context only — not used in escape velocity or breakout ratio, which both compare a post to your own rolling median.",
   escapeVelocity:
     "How this post's first 15 minutes compared to your own typical post: impressions at t+15m ÷ your rolling median t+15m. Above 1× means faster than your normal.",
   breakoutRatio:
-    "Whether the post travelled beyond your followers: impressions ÷ follower count. Much greater than 1× implies For You pickup; around 1× means it mostly stayed on the home timeline. Empty when follower count is unavailable.",
+    "How this post's final reach compared to your own typical post: impressions at the latest reading (preferring t+28d) ÷ your rolling median final impressions. Above 1× outpaced your baseline; below 1× under-reached. Empty until at least five posts have a final reading — a thinner sample is too noisy to trust.",
   trend:
     "Impressions at each snapshot for this post, oldest to newest (t+15m through +28d). The line shows the shape of the climb; the Impr. column carries the latest number.",
   linkPlacement:
@@ -319,8 +319,8 @@ export default function PerformancePage() {
           <h1 className="text-lg font-semibold">Performance</h1>
           <p className="text-sm text-stone-500 dark:text-zinc-400 mt-0.5">
             How your recent posts are travelling — early momentum versus your own baseline,
-            reach past your followers, and where a link helped. Metrics are read at set
-            intervals for 28 days after each send; after that X stops exposing them.
+            final reach versus that same baseline, and where a link helped. Metrics are read
+            at set intervals for 28 days after each send; after that X stops exposing them.
           </p>
         </div>
         <div className="shrink-0 ml-auto">
@@ -513,7 +513,9 @@ export default function PerformancePage() {
               <tbody>
                 {posts.map((p) => {
                   const posted = fmtPosted(p.last_sent_at);
-                  const brMissing = p.breakout_ratio == null && followers == null;
+                  const brSample = data?.corpus?.breakout_sample_size ?? 0;
+                  const brMin = data?.corpus?.breakout_min_sample ?? 5;
+                  const brThin = p.breakout_ratio == null && brSample < brMin;
                   return (
                     <tr
                       key={p.post_id}
@@ -559,8 +561,8 @@ export default function PerformancePage() {
                       >
                         <Tip
                           label={
-                            brMissing
-                              ? "Breakout ratio needs your follower count, which is unavailable right now — reconnect X or try refresh."
+                            brThin
+                              ? `Breakout ratio needs at least ${brMin} posts with a final reading before the baseline is trustworthy — ${brSample} so far. Cells stay empty rather than guessing.`
                               : TIPS.breakoutRatio
                           }
                         >

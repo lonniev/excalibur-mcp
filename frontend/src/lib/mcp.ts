@@ -1610,6 +1610,12 @@ export interface PostPerformanceResult {
     snapshot_count?: number;
     post_count?: number;
     rolling_median_t15?: number | null;
+    /** Rolling median of final-reach impressions (t+28d when present, else latest). */
+    rolling_median_final?: number | null;
+    /** How many posts contributed a final-reach reading to the breakout baseline. */
+    breakout_sample_size?: number;
+    /** Minimum sample before breakout_ratio is computed (else suppressed). */
+    breakout_min_sample?: number;
   };
   error?: string;
 }
