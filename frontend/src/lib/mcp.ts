@@ -1594,17 +1594,24 @@ export interface PerformancePost {
   sparkline?: PerformanceSparkPoint[];
 }
 
+/** One cohort bucket: median value plus how many posts contributed. */
+export interface CohortBucket {
+  median: number;
+  n: number;
+}
+
 export interface PostPerformanceResult {
   success?: boolean;
   npub?: string;
   follower_count?: number | null;
   posts?: PerformancePost[];
   cohorts?: {
-    link_placement?: Record<string, number>;
+    /** Median impressions + sample size by link placement. */
+    link_placement?: Record<string, CohortBucket | number>;
     voice?: Record<string, number>;
     snippet?: Record<string, number>;
-    /** Median impressions by UTC send hour (`"00"`…`"23"`). */
-    time_of_day?: Record<string, number>;
+    /** Median impressions + sample size by UTC send hour (`"00"`…`"23"`). */
+    time_of_day?: Record<string, CohortBucket | number>;
   };
   corpus?: {
     snapshot_count?: number;

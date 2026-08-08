@@ -5,6 +5,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Performance page: chart Time of day, standard loader, sortable table, drop Link column
+
+Four UX fixes on the Performance view (#364):
+
+1. **Time of day** is a continuous 24-hour local-time bar chart (gaps = untried hours),
+   with per-bucket `n=` labels and dimmed provisional bars when n<3. Hover still shows UTC.
+2. Metrics load uses the site-standard **QuoteScroller** instead of bare "Loading…".
+3. **Posts by reach** columns are client-sortable; **Posted** is its own compact date column
+   (no longer a subtitle under the title) so chronological order is one click.
+4. Per-row **Link** placement is removed from the table (it read "Body" for every row and
+   burned width). Capture is unchanged; the existing **Link placement and reach** aggregate
+   panel remains, now with sample size. Clicks stay on the row.
+
+Backend cohorts (`time_of_day`, `link_placement`) now return `{median, n}` per bucket so the
+chart and panel can encode sample size. FE still accepts legacy bare numbers.
 
 ### Fixed — Breakout ratio never crossed 1.0 because followers were the wrong denominator
 
