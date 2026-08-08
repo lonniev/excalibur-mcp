@@ -238,12 +238,22 @@ def test_escape_velocity_compares_t15_to_rolling_median():
     assert escape_velocity(impressions_t15=None, rolling_median_t15=100) is None
 
 
-def test_breakout_ratio_is_impressions_over_followers():
+def test_breakout_ratio_is_impressions_over_rolling_median():
+    """#359 — breakout is final reach vs the patron's own baseline, not followers.
+
+    Follower-count denominators structurally cap small accounts below 1.0 and
+    never meant 'out-of-network pickup'. Same shape as escape velocity, later
+    horizon. Thin / missing baselines suppress rather than invent a ratio.
+    """
     from excalibur_mcp.metrics_harvest import breakout_ratio
 
-    assert breakout_ratio(impressions=5000, follower_count=1000) == pytest.approx(5.0)
-    assert breakout_ratio(impressions=800, follower_count=1000) == pytest.approx(0.8)
-    assert breakout_ratio(impressions=100, follower_count=0) is None
+    # Observed-scale discrimination: top post ~119 vs median ~40 → ~3× (>1);
+    # bottom post ~18 vs same median → ~0.45× (<1).
+    assert breakout_ratio(impressions=119, rolling_median_impressions=40) == pytest.approx(2.975)
+    assert breakout_ratio(impressions=18, rolling_median_impressions=40) == pytest.approx(0.45)
+    assert breakout_ratio(impressions=100, rolling_median_impressions=0) is None
+    assert breakout_ratio(impressions=None, rolling_median_impressions=40) is None
+    assert breakout_ratio(impressions=100, rolling_median_impressions=None) is None
 
 
 def test_link_placement_cohort_medians():
@@ -329,9 +339,15 @@ async def test_compute_post_performance_includes_title_and_posted_date():
     assert row["title"] == "Morning dispatch"
     assert "market opened soft" in row["excerpt"]
     assert row["last_sent_at"] == "2026-08-01T12:00:00+00:00"
-    # Derived scores still present (single t+15 sample → median is itself → EV 1×)
+    # Derived scores: single t+15 sample → median is itself → EV 1×.
     assert row["escape_velocity"] == pytest.approx(1.0)  # 200 / median(200)
-    assert row["breakout_ratio"] == pytest.approx(0.5)  # 500 / 1000
+    # #359 — breakout needs ≥ BREAKOUT_MIN_SAMPLE posts; a one-post corpus
+    # suppresses rather than reporting a self-ratio of 1.0 or a follower fraction.
+    assert row["breakout_ratio"] is None
+    assert out["corpus"]["breakout_sample_size"] == 1
+    assert out["corpus"]["rolling_median_final"] is None
+    # follower_count remains a display-only corpus stat, not a breakout input.
+    assert out["follower_count"] == 1000
 
 
 def test_performance_page_source_is_human_legible():
@@ -374,6 +390,13 @@ def test_performance_page_source_is_human_legible():
     assert "TIPS.escapeVelocity" in text
     assert "denominator of escape velocity" in text.lower() or "rolling median" in text.lower()
 
+    # #359 — breakout tip must describe the personal-median baseline, not followers.
+    assert "impressions ÷ follower" not in text.lower()
+    assert "rolling median" in text.lower()
+    assert "TIPS.breakoutRatio" in text
+    # Missing breakout is a thin corpus, not a missing follower count.
+    assert "follower count, which is unavailable" not in text
+
     # One concept, one icon: the lucide glyph says crowd, so the emoji may not
     # say it a second time.
     assert "👥" not in text
@@ -393,6 +416,92 @@ def test_performance_page_source_is_human_legible():
     # Refresh stays on the right of the header row.
     assert "ml-auto" in text
     assert "RefreshButton" in text
+
+
+@pytest.mark.asyncio
+async def test_compute_post_performance_breakout_uses_final_median_and_min_sample():
+    """#359 — breakout discriminates above/below 1× once the baseline is thick enough.
+
+    Five posts with distinct final impressions: median is the middle value, so
+    the top post lands >1× and the bottom <1×. With only four posts the ratio is
+    suppressed entirely.
+    """
+    from excalibur_mcp import metrics_harvest
+    from excalibur_mcp.db import posts as posts_db
+    from excalibur_mcp.metrics_harvest import BREAKOUT_MIN_SAMPLE
+
+    assert BREAKOUT_MIN_SAMPLE == 5
+
+    def _snap(post_id: str, cadence: str, t_offset: int, impressions: int) -> dict:
+        return {
+            "post_id": post_id,
+            "tweet_id": f"t-{post_id[-4:]}",
+            "cadence_key": cadence,
+            "t_offset": t_offset,
+            "impressions": impressions,
+            "likes": 0,
+            "replies": 0,
+            "reposts": 0,
+            "url_link_clicks": 0,
+            "user_profile_clicks": 0,
+            "link_placement": "none",
+            "snippet_ids": [],
+            "voice_id": NPUB,
+            "captured_at": "2026-08-01T12:00:00+00:00",
+        }
+
+    # Five posts. Prefer cadence_key=28d when present; otherwise latest.
+    # Final impressions: 20, 30, 40, 50, 120 → median 40.
+    posts_final = {
+        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1": 20,
+        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2": 30,
+        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa3": 40,
+        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa4": 50,
+        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa5": 120,
+    }
+    snaps = []
+    for pid, final_imp in posts_final.items():
+        snaps.append(_snap(pid, "15m", 900, max(1, final_imp // 3)))
+        snaps.append(_snap(pid, "28d", 28 * 24 * 3600, final_imp))
+
+    identity = {
+        pid: {
+            "title": f"Post {pid[-1]}",
+            "excerpt": "",
+            "last_sent_at": "2026-08-01T12:00:00+00:00",
+            "publish_at": "2026-08-01T12:00:00+00:00",
+        }
+        for pid in posts_final
+    }
+
+    with (
+        patch.object(metrics_harvest.metrics_db, "list_all_for_npub", AsyncMock(return_value=snaps)),
+        patch.object(posts_db, "summaries_for_ids", AsyncMock(return_value=identity)),
+    ):
+        out = await metrics_harvest.compute_post_performance(NPUB)
+
+    assert out["corpus"]["breakout_sample_size"] == 5
+    assert out["corpus"]["rolling_median_final"] == pytest.approx(40.0)
+    by_id = {p["post_id"]: p for p in out["posts"]}
+    assert by_id["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa5"]["breakout_ratio"] == pytest.approx(3.0)
+    assert by_id["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1"]["breakout_ratio"] == pytest.approx(0.5)
+    assert by_id["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa3"]["breakout_ratio"] == pytest.approx(1.0)
+    # Values both above and below 1.0 — the acceptance criterion from #359.
+    ratios = [p["breakout_ratio"] for p in out["posts"]]
+    assert any(r is not None and r > 1.0 for r in ratios)
+    assert any(r is not None and r < 1.0 for r in ratios)
+
+    # Thin corpus: drop one post → sample 4 < min 5 → every breakout is None.
+    thin_snaps = [s for s in snaps if s["post_id"] != "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa5"]
+    thin_identity = {k: v for k, v in identity.items() if k != "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa5"}
+    with (
+        patch.object(metrics_harvest.metrics_db, "list_all_for_npub", AsyncMock(return_value=thin_snaps)),
+        patch.object(posts_db, "summaries_for_ids", AsyncMock(return_value=thin_identity)),
+    ):
+        thin = await metrics_harvest.compute_post_performance(NPUB)
+    assert thin["corpus"]["breakout_sample_size"] == 4
+    assert thin["corpus"]["rolling_median_final"] is None
+    assert all(p["breakout_ratio"] is None for p in thin["posts"])
 
 
 def test_tweet_id_from_url():

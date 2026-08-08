@@ -6,6 +6,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 
+### Fixed — Breakout ratio never crossed 1.0 because followers were the wrong denominator
+
+The Performance column labeled "Breakout ratio" divided impressions by follower
+count. At a few hundred followers with typical post impressions in the tens to
+low hundreds, every cell landed between 0.08× and 0.50× — the metric could not
+fire, and the label disagreed with what the number actually meant (follower
+saturation, not out-of-network pickup). X does not deliver a post to every
+follower either, so the fraction was never a good proxy for breakout at any
+scale.
+
+Breakout now matches Escape velocity's shape on a later horizon: final reach
+(t+28d when harvested, else the furthest reading) ÷ the patron's own rolling
+median final impressions. The two headline columns read as a pair — early
+momentum vs baseline, final reach vs baseline. Values are suppressed ("—")
+until at least five posts contribute a final reading, so a two-post median
+does not pretend to discriminate. The Followers card stays on the page as
+context only; it is no longer an input to the ratio. Column label unchanged;
+tooltip and tool docstring now describe the personal-median math.
+
 ### Fixed — the release reached Horizon but not the container that does the work
 
 `modal_app.py` is where scheduled dynamic posts are *resolved* — the LLM call, the web

@@ -280,6 +280,11 @@ async def process_due_harvests(runtime: Any) -> dict[str, Any]:
 # -- Derived metrics (computed on the patron's own corpus) -------------------
 
 
+# Breakout needs a stable personal baseline. Below this many posts with a final
+# reading, the median is too thin to discriminate — callers suppress to None.
+BREAKOUT_MIN_SAMPLE = 5
+
+
 def escape_velocity(
     impressions_t15: int | float | None,
     rolling_median_t15: int | float | None,
@@ -294,15 +299,23 @@ def escape_velocity(
 
 
 def breakout_ratio(
-    impressions: int | float | None, follower_count: int | float | None
+    impressions: int | float | None,
+    rolling_median_impressions: int | float | None,
 ) -> float | None:
-    """Impressions ÷ followers. >>1 implies For You pickup; ~1 stayed on home timeline."""
-    if impressions is None or follower_count is None:
+    """Final reach ÷ patron rolling-median final reach.
+
+    Pair of escape velocity: EV is early momentum vs baseline (t+15m); breakout is
+    final reach vs the same kind of personal baseline. Values >>1 outpaced the
+    patron's typical post; <<1 under-reached. Follower count is the wrong
+    denominator — X does not deliver every post to every follower — so this is
+    scale-free on the patron's own corpus instead.
+    """
+    if impressions is None or rolling_median_impressions is None:
         return None
-    followers = float(follower_count)
-    if followers <= 0:
+    med = float(rolling_median_impressions)
+    if med <= 0:
         return None
-    return float(impressions) / followers
+    return float(impressions) / med
 
 
 def link_placement_cohort(rows: list[dict[str, Any]]) -> dict[str, float]:
@@ -329,7 +342,11 @@ def _median(values: list[int | float]) -> float | None:
 
 
 async def compute_post_performance(npub: str, *, follower_count: int | None = None) -> dict[str, Any]:
-    """Derived scores across a patron's harvested corpus."""
+    """Derived scores across a patron's harvested corpus.
+
+    ``follower_count`` is retained as a display-only corpus stat (the FE still
+    shows it). Breakout ratio no longer uses it — see ``breakout_ratio``.
+    """
     snaps = await metrics_db.list_all_for_npub(npub)
     if not snaps:
         return {
@@ -355,16 +372,46 @@ async def compute_post_performance(npub: str, *, follower_count: int | None = No
         for s in snaps
         if s.get("cadence_key") == "15m" and s.get("impressions") is not None
     ]
-    rolling_med = _median(t15_all)
+    rolling_med_t15 = _median(t15_all)
 
-    # Latest snapshot per post for breakout / sparkline tip.
+    # Final-reach baseline: prefer the t+28d reading when present (the cadence
+    # cliff), else the furthest harvested snapshot per post. Same personal-median
+    # shape as escape velocity, different horizon.
+    final_impressions: list[int] = []
+    final_by_post: dict[str, int | None] = {}
+    for post_id, series in by_post.items():
+        series_sorted = sorted(
+            series, key=lambda r: (r.get("t_offset") or 0, str(r.get("captured_at") or ""))
+        )
+        t28 = next((s for s in series_sorted if s.get("cadence_key") == "28d"), None)
+        final_snap = t28 if t28 is not None else series_sorted[-1]
+        if final_snap.get("impressions") is not None:
+            try:
+                imp = int(final_snap["impressions"])
+            except (TypeError, ValueError):
+                imp = None
+        else:
+            imp = None
+        final_by_post[post_id] = imp
+        if imp is not None:
+            final_impressions.append(imp)
+
+    # Thin baselines mislead — suppress breakout until enough posts contribute.
+    if len(final_impressions) >= BREAKOUT_MIN_SAMPLE:
+        rolling_med_final = _median(final_impressions)
+    else:
+        rolling_med_final = None
+
     posts_out: list[dict[str, Any]] = []
     for post_id, series in by_post.items():
-        series_sorted = sorted(series, key=lambda r: (r.get("t_offset") or 0, str(r.get("captured_at") or "")))
+        series_sorted = sorted(
+            series, key=lambda r: (r.get("t_offset") or 0, str(r.get("captured_at") or ""))
+        )
         latest = series_sorted[-1]
         t15 = next((s for s in series_sorted if s.get("cadence_key") == "15m"), None)
         imp_t15 = int(t15["impressions"]) if t15 and t15.get("impressions") is not None else None
         latest_imp = int(latest["impressions"]) if latest.get("impressions") is not None else None
+        final_imp = final_by_post.get(post_id)
         sparkline = [
             {
                 "t_offset": s.get("t_offset"),
@@ -392,8 +439,8 @@ async def compute_post_performance(npub: str, *, follower_count: int | None = No
                 "latest_reposts": latest.get("reposts"),
                 "url_link_clicks": latest.get("url_link_clicks"),
                 "user_profile_clicks": latest.get("user_profile_clicks"),
-                "escape_velocity": escape_velocity(imp_t15, rolling_med),
-                "breakout_ratio": breakout_ratio(latest_imp, follower_count),
+                "escape_velocity": escape_velocity(imp_t15, rolling_med_t15),
+                "breakout_ratio": breakout_ratio(final_imp, rolling_med_final),
                 "sparkline": sparkline,
             }
         )
@@ -442,7 +489,10 @@ async def compute_post_performance(npub: str, *, follower_count: int | None = No
         "corpus": {
             "snapshot_count": len(snaps),
             "post_count": len(by_post),
-            "rolling_median_t15": rolling_med,
+            "rolling_median_t15": rolling_med_t15,
+            "rolling_median_final": rolling_med_final,
+            "breakout_sample_size": len(final_impressions),
+            "breakout_min_sample": BREAKOUT_MIN_SAMPLE,
         },
     }
 

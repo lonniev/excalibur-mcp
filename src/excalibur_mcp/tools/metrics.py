@@ -121,7 +121,9 @@ async def post_performance(
 ) -> dict[str, Any]:
     """Patron: derived reach scores across the harvested corpus."""
     follower_count: int | None = None
-    # Best-effort followers for breakout ratio — never fail the tool on OAuth miss.
+    # Best-effort followers for the corpus display card only — breakout ratio
+    # is personal-median based (#359) and does not need this. Never fail the
+    # tool on an OAuth miss.
     try:
         from excalibur_mcp.server import _resolve_x_client
 

@@ -1403,9 +1403,10 @@ async def post_performance(
     """Patron: derived reach scores across your harvested post corpus.
 
     Computes escape velocity (t+15m vs rolling median), breakout ratio
-    (impressions ÷ followers), link-placement cohort medians, and
-    snippet/voice attribution from the durable snapshot store — signals that
-    come from owning the curve, not proxying a single X endpoint.
+    (final reach ÷ rolling-median final reach; suppressed below 5 posts),
+    link-placement cohort medians, and snippet/voice attribution from the
+    durable snapshot store — signals that come from owning the curve, not
+    proxying a single X endpoint.
     """
     from excalibur_mcp.tools import metrics as metrics_tools
 
