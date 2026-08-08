@@ -2,12 +2,17 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import {
+  Bookmark,
   Camera,
+  Clock,
   FileText,
   Info,
   Link2,
+  MessageCircle,
+  Quote,
   Rocket,
   TrendingUp,
+  UserRound,
   Users,
 } from "lucide-react";
 import {
@@ -38,6 +43,16 @@ const TIPS = {
     "Impressions at each snapshot for this post, oldest to newest (t+15m through +28d). The line shows the shape of the climb; the Impr. column carries the latest number.",
   linkPlacement:
     "Median impressions grouped by where the link sat — in the body, in the first reply, or no link at all. Only the groups your corpus actually contains appear, and the panel stays hidden until there are two of them, because one median compares to nothing.",
+  profileClicks:
+    "How many readers opened your profile from this post. Strongest free intent proxy on X: the post made someone want to find out who wrote it. The rate is profile clicks ÷ impressions.",
+  bookmarks:
+    "Saves for later. X weights bookmarks heavily in ranking; bookmark rate (bookmarks ÷ impressions) separates evergreen reference posts from ephemeral ones.",
+  replyRate:
+    "Replies ÷ impressions, kept separate from the blended engagement mix. Author-reply chains carry heavy ranking weight, so this predicts next-post reach better than aggregates.",
+  quoteToRepost:
+    "Quotes ÷ reposts. Quotes recruit the quoter's out-of-network audience with commentary; plain reposts do neither to the same degree. High ratio means the post provoked response, not mere agreement.",
+  timeOfDay:
+    "Median impressions for posts sent in each UTC hour. Actionable for the scheduler; accumulates automatically as the corpus grows. Underpowered with few posts — treat early numbers as directional.",
 } as const;
 
 const TIP_W = 256; // px — must match the w-64 on the panel
@@ -230,6 +245,17 @@ function fmtInt(n: number | null | undefined): string {
   return n.toLocaleString();
 }
 
+/** Fraction as a percentage with one decimal (0.053 → "5.3%"). */
+function fmtPct(n: number | null | undefined): string {
+  if (n == null || Number.isNaN(n)) return "—";
+  return `${(n * 100).toFixed(1)}%`;
+}
+
+/** UTC hour key `"14"` → `"14:00 UTC"`. */
+function fmtHour(hh: string): string {
+  return `${hh}:00 UTC`;
+}
+
 function fmtPosted(iso: string | null | undefined): string {
   if (!iso) return "";
   const d = new Date(iso);
@@ -281,6 +307,9 @@ export default function PerformancePage() {
   const corpus = data?.corpus;
   const cohorts = data?.cohorts?.link_placement ?? {};
   const cohortEntries = Object.entries(cohorts).sort((a, b) => b[1] - a[1]);
+  const todCohorts = data?.cohorts?.time_of_day ?? {};
+  // Lexical sort on zero-padded HH keys == chronological.
+  const todEntries = Object.entries(todCohorts).sort((a, b) => a[0].localeCompare(b[0]));
   const followers = data?.follower_count ?? null;
 
   return (
@@ -366,6 +395,39 @@ export default function PerformancePage() {
         </div>
       )}
 
+      {todEntries.length > 1 && (
+        <div className={`${card} p-4`}>
+          <div className="flex items-center justify-center gap-2 mb-1">
+            <Clock className="h-4 w-4 text-amber-600 dark:text-amber-400" aria-hidden />
+            <Tip label={TIPS.timeOfDay}>
+              <h2 className="text-sm font-medium">Time of day</h2>
+            </Tip>
+          </div>
+          <p className="text-xs text-stone-500 dark:text-zinc-400 mb-3 text-center">
+            Median impressions by the UTC hour the post went out — free, accumulates with every
+            send.
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-stone-400 dark:text-zinc-500 border-b border-stone-100 dark:border-zinc-800">
+                  <th className="py-1.5 pr-3 font-medium">Send hour</th>
+                  <th className="py-1.5 font-medium">Median impressions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {todEntries.map(([hour, med]) => (
+                  <tr key={hour} className="border-b border-stone-50 dark:border-zinc-900 last:border-0">
+                    <td className="py-2 pr-3 tabular-nums">{fmtHour(hour)}</td>
+                    <td className="py-2 tabular-nums">{fmtInt(med)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       <div className={`${card} overflow-hidden`}>
         <div className="px-4 py-3 border-b border-stone-100 dark:border-zinc-800">
           <h2 className="text-sm font-medium">Posts by reach</h2>
@@ -414,6 +476,38 @@ export default function PerformancePage() {
                   </th>
                   <th className="px-3 py-2 font-medium">Link</th>
                   <th className="px-3 py-2 font-medium text-right">Clicks</th>
+                  <th className="px-3 py-2 font-medium text-right">
+                    <Tip label={TIPS.profileClicks}>
+                      <span className="inline-flex items-center gap-1">
+                        <UserRound className="h-3 w-3" aria-hidden />
+                        Profile
+                      </span>
+                    </Tip>
+                  </th>
+                  <th className="px-3 py-2 font-medium text-right">
+                    <Tip label={TIPS.bookmarks}>
+                      <span className="inline-flex items-center gap-1">
+                        <Bookmark className="h-3 w-3" aria-hidden />
+                        Bookmarks
+                      </span>
+                    </Tip>
+                  </th>
+                  <th className="px-3 py-2 font-medium text-right">
+                    <Tip label={TIPS.replyRate}>
+                      <span className="inline-flex items-center gap-1">
+                        <MessageCircle className="h-3 w-3" aria-hidden />
+                        Reply rate
+                      </span>
+                    </Tip>
+                  </th>
+                  <th className="px-3 py-2 font-medium text-right">
+                    <Tip label={TIPS.quoteToRepost}>
+                      <span className="inline-flex items-center gap-1">
+                        <Quote className="h-3 w-3" aria-hidden />
+                        Quote/repost
+                      </span>
+                    </Tip>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -478,6 +572,36 @@ export default function PerformancePage() {
                       </td>
                       <td className="px-3 py-2.5 text-right tabular-nums text-stone-500 dark:text-zinc-400">
                         {fmtInt(p.url_link_clicks)}
+                      </td>
+                      <td className="px-3 py-2.5 text-right tabular-nums">
+                        <Tip label={TIPS.profileClicks}>
+                          <span className="inline-flex flex-col items-end leading-tight">
+                            <span>{fmtInt(p.user_profile_clicks)}</span>
+                            <span className="text-[10px] text-stone-400 dark:text-zinc-500">
+                              {fmtPct(p.profile_click_rate)}
+                            </span>
+                          </span>
+                        </Tip>
+                      </td>
+                      <td className="px-3 py-2.5 text-right tabular-nums">
+                        <Tip label={TIPS.bookmarks}>
+                          <span className="inline-flex flex-col items-end leading-tight">
+                            <span>{fmtInt(p.bookmarks)}</span>
+                            <span className="text-[10px] text-stone-400 dark:text-zinc-500">
+                              {fmtPct(p.bookmark_rate)}
+                            </span>
+                          </span>
+                        </Tip>
+                      </td>
+                      <td className="px-3 py-2.5 text-right tabular-nums">
+                        <Tip label={TIPS.replyRate}>
+                          <span>{fmtPct(p.reply_rate)}</span>
+                        </Tip>
+                      </td>
+                      <td className="px-3 py-2.5 text-right tabular-nums">
+                        <Tip label={TIPS.quoteToRepost}>
+                          <span>{fmtRatio(p.quote_to_repost_ratio)}</span>
+                        </Tip>
                       </td>
                     </tr>
                   );
