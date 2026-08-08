@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import {
@@ -17,9 +17,11 @@ import {
 } from "lucide-react";
 import {
   getPostPerformance,
+  type CohortBucket,
   type PerformancePost,
   type PostPerformanceResult,
 } from "../lib/mcp";
+import QuoteScroller from "./QuoteScroller";
 import RefreshButton from "./RefreshButton";
 
 const card = "rounded-xl border border-stone-200 dark:border-zinc-800 bg-white dark:bg-zinc-900";
@@ -42,7 +44,7 @@ const TIPS = {
   trend:
     "Impressions at each snapshot for this post, oldest to newest (t+15m through +28d). The line shows the shape of the climb; the Impr. column carries the latest number.",
   linkPlacement:
-    "Median impressions grouped by where the link sat — in the body, in the first reply, or no link at all. Only the groups your corpus actually contains appear, and the panel stays hidden until there are two of them, because one median compares to nothing.",
+    "Median impressions grouped by where the link sat — in the body, in the first reply, or no link at all. Only the groups your corpus actually contains appear, and the panel stays hidden until there are two of them, because one median compares to nothing. Sample size (n) is shown so a one-post group is not mistaken for a solid median.",
   profileClicks:
     "How many readers opened your profile from this post. Strongest free intent proxy on X: the post made someone want to find out who wrote it. The rate is profile clicks ÷ impressions.",
   bookmarks:
@@ -52,12 +54,25 @@ const TIPS = {
   quoteToRepost:
     "Quotes ÷ reposts. Quotes recruit the quoter's out-of-network audience with commentary; plain reposts do neither to the same degree. High ratio means the post provoked response, not mere agreement.",
   timeOfDay:
-    "Median impressions for posts sent in each UTC hour. Actionable for the scheduler; accumulates automatically as the corpus grows. Underpowered with few posts — treat early numbers as directional.",
+    "Median impressions for posts sent in each hour, shown on a continuous 24-hour local-time axis. Gaps mean that hour has never been tried. Bars with n<3 are dimmed as provisional — a median of one post is that post wearing a statistical label.",
 } as const;
 
 const TIP_W = 256; // px — must match the w-64 on the panel
 const TIP_GAP = 6; // px between the ⓘ and the panel
 const TIP_MARGIN = 8; // px kept clear of the viewport edge
+
+/** Normalize API cohort bucket (new {median,n} or legacy bare number). */
+function cohortBucket(raw: CohortBucket | number | undefined | null): CohortBucket | null {
+  if (raw == null) return null;
+  if (typeof raw === "number") {
+    if (Number.isNaN(raw)) return null;
+    return { median: raw, n: 0 };
+  }
+  const median = typeof raw.median === "number" ? raw.median : Number(raw.median);
+  const n = typeof raw.n === "number" ? raw.n : Number(raw.n);
+  if (Number.isNaN(median)) return null;
+  return { median, n: Number.isNaN(n) ? 0 : n };
+}
 
 /**
  * Hover / focus annotation with a real design (not a bare title= attribute).
@@ -251,19 +266,14 @@ function fmtPct(n: number | null | undefined): string {
   return `${(n * 100).toFixed(1)}%`;
 }
 
-/** UTC hour key `"14"` → `"14:00 UTC"`. */
-function fmtHour(hh: string): string {
-  return `${hh}:00 UTC`;
-}
-
-function fmtPosted(iso: string | null | undefined): string {
-  if (!iso) return "";
+/** Compact local date for the Posted column (sortable; one line). */
+function fmtPostedShort(iso: string | null | undefined): string {
+  if (!iso) return "—";
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
+  if (Number.isNaN(d.getTime())) return "—";
   return d.toLocaleString(undefined, {
     month: "short",
     day: "numeric",
-    year: "numeric",
     hour: "numeric",
     minute: "2-digit",
   });
@@ -280,10 +290,219 @@ function postLabel(p: PerformancePost): string {
   return "Untitled post";
 }
 
+/** Map a UTC hour key ("14") onto the operator's local hour (0–23). */
+function utcHourKeyToLocalHour(hh: string): number {
+  const utcH = Number.parseInt(hh, 10);
+  if (Number.isNaN(utcH)) return 0;
+  // getTimezoneOffset is minutes to add to local to get UTC (EDT → 240).
+  const local = utcH - new Date().getTimezoneOffset() / 60;
+  return ((Math.round(local) % 24) + 24) % 24;
+}
+
+function fmtLocalHourLabel(h: number): string {
+  const d = new Date();
+  d.setHours(h, 0, 0, 0);
+  return d.toLocaleTimeString(undefined, { hour: "numeric" });
+}
+
+type TodBar = { localHour: number; median: number; n: number; utcKeys: string[] };
+
+/**
+ * Continuous 24-hour local-time chart of median impressions by send hour.
+ * Empty hours stay on the axis (the gaps are the signal). n is encoded as bar
+ * opacity + a count label; n<3 reads as provisional.
+ */
+function TimeOfDayChart({
+  buckets,
+}: {
+  buckets: Record<string, CohortBucket | number>;
+}) {
+  const bars: TodBar[] = useMemo(() => {
+    const byLocal = new Map<number, TodBar>();
+    for (let h = 0; h < 24; h++) {
+      byLocal.set(h, { localHour: h, median: 0, n: 0, utcKeys: [] });
+    }
+    for (const [utcKey, raw] of Object.entries(buckets)) {
+      const b = cohortBucket(raw);
+      if (!b) continue;
+      const lh = utcHourKeyToLocalHour(utcKey);
+      const cur = byLocal.get(lh)!;
+      // Same local hour can collapse two UTC keys around DST edges; take the
+      // larger sample, or average medians weighted by n when both contribute.
+      if (cur.n === 0) {
+        cur.median = b.median;
+        cur.n = b.n;
+      } else {
+        const totalN = cur.n + b.n;
+        cur.median = totalN > 0 ? (cur.median * cur.n + b.median * b.n) / totalN : cur.median;
+        cur.n = totalN;
+      }
+      cur.utcKeys.push(utcKey);
+    }
+    return Array.from(byLocal.values());
+  }, [buckets]);
+
+  const maxMed = Math.max(1, ...bars.map((b) => b.median));
+  const chartH = 120;
+  const tz =
+    typeof Intl !== "undefined"
+      ? Intl.DateTimeFormat().resolvedOptions().timeZone
+      : "local";
+
+  return (
+    <div className="time-of-day-chart" data-testid="time-of-day-chart">
+      <div
+        className="flex items-end gap-px sm:gap-0.5 h-[120px]"
+        role="img"
+        aria-label="Median impressions by local send hour across a full day"
+      >
+        {bars.map((b) => {
+          const has = b.n > 0;
+          const hPx = has ? Math.max(4, (b.median / maxMed) * chartH) : 0;
+          const provisional = has && b.n < 3;
+          // Opacity scales with sample size; provisional stays readable but soft.
+          const opacity = !has ? 0 : provisional ? 0.35 + 0.15 * b.n : Math.min(1, 0.55 + 0.15 * Math.min(b.n, 4));
+          const utcHint =
+            b.utcKeys.length > 0
+              ? `UTC ${b.utcKeys.map((k) => `${k}:00`).join(", ")}`
+              : "";
+          const title = has
+            ? `${fmtLocalHourLabel(b.localHour)} local · median ${Math.round(b.median).toLocaleString()} impr. · n=${b.n}${provisional ? " (provisional)" : ""}${utcHint ? ` · ${utcHint}` : ""}`
+            : `${fmtLocalHourLabel(b.localHour)} local · no posts yet`;
+          return (
+            <div
+              key={b.localHour}
+              className="flex-1 min-w-0 flex flex-col items-center justify-end h-full group relative"
+              title={title}
+            >
+              {has ? (
+                <span
+                  className={`mb-0.5 text-[9px] tabular-nums leading-none ${
+                    provisional
+                      ? "text-stone-400 dark:text-zinc-500"
+                      : "text-stone-500 dark:text-zinc-400"
+                  }`}
+                >
+                  n={b.n}
+                </span>
+              ) : (
+                <span className="mb-0.5 text-[9px] leading-none opacity-0">n</span>
+              )}
+              <div
+                className={`w-full max-w-[18px] mx-auto rounded-t-sm ${
+                  provisional
+                    ? "bg-amber-400/80 dark:bg-amber-500/70"
+                    : "bg-amber-500 dark:bg-amber-400"
+                } ${!has ? "bg-stone-100 dark:bg-zinc-800" : ""}`}
+                style={{
+                  height: has ? hPx : 2,
+                  opacity: has ? opacity : 0.35,
+                }}
+              />
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex gap-px sm:gap-0.5 mt-1.5">
+        {bars.map((b) => (
+          <div
+            key={`lbl-${b.localHour}`}
+            className="flex-1 min-w-0 text-center text-[9px] tabular-nums text-stone-400 dark:text-zinc-500 truncate"
+          >
+            {/* Label every 3 hours so the axis stays readable at narrow widths. */}
+            {b.localHour % 3 === 0 ? fmtLocalHourLabel(b.localHour) : ""}
+          </div>
+        ))}
+      </div>
+      <p className="mt-2 text-[10px] text-center text-stone-400 dark:text-zinc-500">
+        {`Local time (${tz}). Hover a bar for UTC. Bars with n<3 are provisional.`}
+      </p>
+    </div>
+  );
+}
+
+type SortKey =
+  | "posted"
+  | "impressions"
+  | "escape_velocity"
+  | "breakout_ratio"
+  | "clicks"
+  | "profile"
+  | "bookmarks"
+  | "reply_rate"
+  | "quote_to_repost";
+
+type SortDir = "asc" | "desc";
+
+function sortValue(p: PerformancePost, key: SortKey): number {
+  switch (key) {
+    case "posted": {
+      const t = p.last_sent_at ? Date.parse(p.last_sent_at) : NaN;
+      return Number.isNaN(t) ? Number.NEGATIVE_INFINITY : t;
+    }
+    case "impressions":
+      return p.latest_impressions ?? Number.NEGATIVE_INFINITY;
+    case "escape_velocity":
+      return p.escape_velocity ?? Number.NEGATIVE_INFINITY;
+    case "breakout_ratio":
+      return p.breakout_ratio ?? Number.NEGATIVE_INFINITY;
+    case "clicks":
+      return p.url_link_clicks ?? Number.NEGATIVE_INFINITY;
+    case "profile":
+      return p.user_profile_clicks ?? Number.NEGATIVE_INFINITY;
+    case "bookmarks":
+      return p.bookmarks ?? Number.NEGATIVE_INFINITY;
+    case "reply_rate":
+      return p.reply_rate ?? Number.NEGATIVE_INFINITY;
+    case "quote_to_repost":
+      return p.quote_to_repost_ratio ?? Number.NEGATIVE_INFINITY;
+  }
+}
+
+/** Sortable th that keeps Tip/icon children — SortHeader only takes string labels. */
+function PerfSortHeader({
+  sortKey,
+  activeKey,
+  dir,
+  onSort,
+  tip,
+  children,
+  className = "",
+}: {
+  sortKey: SortKey;
+  activeKey: SortKey;
+  dir: SortDir;
+  onSort: (k: SortKey) => void;
+  tip?: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  const active = sortKey === activeKey;
+  const btn = (
+    <button
+      type="button"
+      onClick={() => onSort(sortKey)}
+      className={`inline-flex items-center gap-1 hover:text-amber-600 dark:hover:text-amber-400 transition-colors ${
+        active ? "text-amber-600 dark:text-amber-400" : ""
+      }`}
+    >
+      {children}
+      {active && <span aria-hidden>{dir === "desc" ? "▾" : "▴"}</span>}
+    </button>
+  );
+  return (
+    <th className={`px-2 py-2 font-medium whitespace-nowrap ${className}`}>
+      {tip ? <Tip label={tip}>{btn}</Tip> : btn}
+    </th>
+  );
+}
+
 export default function PerformancePage() {
   const [data, setData] = useState<PostPerformanceResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sortCol, setSortCol] = useState<SortKey>("impressions");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -303,14 +522,49 @@ export default function PerformancePage() {
     void refresh();
   }, [refresh]);
 
+  const onSort = useCallback(
+    (col: SortKey) => {
+      if (col === sortCol) {
+        setSortDir((d) => (d === "desc" ? "asc" : "desc"));
+      } else {
+        setSortCol(col);
+        setSortDir("desc");
+      }
+    },
+    [sortCol],
+  );
+
   const posts: PerformancePost[] = data?.posts ?? [];
+  const sortedPosts = useMemo(() => {
+    const copy = posts.slice();
+    const mul = sortDir === "desc" ? -1 : 1;
+    copy.sort((a, b) => {
+      const av = sortValue(a, sortCol);
+      const bv = sortValue(b, sortCol);
+      if (av === bv) {
+        // Stable secondary: impressions desc so ties still rank by reach.
+        return (b.latest_impressions ?? 0) - (a.latest_impressions ?? 0);
+      }
+      return av < bv ? -1 * mul : 1 * mul;
+    });
+    return copy;
+  }, [posts, sortCol, sortDir]);
+
   const corpus = data?.corpus;
   const cohorts = data?.cohorts?.link_placement ?? {};
-  const cohortEntries = Object.entries(cohorts).sort((a, b) => b[1] - a[1]);
+  const cohortEntries = Object.entries(cohorts)
+    .map(([place, raw]) => {
+      const b = cohortBucket(raw);
+      return b ? ([place, b] as const) : null;
+    })
+    .filter((e): e is readonly [string, CohortBucket] => e != null)
+    .sort((a, b) => b[1].median - a[1].median);
   const todCohorts = data?.cohorts?.time_of_day ?? {};
-  // Lexical sort on zero-padded HH keys == chronological.
-  const todEntries = Object.entries(todCohorts).sort((a, b) => a[0].localeCompare(b[0]));
+  const todBucketCount = Object.keys(todCohorts).length;
   const followers = data?.follower_count ?? null;
+
+  // Initial load: full-page quote loader. Refresh keeps the shell visible.
+  const initialLoading = loading && data == null && !error;
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-6 space-y-5">
@@ -334,6 +588,10 @@ export default function PerformancePage() {
         </div>
       )}
 
+      {initialLoading ? (
+        <QuoteScroller heading="Loading performance…" className="py-16" />
+      ) : (
+        <>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <StatCard
           icon={<FileText className="h-4 w-4" />}
@@ -372,30 +630,45 @@ export default function PerformancePage() {
           </div>
           <p className="text-xs text-stone-500 dark:text-zinc-400 mb-3 text-center">
             Median impressions grouped by where the link sat — grounded in your corpus, not
-            third-party claims.
+            third-party claims. n is the sample behind each median.
           </p>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-xs text-stone-400 dark:text-zinc-500 border-b border-stone-100 dark:border-zinc-800">
                   <th className="py-1.5 pr-3 font-medium">Placement</th>
-                  <th className="py-1.5 font-medium">Median impressions</th>
+                  <th className="py-1.5 pr-3 font-medium">Median impressions</th>
+                  <th className="py-1.5 font-medium">n</th>
                 </tr>
               </thead>
               <tbody>
-                {cohortEntries.map(([place, med]) => (
-                  <tr key={place} className="border-b border-stone-50 dark:border-zinc-900 last:border-0">
-                    <td className="py-2 pr-3 capitalize">{place.replace("_", " ")}</td>
-                    <td className="py-2 tabular-nums">{fmtInt(med)}</td>
-                  </tr>
-                ))}
+                {cohortEntries.map(([place, b]) => {
+                  const provisional = b.n > 0 && b.n < 3;
+                  return (
+                    <tr
+                      key={place}
+                      className={`border-b border-stone-50 dark:border-zinc-900 last:border-0 ${
+                        provisional ? "text-stone-400 dark:text-zinc-500" : ""
+                      }`}
+                    >
+                      <td className="py-2 pr-3 capitalize">{place.replace("_", " ")}</td>
+                      <td className="py-2 pr-3 tabular-nums">
+                        {fmtInt(b.median)}
+                        {provisional ? (
+                          <span className="ml-1.5 text-[10px] uppercase tracking-wide">provisional</span>
+                        ) : null}
+                      </td>
+                      <td className="py-2 tabular-nums">{b.n > 0 ? b.n : "—"}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         </div>
       )}
 
-      {todEntries.length > 1 && (
+      {todBucketCount > 0 && (
         <div className={`${card} p-4`}>
           <div className="flex items-center justify-center gap-2 mb-1">
             <Clock className="h-4 w-4 text-amber-600 dark:text-amber-400" aria-hidden />
@@ -404,27 +677,10 @@ export default function PerformancePage() {
             </Tip>
           </div>
           <p className="text-xs text-stone-500 dark:text-zinc-400 mb-3 text-center">
-            Median impressions by the UTC hour the post went out — free, accumulates with every
-            send.
+            Median impressions by the local hour the post went out — continuous 24-hour axis so
+            untried hours stay visible.
           </p>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs text-stone-400 dark:text-zinc-500 border-b border-stone-100 dark:border-zinc-800">
-                  <th className="py-1.5 pr-3 font-medium">Send hour</th>
-                  <th className="py-1.5 font-medium">Median impressions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {todEntries.map(([hour, med]) => (
-                  <tr key={hour} className="border-b border-stone-50 dark:border-zinc-900 last:border-0">
-                    <td className="py-2 pr-3 tabular-nums">{fmtHour(hour)}</td>
-                    <td className="py-2 tabular-nums">{fmtInt(med)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <TimeOfDayChart buckets={todCohorts} />
         </div>
       )}
 
@@ -435,7 +691,7 @@ export default function PerformancePage() {
         {posts.length === 0 ? (
           <div className="px-4 py-10 text-center text-sm text-stone-500 dark:text-zinc-400">
             {loading ? (
-              "Loading…"
+              <QuoteScroller heading="Loading performance…" className="py-6" />
             ) : (
               <>
                 No harvested metrics yet. After a post is sent, snapshots land at t+15m, +1h, +6h,
@@ -448,71 +704,138 @@ export default function PerformancePage() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-sm table-fixed">
+              <colgroup>
+                <col style={{ width: "22%" }} />
+                <col style={{ width: "9%" }} />
+                <col style={{ width: "8%" }} />
+                <col style={{ width: "6%" }} />
+                <col style={{ width: "10%" }} />
+                <col style={{ width: "10%" }} />
+                <col style={{ width: "6%" }} />
+                <col style={{ width: "7%" }} />
+                <col style={{ width: "8%" }} />
+                <col style={{ width: "7%" }} />
+                <col style={{ width: "7%" }} />
+              </colgroup>
               <thead>
                 <tr className="text-left text-xs text-stone-400 dark:text-zinc-500 border-b border-stone-100 dark:border-zinc-800">
-                  <th className="px-4 py-2 font-medium">Post</th>
-                  <th className="px-3 py-2 font-medium">
+                  <th className="px-3 py-2 font-medium">Post</th>
+                  <PerfSortHeader
+                    sortKey="posted"
+                    activeKey={sortCol}
+                    dir={sortDir}
+                    onSort={onSort}
+                    className="text-left"
+                  >
+                    Posted
+                  </PerfSortHeader>
+                  <th className="px-2 py-2 font-medium">
                     <Tip label={TIPS.trend}>
                       <span>Trend</span>
                     </Tip>
                   </th>
-                  <th className="px-3 py-2 font-medium text-right">Impr.</th>
-                  <th className="px-3 py-2 font-medium text-right">
-                    <Tip label={TIPS.escapeVelocity}>
-                      <span className="inline-flex items-center gap-1">
-                        <Rocket className="h-3 w-3" aria-hidden />
-                        Escape velocity
-                      </span>
-                    </Tip>
-                  </th>
-                  <th className="px-3 py-2 font-medium text-right">
-                    <Tip label={TIPS.breakoutRatio}>
-                      <span className="inline-flex items-center gap-1">
-                        <TrendingUp className="h-3 w-3" aria-hidden />
-                        Breakout ratio
-                      </span>
-                    </Tip>
-                  </th>
-                  <th className="px-3 py-2 font-medium">Link</th>
-                  <th className="px-3 py-2 font-medium text-right">Clicks</th>
-                  <th className="px-3 py-2 font-medium text-right">
-                    <Tip label={TIPS.profileClicks}>
-                      <span className="inline-flex items-center gap-1">
-                        <UserRound className="h-3 w-3" aria-hidden />
-                        Profile
-                      </span>
-                    </Tip>
-                  </th>
-                  <th className="px-3 py-2 font-medium text-right">
-                    <Tip label={TIPS.bookmarks}>
-                      <span className="inline-flex items-center gap-1">
-                        <Bookmark className="h-3 w-3" aria-hidden />
-                        Bookmarks
-                      </span>
-                    </Tip>
-                  </th>
-                  <th className="px-3 py-2 font-medium text-right">
-                    <Tip label={TIPS.replyRate}>
-                      <span className="inline-flex items-center gap-1">
-                        <MessageCircle className="h-3 w-3" aria-hidden />
-                        Reply rate
-                      </span>
-                    </Tip>
-                  </th>
-                  <th className="px-3 py-2 font-medium text-right">
-                    <Tip label={TIPS.quoteToRepost}>
-                      <span className="inline-flex items-center gap-1">
-                        <Quote className="h-3 w-3" aria-hidden />
-                        Quote/repost
-                      </span>
-                    </Tip>
-                  </th>
+                  <PerfSortHeader
+                    sortKey="impressions"
+                    activeKey={sortCol}
+                    dir={sortDir}
+                    onSort={onSort}
+                    className="text-right"
+                  >
+                    Impr.
+                  </PerfSortHeader>
+                  <PerfSortHeader
+                    sortKey="escape_velocity"
+                    activeKey={sortCol}
+                    dir={sortDir}
+                    onSort={onSort}
+                    tip={TIPS.escapeVelocity}
+                    className="text-right"
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      <Rocket className="h-3 w-3" aria-hidden />
+                      Escape velocity
+                    </span>
+                  </PerfSortHeader>
+                  <PerfSortHeader
+                    sortKey="breakout_ratio"
+                    activeKey={sortCol}
+                    dir={sortDir}
+                    onSort={onSort}
+                    tip={TIPS.breakoutRatio}
+                    className="text-right"
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      <TrendingUp className="h-3 w-3" aria-hidden />
+                      Breakout ratio
+                    </span>
+                  </PerfSortHeader>
+                  <PerfSortHeader
+                    sortKey="clicks"
+                    activeKey={sortCol}
+                    dir={sortDir}
+                    onSort={onSort}
+                    className="text-right"
+                  >
+                    Clicks
+                  </PerfSortHeader>
+                  <PerfSortHeader
+                    sortKey="profile"
+                    activeKey={sortCol}
+                    dir={sortDir}
+                    onSort={onSort}
+                    tip={TIPS.profileClicks}
+                    className="text-right"
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      <UserRound className="h-3 w-3" aria-hidden />
+                      Profile
+                    </span>
+                  </PerfSortHeader>
+                  <PerfSortHeader
+                    sortKey="bookmarks"
+                    activeKey={sortCol}
+                    dir={sortDir}
+                    onSort={onSort}
+                    tip={TIPS.bookmarks}
+                    className="text-right"
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      <Bookmark className="h-3 w-3" aria-hidden />
+                      Bookmarks
+                    </span>
+                  </PerfSortHeader>
+                  <PerfSortHeader
+                    sortKey="reply_rate"
+                    activeKey={sortCol}
+                    dir={sortDir}
+                    onSort={onSort}
+                    tip={TIPS.replyRate}
+                    className="text-right"
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      <MessageCircle className="h-3 w-3" aria-hidden />
+                      Reply rate
+                    </span>
+                  </PerfSortHeader>
+                  <PerfSortHeader
+                    sortKey="quote_to_repost"
+                    activeKey={sortCol}
+                    dir={sortDir}
+                    onSort={onSort}
+                    tip={TIPS.quoteToRepost}
+                    className="text-right"
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      <Quote className="h-3 w-3" aria-hidden />
+                      Quote/repost
+                    </span>
+                  </PerfSortHeader>
                 </tr>
               </thead>
               <tbody>
-                {posts.map((p) => {
-                  const posted = fmtPosted(p.last_sent_at);
+                {sortedPosts.map((p) => {
+                  const posted = fmtPostedShort(p.last_sent_at);
                   const brSample = data?.corpus?.breakout_sample_size ?? 0;
                   const brMin = data?.corpus?.breakout_min_sample ?? 5;
                   const brThin = p.breakout_ratio == null && brSample < brMin;
@@ -521,7 +844,7 @@ export default function PerformancePage() {
                       key={p.post_id}
                       className="border-b border-stone-50 dark:border-zinc-900 last:border-0 hover:bg-stone-50 dark:hover:bg-zinc-900/60"
                     >
-                      <td className="px-4 py-2.5 max-w-[16rem]">
+                      <td className="px-3 py-2.5">
                         <Link
                           to={`/post/${p.post_id}`}
                           className="block text-sm font-medium text-stone-900 dark:text-zinc-100 hover:text-amber-700 dark:hover:text-amber-400 hover:underline truncate"
@@ -529,20 +852,21 @@ export default function PerformancePage() {
                         >
                           {postLabel(p)}
                         </Link>
-                        {posted ? (
-                          <div className="text-[11px] text-stone-400 dark:text-zinc-500 mt-0.5">
-                            Posted {posted}
-                          </div>
-                        ) : null}
                       </td>
-                      <td className="px-3 py-2.5">
+                      <td
+                        className="px-2 py-2.5 text-[11px] tabular-nums text-stone-500 dark:text-zinc-400 whitespace-nowrap"
+                        title={p.last_sent_at ?? undefined}
+                      >
+                        {posted}
+                      </td>
+                      <td className="px-2 py-2.5">
                         <Sparkline points={p.sparkline ?? []} />
                       </td>
-                      <td className="px-3 py-2.5 text-right tabular-nums">
+                      <td className="px-2 py-2.5 text-right tabular-nums">
                         {fmtInt(p.latest_impressions)}
                       </td>
                       <td
-                        className={`px-3 py-2.5 text-right tabular-nums ${
+                        className={`px-2 py-2.5 text-right tabular-nums ${
                           (p.escape_velocity ?? 0) >= 1.5
                             ? "text-emerald-600 dark:text-emerald-400 font-medium"
                             : ""
@@ -553,7 +877,7 @@ export default function PerformancePage() {
                         </Tip>
                       </td>
                       <td
-                        className={`px-3 py-2.5 text-right tabular-nums ${
+                        className={`px-2 py-2.5 text-right tabular-nums ${
                           (p.breakout_ratio ?? 0) > 1.2
                             ? "text-sky-600 dark:text-sky-400 font-medium"
                             : ""
@@ -569,13 +893,10 @@ export default function PerformancePage() {
                           <span>{fmtRatio(p.breakout_ratio)}</span>
                         </Tip>
                       </td>
-                      <td className="px-3 py-2.5 text-xs capitalize text-stone-500 dark:text-zinc-400">
-                        {(p.link_placement || "—").replace("_", " ")}
-                      </td>
-                      <td className="px-3 py-2.5 text-right tabular-nums text-stone-500 dark:text-zinc-400">
+                      <td className="px-2 py-2.5 text-right tabular-nums text-stone-500 dark:text-zinc-400">
                         {fmtInt(p.url_link_clicks)}
                       </td>
-                      <td className="px-3 py-2.5 text-right tabular-nums">
+                      <td className="px-2 py-2.5 text-right tabular-nums">
                         <Tip label={TIPS.profileClicks}>
                           <span className="inline-flex flex-col items-end leading-tight">
                             <span>{fmtInt(p.user_profile_clicks)}</span>
@@ -585,7 +906,7 @@ export default function PerformancePage() {
                           </span>
                         </Tip>
                       </td>
-                      <td className="px-3 py-2.5 text-right tabular-nums">
+                      <td className="px-2 py-2.5 text-right tabular-nums">
                         <Tip label={TIPS.bookmarks}>
                           <span className="inline-flex flex-col items-end leading-tight">
                             <span>{fmtInt(p.bookmarks)}</span>
@@ -595,12 +916,12 @@ export default function PerformancePage() {
                           </span>
                         </Tip>
                       </td>
-                      <td className="px-3 py-2.5 text-right tabular-nums">
+                      <td className="px-2 py-2.5 text-right tabular-nums">
                         <Tip label={TIPS.replyRate}>
                           <span>{fmtPct(p.reply_rate)}</span>
                         </Tip>
                       </td>
-                      <td className="px-3 py-2.5 text-right tabular-nums">
+                      <td className="px-2 py-2.5 text-right tabular-nums">
                         <Tip label={TIPS.quoteToRepost}>
                           <span>{fmtRatio(p.quote_to_repost_ratio)}</span>
                         </Tip>
@@ -613,6 +934,8 @@ export default function PerformancePage() {
           </div>
         )}
       </div>
+        </>
+      )}
     </div>
   );
 }

@@ -267,9 +267,13 @@ def test_link_placement_cohort_medians():
         {"link_placement": "none", "impressions": 50},
     ]
     cohort = link_placement_cohort(rows)
-    assert cohort["body"] == 150  # median of 100,200
-    assert cohort["first_reply"] == 500
-    assert cohort["none"] == 50
+    # #364 — each bucket carries median + sample size so the FE can dim n<3.
+    assert cohort["body"]["median"] == 150  # median of 100,200
+    assert cohort["body"]["n"] == 2
+    assert cohort["first_reply"]["median"] == 500
+    assert cohort["first_reply"]["n"] == 2
+    assert cohort["none"]["median"] == 50
+    assert cohort["none"]["n"] == 1
 
 
 def test_tier1_engagement_rates_are_pure_ratios():
@@ -313,8 +317,11 @@ def test_time_of_day_cohort_medians_by_send_hour():
     ]
     cohort = time_of_day_cohort(rows)
     # Keys are zero-padded UTC hours so FE sort is lexical == chronological.
-    assert cohort["05"] == 50  # median of 40, 60
-    assert cohort["14"] == 150  # median of 200, 100
+    # #364 — structured {median, n} so charts can encode sample size.
+    assert cohort["05"]["median"] == 50  # median of 40, 60
+    assert cohort["05"]["n"] == 2
+    assert cohort["14"]["median"] == 150  # median of 200, 100
+    assert cohort["14"]["n"] == 2
     assert "not-a-date" not in cohort
 
 
@@ -393,7 +400,8 @@ async def test_compute_post_performance_surfaces_tier1_rates_and_tod_cohort():
     assert row["reply_rate"] == pytest.approx(0.02)  # 4/200
     assert row["quote_to_repost_ratio"] == pytest.approx(0.25)  # 2/8
     # Tier 3: send-hour cohort from last_sent_at + latest impressions.
-    assert out["cohorts"]["time_of_day"]["14"] == 200
+    assert out["cohorts"]["time_of_day"]["14"]["median"] == 200
+    assert out["cohorts"]["time_of_day"]["14"]["n"] == 1
 
 
 def test_performance_page_surfaces_tier1_metric_columns():
@@ -567,6 +575,50 @@ def test_performance_page_source_is_human_legible():
     # Refresh stays on the right of the header row.
     assert "ml-auto" in text
     assert "RefreshButton" in text
+
+
+def test_performance_page_ux_chart_loader_sort_no_link_col():
+    """#364 — ToD chart, quote loader, sortable date column, Link col removed.
+
+    Browser render is human-in-the-loop; this locks the structure decisions so a
+    regression that reverts to a ToD table, plain "Loading…", fixed-order rows,
+    or a per-row Link column fails CI.
+    """
+    from pathlib import Path
+
+    src = (
+        Path(__file__).resolve().parents[1]
+        / "frontend"
+        / "src"
+        / "components"
+        / "PerformancePage.tsx"
+    )
+    text = src.read_text(encoding="utf-8")
+
+    # 1. Time of day is a continuous 24h chart (local), not a sparse UTC table.
+    assert "TimeOfDayChart" in text or "time-of-day-chart" in text
+    assert "fmtHour" not in text  # old "14:00 UTC" table helper
+    assert "local" in text.lower()
+    # Sample count must be visible somehow (n= / sample / provisional).
+    assert "provisional" in text.lower() or 'n=' in text.lower() or "sample" in text.lower()
+
+    # 2. Site-standard quote-rotation loader, not bare "Loading…".
+    assert "QuoteScroller" in text
+    assert '"Loading…"' not in text and "'Loading…'" not in text
+
+    # 3. Sortable Posts-by-reach columns + date as its own column.
+    assert "sortKey" in text or "sortCol" in text
+    assert "Posted" in text  # date column header
+    # Date is a column, not only a subtitle under the title.
+    assert "Posted {posted}" not in text
+
+    # 4. Link placement leaves the row table; aggregate panel stays.
+    # Per-row Link header gone; clicks retained; cohort panel retained.
+    assert ">Link<" not in text and "\nLink\n" not in text
+    assert "link_placement" in text  # still captured / aggregated
+    assert "Link placement and reach" in text
+    assert "Clicks" in text
+    assert "url_link_clicks" in text
 
 
 @pytest.mark.asyncio
