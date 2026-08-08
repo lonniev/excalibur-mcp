@@ -1577,8 +1577,18 @@ export interface PerformancePost {
   latest_likes?: number | null;
   latest_replies?: number | null;
   latest_reposts?: number | null;
+  quotes?: number | null;
+  bookmarks?: number | null;
   url_link_clicks?: number | null;
   user_profile_clicks?: number | null;
+  /** Profile clicks ÷ impressions (Tier 1 free intent proxy). */
+  profile_click_rate?: number | null;
+  /** Bookmarks ÷ impressions. */
+  bookmark_rate?: number | null;
+  /** Replies ÷ impressions, isolated from blended engagement. */
+  reply_rate?: number | null;
+  /** Quotes ÷ reposts. */
+  quote_to_repost_ratio?: number | null;
   escape_velocity?: number | null;
   breakout_ratio?: number | null;
   sparkline?: PerformanceSparkPoint[];
@@ -1593,6 +1603,8 @@ export interface PostPerformanceResult {
     link_placement?: Record<string, number>;
     voice?: Record<string, number>;
     snippet?: Record<string, number>;
+    /** Median impressions by UTC send hour (`"00"`…`"23"`). */
+    time_of_day?: Record<string, number>;
   };
   corpus?: {
     snapshot_count?: number;

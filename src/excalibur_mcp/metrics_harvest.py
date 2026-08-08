@@ -335,6 +335,83 @@ def link_placement_cohort(rows: list[dict[str, Any]]) -> dict[str, float]:
     }
 
 
+def _as_nonneg_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return None
+    if n < 0:
+        return None
+    return n
+
+
+def _rate(numerator: Any, denominator: Any) -> float | None:
+    """num ÷ den when both are present and den > 0; else None (never invent 0)."""
+    num = _as_nonneg_float(numerator)
+    den = _as_nonneg_float(denominator)
+    if num is None or den is None or den <= 0:
+        return None
+    return num / den
+
+
+def profile_click_rate(
+    user_profile_clicks: int | float | None, impressions: int | float | None
+) -> float | None:
+    """Profile clicks ÷ impressions — strongest free intent proxy on X."""
+    return _rate(user_profile_clicks, impressions)
+
+
+def bookmark_rate(
+    bookmarks: int | float | None, impressions: int | float | None
+) -> float | None:
+    """Bookmarks ÷ impressions — save-for-later intent / evergreen separator."""
+    return _rate(bookmarks, impressions)
+
+
+def reply_rate(
+    replies: int | float | None, impressions: int | float | None
+) -> float | None:
+    """Replies ÷ impressions — isolated from the blended engagement mix."""
+    return _rate(replies, impressions)
+
+
+def quote_to_repost_ratio(
+    quotes: int | float | None, reposts: int | float | None
+) -> float | None:
+    """Quotes ÷ reposts — commentary/out-of-network vs mere agreement."""
+    return _rate(quotes, reposts)
+
+
+def time_of_day_cohort(rows: list[dict[str, Any]]) -> dict[str, float]:
+    """Median impressions by UTC send hour (``HH`` keys) over the corpus.
+
+    Each row needs ``last_sent_at`` (ISO) and ``impressions``. Bad timestamps
+    and missing impressions are skipped — underpowered cohorts still accumulate.
+    """
+    buckets: dict[str, list[float]] = {}
+    for r in rows:
+        sent = r.get("last_sent_at")
+        imp = r.get("impressions")
+        if not sent or imp is None:
+            continue
+        try:
+            val = float(imp)
+        except (TypeError, ValueError):
+            continue
+        try:
+            raw = str(sent).replace("Z", "+00:00")
+            dt = datetime.fromisoformat(raw)
+        except (TypeError, ValueError):
+            continue
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        hour = dt.astimezone(timezone.utc).strftime("%H")
+        buckets.setdefault(hour, []).append(val)
+    return {k: float(statistics.median(v)) for k, v in buckets.items() if v}
+
+
 def _median(values: list[int | float]) -> float | None:
     if not values:
         return None
@@ -352,7 +429,7 @@ async def compute_post_performance(npub: str, *, follower_count: int | None = No
         return {
             "npub": npub,
             "posts": [],
-            "cohorts": {"link_placement": {}},
+            "cohorts": {"link_placement": {}, "time_of_day": {}},
             "corpus": {"snapshot_count": 0, "post_count": 0},
         }
 
@@ -423,6 +500,11 @@ async def compute_post_performance(npub: str, *, follower_count: int | None = No
             for s in series_sorted
         ]
         ident = identity.get(post_id) or {}
+        latest_replies = latest.get("replies")
+        latest_reposts = latest.get("reposts")
+        latest_quotes = latest.get("quotes")
+        latest_bookmarks = latest.get("bookmarks")
+        latest_profile_clicks = latest.get("user_profile_clicks")
         posts_out.append(
             {
                 "post_id": post_id,
@@ -435,10 +517,16 @@ async def compute_post_performance(npub: str, *, follower_count: int | None = No
                 "snippet_ids": latest.get("snippet_ids") or [],
                 "latest_impressions": latest_imp,
                 "latest_likes": latest.get("likes"),
-                "latest_replies": latest.get("replies"),
-                "latest_reposts": latest.get("reposts"),
+                "latest_replies": latest_replies,
+                "latest_reposts": latest_reposts,
+                "quotes": latest_quotes,
+                "bookmarks": latest_bookmarks,
                 "url_link_clicks": latest.get("url_link_clicks"),
-                "user_profile_clicks": latest.get("user_profile_clicks"),
+                "user_profile_clicks": latest_profile_clicks,
+                "profile_click_rate": profile_click_rate(latest_profile_clicks, latest_imp),
+                "bookmark_rate": bookmark_rate(latest_bookmarks, latest_imp),
+                "reply_rate": reply_rate(latest_replies, latest_imp),
+                "quote_to_repost_ratio": quote_to_repost_ratio(latest_quotes, latest_reposts),
                 "escape_velocity": escape_velocity(imp_t15, rolling_med_t15),
                 "breakout_ratio": breakout_ratio(final_imp, rolling_med_final),
                 "sparkline": sparkline,
@@ -477,6 +565,16 @@ async def compute_post_performance(npub: str, *, follower_count: int | None = No
             for sid in sids:
                 snippet_buckets.setdefault(str(sid), []).append(val)
 
+    # Time-of-day cohort needs send time from posts + latest impressions.
+    tod_rows = []
+    for p in posts_out:
+        tod_rows.append(
+            {
+                "last_sent_at": p.get("last_sent_at"),
+                "impressions": p.get("latest_impressions"),
+            }
+        )
+
     return {
         "npub": npub,
         "follower_count": follower_count,
@@ -485,6 +583,7 @@ async def compute_post_performance(npub: str, *, follower_count: int | None = No
             "link_placement": link_placement_cohort(latest_rows),
             "voice": {k: float(statistics.median(v)) for k, v in voice_buckets.items() if v},
             "snippet": {k: float(statistics.median(v)) for k, v in snippet_buckets.items() if v},
+            "time_of_day": time_of_day_cohort(tod_rows),
         },
         "corpus": {
             "snapshot_count": len(snaps),

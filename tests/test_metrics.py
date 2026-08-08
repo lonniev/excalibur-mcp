@@ -272,6 +272,157 @@ def test_link_placement_cohort_medians():
     assert cohort["none"] == 50
 
 
+def test_tier1_engagement_rates_are_pure_ratios():
+    """#361 Tier 1 — profile/bookmark/reply rates and quote-to-repost from payload fields.
+
+    These are already harvested (bookmarks, user_profile_clicks, replies, quotes,
+    reposts, impressions) but were never turned into rates the Performance view
+    can rank on. Pure helpers so a zero denominator stays None, not ZeroDivision.
+    """
+    from excalibur_mcp.metrics_harvest import (
+        bookmark_rate,
+        profile_click_rate,
+        quote_to_repost_ratio,
+        reply_rate,
+    )
+
+    assert profile_click_rate(user_profile_clicks=5, impressions=100) == pytest.approx(0.05)
+    assert bookmark_rate(bookmarks=2, impressions=100) == pytest.approx(0.02)
+    assert reply_rate(replies=4, impressions=200) == pytest.approx(0.02)
+    assert quote_to_repost_ratio(quotes=3, reposts=6) == pytest.approx(0.5)
+
+    # Zero / missing denominators must not invent a rate.
+    assert profile_click_rate(user_profile_clicks=1, impressions=0) is None
+    assert bookmark_rate(bookmarks=1, impressions=None) is None
+    assert reply_rate(replies=None, impressions=100) is None
+    assert quote_to_repost_ratio(quotes=2, reposts=0) is None
+    assert quote_to_repost_ratio(quotes=None, reposts=4) is None
+
+
+def test_time_of_day_cohort_medians_by_send_hour():
+    """#361 Tier 3 — median impressions bucketed by hour-of-day the post went out."""
+    from excalibur_mcp.metrics_harvest import time_of_day_cohort
+
+    rows = [
+        {"last_sent_at": "2026-08-01T05:10:00+00:00", "impressions": 40},
+        {"last_sent_at": "2026-08-02T05:40:00+00:00", "impressions": 60},
+        {"last_sent_at": "2026-08-01T14:00:00+00:00", "impressions": 200},
+        {"last_sent_at": "2026-08-03T14:30:00+00:00", "impressions": 100},
+        {"last_sent_at": "not-a-date", "impressions": 999},  # ignored
+        {"last_sent_at": None, "impressions": 1},  # ignored
+    ]
+    cohort = time_of_day_cohort(rows)
+    # Keys are zero-padded UTC hours so FE sort is lexical == chronological.
+    assert cohort["05"] == 50  # median of 40, 60
+    assert cohort["14"] == 150  # median of 200, 100
+    assert "not-a-date" not in cohort
+
+
+@pytest.mark.asyncio
+async def test_compute_post_performance_surfaces_tier1_rates_and_tod_cohort():
+    """#361 — performance payload carries Tier 1 rates + time-of-day cohort.
+
+    Before: bookmarks/quotes omitted from posts_out; no rates; no hour cohort.
+    After: latest counts + derived rates on each row; cohorts.time_of_day filled.
+    """
+    from excalibur_mcp import metrics_harvest
+    from excalibur_mcp.db import posts as posts_db
+
+    snaps = [
+        {
+            "post_id": PID,
+            "tweet_id": TWEET_ID,
+            "cadence_key": "15m",
+            "t_offset": 900,
+            "impressions": 100,
+            "likes": 4,
+            "replies": 2,
+            "reposts": 4,
+            "quotes": 1,
+            "bookmarks": 5,
+            "url_link_clicks": 3,
+            "user_profile_clicks": 10,
+            "link_placement": "body",
+            "snippet_ids": [],
+            "voice_id": NPUB,
+            "captured_at": "2026-08-01T12:15:00+00:00",
+        },
+        {
+            "post_id": PID,
+            "tweet_id": TWEET_ID,
+            "cadence_key": "1h",
+            "t_offset": 3600,
+            "impressions": 200,
+            "likes": 10,
+            "replies": 4,
+            "reposts": 8,
+            "quotes": 2,
+            "bookmarks": 10,
+            "url_link_clicks": 7,
+            "user_profile_clicks": 20,
+            "link_placement": "body",
+            "snippet_ids": [],
+            "voice_id": NPUB,
+            "captured_at": "2026-08-01T13:00:00+00:00",
+        },
+    ]
+    identity = {
+        PID: {
+            "title": "Morning dispatch",
+            "excerpt": "The market opened soft…",
+            "last_sent_at": "2026-08-01T14:05:00+00:00",
+            "publish_at": "2026-08-01T14:05:00+00:00",
+        }
+    }
+
+    with (
+        patch.object(metrics_harvest.metrics_db, "list_all_for_npub", AsyncMock(return_value=snaps)),
+        patch.object(posts_db, "summaries_for_ids", AsyncMock(return_value=identity)),
+    ):
+        out = await metrics_harvest.compute_post_performance(NPUB, follower_count=1000)
+
+    assert len(out["posts"]) == 1
+    row = out["posts"][0]
+    # Latest counts that were already in the snapshot but not on the row.
+    assert row["bookmarks"] == 10
+    assert row["quotes"] == 2
+    assert row["user_profile_clicks"] == 20
+    # Rates use latest snapshot over latest impressions.
+    assert row["profile_click_rate"] == pytest.approx(0.10)  # 20/200
+    assert row["bookmark_rate"] == pytest.approx(0.05)  # 10/200
+    assert row["reply_rate"] == pytest.approx(0.02)  # 4/200
+    assert row["quote_to_repost_ratio"] == pytest.approx(0.25)  # 2/8
+    # Tier 3: send-hour cohort from last_sent_at + latest impressions.
+    assert out["cohorts"]["time_of_day"]["14"] == 200
+
+
+def test_performance_page_surfaces_tier1_metric_columns():
+    """#361 static contract: Performance FE shows Tier 1 free metrics, not only clicks."""
+    from pathlib import Path
+
+    src = (
+        Path(__file__).resolve().parents[1]
+        / "frontend"
+        / "src"
+        / "components"
+        / "PerformancePage.tsx"
+    )
+    text = src.read_text(encoding="utf-8")
+
+    # Columns / labels the backlog asked to surface.
+    assert "Profile" in text  # profile clicks column
+    assert "Bookmark" in text
+    assert "Reply rate" in text or "reply_rate" in text
+    assert "Quote" in text  # quote-to-repost
+    # Derived rates come from the API payload, not recomputed ad-hoc in JSX.
+    assert "profile_click_rate" in text
+    assert "bookmark_rate" in text
+    assert "reply_rate" in text
+    assert "quote_to_repost_ratio" in text
+    # Time-of-day cohort panel (Tier 3, free).
+    assert "time_of_day" in text or "Time of day" in text
+
+
 @pytest.mark.asyncio
 async def test_compute_post_performance_includes_title_and_posted_date():
     """#327 — performance rows carry human identity, not just the post UUID.
