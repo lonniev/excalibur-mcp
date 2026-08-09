@@ -83,6 +83,14 @@ describe("composePatronRows", () => {
     );
   });
 
+  it("blocks a linked X account when the access token is expired (issue #369)", () => {
+    // The field-report case: linkage exists (kind connected) but token is dead.
+    const row = composeOauthRow({ kind: "connected", expiresInSec: 0 }, opts);
+    assert.equal(row.state, "blocked");
+    assert.match(row.detail, /expired/i);
+    assert.match(row.detail, /reconnect/i);
+  });
+
   it("blocks an expired dm proof and keeps session_nsec ok", () => {
     assert.equal(
       composeProofRow({ kind: "dm_proof", status: "expired", expiresInSec: 0 }, opts).state,
