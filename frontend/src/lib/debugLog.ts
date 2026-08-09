@@ -16,7 +16,23 @@ const _listeners = new Set<() => void>();
 const MAX = 60;
 
 export function debugPush(type: DebugEntry["type"], message: string): void {
-  _log.unshift({ ts: new Date().toLocaleTimeString(), type, message });
+  // Prefer the patron display zone (#367); fall back to browser local on failure.
+  let ts: string;
+  try {
+    // Lazy import path avoided — keep this module free of React. Read the same
+    // storage key theme/timezone use so the stamp matches the rest of the UI.
+    const pref =
+      (typeof window !== "undefined" && window.localStorage.getItem("excalibur:timezone")) ||
+      "auto";
+    const zone =
+      pref === "auto"
+        ? Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
+        : pref;
+    ts = new Date().toLocaleTimeString(undefined, { timeZone: zone });
+  } catch {
+    ts = new Date().toLocaleTimeString();
+  }
+  _log.unshift({ ts, type, message });
   if (_log.length > MAX) _log.length = MAX;
   _listeners.forEach((fn) => fn());
 }

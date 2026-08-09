@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { useSession } from "../App";
 import { useTheme, type Theme } from "../lib/theme";
+import { TIMEZONE_OPTIONS } from "../lib/timezone";
+import { useTimezone } from "../lib/useTimezone";
 import { getAccountStatement, type AccountStatementResult } from "../lib/mcp";
 import NostrProfilePanel from "./NostrProfilePanel";
 import XConnectPanel from "./XConnectPanel";
@@ -19,6 +21,7 @@ const THEMES: { value: Theme; label: string; hint: string }[] = [
 export default function ProfilePage() {
   const { npub, status, logOut } = useSession();
   const [theme, setTheme] = useTheme();
+  const [tzPref, tzResolved, setTzPref] = useTimezone();
   const [stmt, setStmt] = useState<AccountStatementResult | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -80,6 +83,36 @@ export default function ProfilePage() {
             </button>
           ))}
         </div>
+      </div>
+
+      {/* Display timezone — IANA zone for every clock on Posts/Performance/Scheduler/Wallet. */}
+      <div className={`${card} p-5`}>
+        <div className="text-sm font-medium mb-1">Display timezone</div>
+        <p className="text-xs text-stone-500 dark:text-zinc-400 mb-3">
+          All times on Posts, Performance, Scheduler, and Wallet use this zone. Storage stays UTC;
+          only display and filter edges convert. Saved on this device.
+        </p>
+        <label className="block text-xs text-stone-500 dark:text-zinc-400 mb-1.5" htmlFor="tz-select">
+          Zone
+        </label>
+        <select
+          id="tz-select"
+          value={tzPref}
+          onChange={(e) => setTzPref(e.target.value)}
+          className="w-full rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm focus:outline-hidden focus:border-amber-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200"
+        >
+          <option value="auto">Auto (browser) — {tzResolved}</option>
+          {TIMEZONE_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label} — {o.value}
+            </option>
+          ))}
+        </select>
+        <p className="mt-2 text-[11px] text-stone-400 dark:text-zinc-500">
+          {tzPref === "auto"
+            ? `Currently resolving to ${tzResolved}.`
+            : `Using ${tzResolved}. Historical posts keep the offset that applied when they were sent.`}
+        </p>
       </div>
 
       {/* Identity */}

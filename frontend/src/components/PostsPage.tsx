@@ -7,6 +7,8 @@ import {
   type PostSummary, type Recurrence, type SortDir, type XConnectionState,
 } from "../lib/mcp";
 import { uid } from "../lib/editorDoc";
+import { formatDateTime, localDateFilterBounds } from "../lib/timezone";
+import { useTimezone } from "../lib/useTimezone";
 import TweetPreviewModal from "./TweetPreviewModal";
 import { PageControls, SortHeader, TableShell } from "./PagedTable";
 import TableFilter from "./TableFilter";
@@ -258,6 +260,7 @@ export default function PostsPage() {
   const [dateField, setDateField] = useState("created");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [, timeZone] = useTimezone();
   const [loading, setLoading] = useState(false);
   // True once the first fetch has completed — the search/date filter controls
   // only appear with the table after loading, not before it (they aren't needed
@@ -295,9 +298,15 @@ export default function PostsPage() {
     setLoading(true);
     setError(null);
     try {
+      // #367 — wall YYYY-MM-DD → patron-local midnight ISO so the day edge is
+      // the patron's, not UTC's. Backend accepts both bare dates and instants.
+      const bounds = localDateFilterBounds(dateFrom, dateTo, timeZone);
       const r = await listPosts({
         status, sortCol, sortDir, page, pageSize: PAGE_SIZE,
-        search, dateFrom, dateTo, dateField,
+        search,
+        dateFrom: bounds.dateFrom,
+        dateTo: bounds.dateTo,
+        dateField,
         templateId: templateFilter ?? undefined,
       });
       if (r.error) setError(r.error);
@@ -312,7 +321,7 @@ export default function PostsPage() {
     // Best-effort and non-blocking: a row's OAuth affordance is suppressed only
     // on a definite "connected", so a failure here just leaves the old behaviour.
     void getXConnection().then(setXConn).catch(() => setXConn(null));
-  }, [selected, sortCol, sortDir, page, search, dateFrom, dateTo, dateField, templateFilter]);
+  }, [selected, sortCol, sortDir, page, search, dateFrom, dateTo, dateField, templateFilter, timeZone]);
 
   useEffect(() => {
     refresh();
@@ -668,7 +677,7 @@ export default function PostsPage() {
                             ? "text-stone-500 dark:text-zinc-400"
                             : "text-rose-600 dark:text-rose-400"
                         }`}
-                        title={`Scheduler tried to post${p.last_attempt_at ? ` at ${fmt(p.last_attempt_at)}` : ""} but held it back: ${p.last_attempt_reason}.${p.last_attempt_detail ? `\n\n${p.last_attempt_detail}` : ""}\n\n${oauthResolved ? "X has been reconnected since, so this cause is resolved. It will retry on the next tick." : "It will retry on the next tick."}`}
+                        title={`Scheduler tried to post${p.last_attempt_at ? ` at ${fmt(p.last_attempt_at, timeZone)}` : ""} but held it back: ${p.last_attempt_reason}.${p.last_attempt_detail ? `\n\n${p.last_attempt_detail}` : ""}\n\n${oauthResolved ? "X has been reconnected since, so this cause is resolved. It will retry on the next tick." : "It will retry on the next tick."}`}
                       >
                         {oauthResolved
                           ? `↺ last attempt: ${attemptLabel(p.last_attempt_reason)}`
@@ -678,7 +687,7 @@ export default function PostsPage() {
                     {p.status === "paused" && p.last_attempt_reason && (
                       <span
                         className="mt-1 flex items-center gap-1 text-[11px] text-rose-600 dark:text-rose-400"
-                        title={`Scheduler paused this post${p.last_attempt_at ? ` at ${fmt(p.last_attempt_at)}` : ""}: ${p.last_attempt_reason}.${p.last_attempt_detail ? `\n\n${p.last_attempt_detail}` : ""}\n\n${UNCONFIRMED_SEND.includes(p.last_attempt_reason) ? "The publisher never confirmed, so this post MAY already be live on X. Check your timeline first — resuming a post that did go out publishes it twice." : "Fix the cause at the provider, then Resume to reschedule it."}`}
+                        title={`Scheduler paused this post${p.last_attempt_at ? ` at ${fmt(p.last_attempt_at, timeZone)}` : ""}: ${p.last_attempt_reason}.${p.last_attempt_detail ? `\n\n${p.last_attempt_detail}` : ""}\n\n${UNCONFIRMED_SEND.includes(p.last_attempt_reason) ? "The publisher never confirmed, so this post MAY already be live on X. Check your timeline first — resuming a post that did go out publishes it twice." : "Fix the cause at the provider, then Resume to reschedule it."}`}
                       >
                         ⏸ {attemptLabel(p.last_attempt_reason)}
                       </span>
@@ -720,7 +729,7 @@ export default function PostsPage() {
                     {p.status === "sending" && (
                       <span
                         className="mt-1 flex items-center gap-1 text-[11px] text-sky-600 dark:text-sky-400"
-                        title={`The scheduler claimed this post${p.last_attempt_at ? ` at ${fmt(p.last_attempt_at)}` : ""} and is posting it. If it lingers here, use "to draft" to rescue it.`}
+                        title={`The scheduler claimed this post${p.last_attempt_at ? ` at ${fmt(p.last_attempt_at, timeZone)}` : ""} and is posting it. If it lingers here, use "to draft" to rescue it.`}
                       >
                         ⟳ working…
                       </span>
@@ -767,10 +776,10 @@ export default function PostsPage() {
                     )}
                   </td>
                   <td className="px-3 py-2.5 align-top text-xs text-stone-400 dark:text-zinc-500 whitespace-nowrap">
-                    {p.publish_at ? fmt(p.publish_at) : "—"}
+                    {p.publish_at ? fmt(p.publish_at, timeZone) : "—"}
                   </td>
                   <td className="px-3 py-2.5 align-top text-xs text-stone-400 dark:text-zinc-500 whitespace-nowrap">
-                    {p.updated_at ? fmt(p.updated_at) : "—"}
+                    {p.updated_at ? fmt(p.updated_at, timeZone) : "—"}
                   </td>
                   <td className="px-3 py-2.5 align-top text-xs whitespace-nowrap">
                     {p.last_sent_at ? (
@@ -778,16 +787,16 @@ export default function PostsPage() {
                         <button
                           onClick={(e) => { e.stopPropagation(); e.preventDefault(); setPreview({ url: p.tweet_url!, text: p.excerpt || "" }); }}
                           className="inline-flex items-center gap-1 text-green-600 hover:underline dark:text-green-400"
-                          title={`Peek at the posted tweet (${fmt(p.last_sent_at)})`}
+                          title={`Peek at the posted tweet (${fmt(p.last_sent_at, timeZone)})`}
                         >
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
                             <path d={ICONS.visibility} />
                           </svg>
-                          {fmt(p.last_sent_at)}
+                          {fmt(p.last_sent_at, timeZone)}
                         </button>
                       ) : (
-                        <span className="inline-flex items-center gap-1 text-green-600 dark:text-green-400" title={`Posted to X at ${fmt(p.last_sent_at)}`}>
-                          ✓ {fmt(p.last_sent_at)}
+                        <span className="inline-flex items-center gap-1 text-green-600 dark:text-green-400" title={`Posted to X at ${fmt(p.last_sent_at, timeZone)}`}>
+                          ✓ {fmt(p.last_sent_at, timeZone)}
                         </span>
                       )
                     ) : (
@@ -858,7 +867,6 @@ export default function PostsPage() {
   );
 }
 
-function fmt(iso: string): string {
-  const d = new Date(iso);
-  return isNaN(d.getTime()) ? iso : d.toLocaleString();
+function fmt(iso: string, timeZone: string): string {
+  return formatDateTime(iso, timeZone);
 }

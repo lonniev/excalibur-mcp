@@ -12,6 +12,8 @@
 
 import type { StatusLevel, StatusRow } from "../lib/fundingStatus";
 import { worstState } from "../lib/fundingStatus";
+import { formatDateTime } from "../lib/timezone";
+import { useTimezone } from "../lib/useTimezone";
 
 const card = "rounded-xl border border-stone-200 dark:border-zinc-800 bg-white dark:bg-zinc-900";
 
@@ -36,12 +38,6 @@ const STATE_STYLES: Record<
   },
 };
 
-function fmtChecked(iso: string): string {
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return iso;
-  return new Date(t).toLocaleString();
-}
-
 export default function StatusSurface({
   title,
   subtitle,
@@ -59,6 +55,7 @@ export default function StatusSurface({
   emptyHint?: string;
   onRefresh?: () => void;
 }) {
+  const [, timeZone] = useTimezone();
   const overall = rows.length ? worstState(rows) : "ok";
   const overallStyle = STATE_STYLES[overall];
 
@@ -129,7 +126,7 @@ export default function StatusSurface({
                     {r.detail}
                   </p>
                   <p className="mt-0.5 text-[10px] tabular-nums text-stone-400 dark:text-zinc-600">
-                    checked {fmtChecked(r.checked_at)}
+                    checked {formatDateTime(r.checked_at, timeZone)}
                   </p>
                 </div>
               </li>

@@ -21,6 +21,12 @@ import {
   type PerformancePost,
   type PostPerformanceResult,
 } from "../lib/mcp";
+import {
+  formatHourLabel,
+  formatPostedShort,
+  timeOfDayCohortInZone,
+} from "../lib/timezone";
+import { useTimezone } from "../lib/useTimezone";
 import QuoteScroller from "./QuoteScroller";
 import RefreshButton from "./RefreshButton";
 
@@ -266,19 +272,6 @@ function fmtPct(n: number | null | undefined): string {
   return `${(n * 100).toFixed(1)}%`;
 }
 
-/** Compact local date for the Posted column (sortable; one line). */
-function fmtPostedShort(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
-
 /** Prefer title, then opening words; never lead with a hash. */
 function postLabel(p: PerformancePost): string {
   const title = (p.title || "").trim();
@@ -290,64 +283,42 @@ function postLabel(p: PerformancePost): string {
   return "Untitled post";
 }
 
-/** Map a UTC hour key ("14") onto the operator's local hour (0–23). */
-function utcHourKeyToLocalHour(hh: string): number {
-  const utcH = Number.parseInt(hh, 10);
-  if (Number.isNaN(utcH)) return 0;
-  // getTimezoneOffset is minutes to add to local to get UTC (EDT → 240).
-  const local = utcH - new Date().getTimezoneOffset() / 60;
-  return ((Math.round(local) % 24) + 24) % 24;
-}
-
-function fmtLocalHourLabel(h: number): string {
-  const d = new Date();
-  d.setHours(h, 0, 0, 0);
-  return d.toLocaleTimeString(undefined, { hour: "numeric" });
-}
-
-type TodBar = { localHour: number; median: number; n: number; utcKeys: string[] };
+type TodBar = { localHour: number; median: number; n: number };
 
 /**
- * Continuous 24-hour local-time chart of median impressions by send hour.
+ * Continuous 24-hour chart of median impressions by send hour in the patron's
+ * IANA zone. Buckets are computed from post instants (#367) — never by
+ * relabeling UTC hour keys (wrong near DST edges and the date line).
  * Empty hours stay on the axis (the gaps are the signal). n is encoded as bar
  * opacity + a count label; n<3 reads as provisional.
  */
 function TimeOfDayChart({
   buckets,
+  timeZone,
 }: {
   buckets: Record<string, CohortBucket | number>;
+  timeZone: string;
 }) {
   const bars: TodBar[] = useMemo(() => {
     const byLocal = new Map<number, TodBar>();
     for (let h = 0; h < 24; h++) {
-      byLocal.set(h, { localHour: h, median: 0, n: 0, utcKeys: [] });
+      byLocal.set(h, { localHour: h, median: 0, n: 0 });
     }
-    for (const [utcKey, raw] of Object.entries(buckets)) {
+    // Keys are already local-hour ("00"…"23") when computed via timeOfDayCohortInZone.
+    for (const [key, raw] of Object.entries(buckets)) {
       const b = cohortBucket(raw);
       if (!b) continue;
-      const lh = utcHourKeyToLocalHour(utcKey);
+      const lh = Number.parseInt(key, 10);
+      if (Number.isNaN(lh) || lh < 0 || lh > 23) continue;
       const cur = byLocal.get(lh)!;
-      // Same local hour can collapse two UTC keys around DST edges; take the
-      // larger sample, or average medians weighted by n when both contribute.
-      if (cur.n === 0) {
-        cur.median = b.median;
-        cur.n = b.n;
-      } else {
-        const totalN = cur.n + b.n;
-        cur.median = totalN > 0 ? (cur.median * cur.n + b.median * b.n) / totalN : cur.median;
-        cur.n = totalN;
-      }
-      cur.utcKeys.push(utcKey);
+      cur.median = b.median;
+      cur.n = b.n;
     }
     return Array.from(byLocal.values());
   }, [buckets]);
 
   const maxMed = Math.max(1, ...bars.map((b) => b.median));
   const chartH = 120;
-  const tz =
-    typeof Intl !== "undefined"
-      ? Intl.DateTimeFormat().resolvedOptions().timeZone
-      : "local";
 
   return (
     <div className="time-of-day-chart" data-testid="time-of-day-chart">
@@ -362,13 +333,10 @@ function TimeOfDayChart({
           const provisional = has && b.n < 3;
           // Opacity scales with sample size; provisional stays readable but soft.
           const opacity = !has ? 0 : provisional ? 0.35 + 0.15 * b.n : Math.min(1, 0.55 + 0.15 * Math.min(b.n, 4));
-          const utcHint =
-            b.utcKeys.length > 0
-              ? `UTC ${b.utcKeys.map((k) => `${k}:00`).join(", ")}`
-              : "";
+          const label = formatHourLabel(b.localHour, timeZone);
           const title = has
-            ? `${fmtLocalHourLabel(b.localHour)} local · median ${Math.round(b.median).toLocaleString()} impr. · n=${b.n}${provisional ? " (provisional)" : ""}${utcHint ? ` · ${utcHint}` : ""}`
-            : `${fmtLocalHourLabel(b.localHour)} local · no posts yet`;
+            ? `${label} · median ${Math.round(b.median).toLocaleString()} impr. · n=${b.n}${provisional ? " (provisional)" : ""}`
+            : `${label} · no posts yet`;
           return (
             <div
               key={b.localHour}
@@ -410,12 +378,12 @@ function TimeOfDayChart({
             className="flex-1 min-w-0 text-center text-[9px] tabular-nums text-stone-400 dark:text-zinc-500 truncate"
           >
             {/* Label every 3 hours so the axis stays readable at narrow widths. */}
-            {b.localHour % 3 === 0 ? fmtLocalHourLabel(b.localHour) : ""}
+            {b.localHour % 3 === 0 ? formatHourLabel(b.localHour, timeZone) : ""}
           </div>
         ))}
       </div>
       <p className="mt-2 text-[10px] text-center text-stone-400 dark:text-zinc-500">
-        {`Local time (${tz}). Hover a bar for UTC. Bars with n<3 are provisional.`}
+        {`Local time (${timeZone}). Bars with n<3 are provisional.`}
       </p>
     </div>
   );
@@ -499,6 +467,7 @@ function PerfSortHeader({
 
 export default function PerformancePage() {
   const [data, setData] = useState<PostPerformanceResult | null>(null);
+  const [, timeZone] = useTimezone();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sortCol, setSortCol] = useState<SortKey>("impressions");
@@ -559,7 +528,12 @@ export default function PerformancePage() {
     })
     .filter((e): e is readonly [string, CohortBucket] => e != null)
     .sort((a, b) => b[1].median - a[1].median);
-  const todCohorts = data?.cohorts?.time_of_day ?? {};
+  // #367 — recompute ToD in the patron zone from post instants. The API still
+  // returns UTC-hour cohorts for other consumers; the chart must not relabel them.
+  const todCohorts = useMemo(
+    () => timeOfDayCohortInZone(posts, timeZone),
+    [posts, timeZone],
+  );
   const todBucketCount = Object.keys(todCohorts).length;
   const followers = data?.follower_count ?? null;
 
@@ -680,7 +654,7 @@ export default function PerformancePage() {
             Median impressions by the local hour the post went out — continuous 24-hour axis so
             untried hours stay visible.
           </p>
-          <TimeOfDayChart buckets={todCohorts} />
+          <TimeOfDayChart buckets={todCohorts} timeZone={timeZone} />
         </div>
       )}
 
@@ -835,7 +809,7 @@ export default function PerformancePage() {
               </thead>
               <tbody>
                 {sortedPosts.map((p) => {
-                  const posted = fmtPostedShort(p.last_sent_at);
+                  const posted = formatPostedShort(p.last_sent_at, timeZone);
                   const brSample = data?.corpus?.breakout_sample_size ?? 0;
                   const brMin = data?.corpus?.breakout_min_sample ?? 5;
                   const brThin = p.breakout_ratio == null && brSample < brMin;

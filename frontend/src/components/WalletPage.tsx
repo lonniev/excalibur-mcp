@@ -6,6 +6,8 @@ import {
   type CheckBalanceResult,
   type PurchaseCreditsResult,
 } from "../lib/mcp";
+import { formatDate, formatDateTime } from "../lib/timezone";
+import { useTimezone } from "../lib/useTimezone";
 import { PatronFundingStatus, OperatorFundingStatus } from "./FundingStatusPanels";
 
 const card = "rounded-xl border border-stone-200 dark:border-zinc-800 bg-white dark:bg-zinc-900";
@@ -14,6 +16,7 @@ const primary =
 const PRESETS = [1000, 5000, 25000];
 
 export default function WalletPage() {
+  const [, timeZone] = useTimezone();
   const [bal, setBal] = useState<CheckBalanceResult | null>(null);
   const [amount, setAmount] = useState(1000);
   const [invoice, setInvoice] = useState<PurchaseCreditsResult | null>(null);
@@ -90,7 +93,7 @@ export default function WalletPage() {
         </div>
         {bal?.next_expiration_iso && (
           <div className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-            next expiry {new Date(bal.next_expiration_iso).toLocaleString()}
+            next expiry {formatDateTime(bal.next_expiration_iso, timeZone)}
           </div>
         )}
       </div>
@@ -168,7 +171,7 @@ export default function WalletPage() {
                 <span className="tabular-nums">
                   {t.remaining_sats.toLocaleString()} / {t.amount_sats.toLocaleString()} sats
                 </span>
-                <span>{t.expires_at ? `expires ${new Date(t.expires_at).toLocaleDateString()}` : "no expiry"}</span>
+                <span>{t.expires_at ? `expires ${formatDate(t.expires_at, timeZone)}` : "no expiry"}</span>
               </li>
             ))}
           </ul>

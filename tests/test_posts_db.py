@@ -773,6 +773,33 @@ async def test_list_posts_unknown_date_field_falls_back_to_created():
 
 
 @pytest.mark.asyncio
+async def test_list_posts_iso_instant_bounds_use_timestamptz():
+    """#367 — patron-local day edges arrive as UTC ISO instants, not bare dates."""
+    captured: dict = {}
+
+    async def fake_fetchrow(query, *args):
+        captured["count_query"] = query
+        return {"n": 0}
+
+    async def fake_fetch(query, *args):
+        captured["query"] = query
+        captured["args"] = args
+        return []
+
+    lo = "2026-08-01T04:00:00.000Z"  # midnight EDT
+    hi = "2026-08-02T04:00:00.000Z"
+    with patch.object(posts_db, "fetchrow", fake_fetchrow), \
+         patch.object(posts_db, "fetch", fake_fetch):
+        await posts_db.list_posts(NPUB, date_from=lo, date_to=hi, date_field="sent")
+    q = captured["query"]
+    assert "last_sent_at >= $2::timestamptz" in q
+    assert "last_sent_at < $3::timestamptz" in q
+    # Exclusive upper bound must NOT gain an extra +1 day.
+    assert "interval '1 day'" not in q
+    assert captured["args"][:3] == (NPUB, lo, hi)
+
+
+@pytest.mark.asyncio
 async def test_list_posts_unknown_sort_falls_back_to_created():
     async def fake_fetchrow(query, *args):
         return {"n": 0}

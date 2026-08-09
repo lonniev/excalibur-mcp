@@ -669,8 +669,10 @@ async def list_posts(
     (e.g. ``draft,scheduled``), matched as set membership. ``sort_col`` is one of
     ``created|updated|status|scheduled`` (default ``created``); ``sort_dir`` is
     ``asc|desc``. ``search`` is a case-insensitive regular expression matched
-    against the post text. ``date_from``/``date_to`` (``YYYY-MM-DD``, end-inclusive)
-    bound the ``date_field`` column, one of ``created|updated|scheduled|sent``
+    against the post text. ``date_from``/``date_to`` accept bare ``YYYY-MM-DD``
+    (UTC-calendar day, end-inclusive) or an ISO instant (patron-local midnight from
+    the FE — exclusive upper bound when instant). Bound the ``date_field`` column,
+    one of ``created|updated|scheduled|sent``
     (default ``created``). ``template_id`` filters to the sent occurrences a recurring
     template fired. ``page`` is 0-indexed; ``page_size`` is 1..100. Each row carries
     ``is_recurring``, ``has_dynamic``, and ``template_id`` (set on sent occurrences).
@@ -748,8 +750,9 @@ async def list_snippets(
     offset-paginated. ``sort_col`` is one of ``favorite|created|updated|name``
     (default ``favorite``); ``sort_dir`` is ``asc|desc``. ``search`` is a
     case-insensitive regular expression matched against the snippet name or body.
-    ``date_from``/``date_to`` (``YYYY-MM-DD``, end-inclusive) bound the
-    ``date_field`` column, one of ``created|updated`` (default ``created``).
+    ``date_from``/``date_to`` accept bare ``YYYY-MM-DD`` (UTC-calendar day,
+    end-inclusive) or an ISO instant (patron-local midnight from the FE). Bound
+    the ``date_field`` column, one of ``created|updated`` (default ``created``).
     ``page`` is 0-indexed; ``page_size`` is 1..200. Free, owner-scoped. Returns
     ``{snippets:[…], total, page, page_size}`` reflecting the filtered set."""
     from excalibur_mcp.tools import snippets as snippets_tools
