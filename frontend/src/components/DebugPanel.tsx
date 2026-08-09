@@ -12,6 +12,7 @@
 import { useEffect, useRef, useState } from "react";
 import { clearDebug, debugPush, useDebugLog, type DebugEntry } from "../lib/debugLog";
 import { getSchedulerLog, type SchedulerOutcome, type SchedulerRun } from "../lib/mcp";
+import { formatTime, resolveTimeZone, readStoredTimezonePref } from "../lib/timezone";
 
 const TYPE_COLOR: Record<DebugEntry["type"], string> = {
   info: "text-sky-400",
@@ -46,12 +47,8 @@ const outcome = (e: SchedulerOutcome, verb: string) =>
 // and the header last — the header lands above its details.
 function pushRun(run: SchedulerRun): void {
   const s = run.summary ?? {};
-  let when = run.run_at;
-  try {
-    when = new Date(run.run_at).toLocaleTimeString();
-  } catch {
-    /* keep raw */
-  }
+  const tz = resolveTimeZone(readStoredTimezonePref());
+  const when = formatTime(run.run_at, tz) || run.run_at;
 
   if (s.kind === "publication") {
     const fell = s.fallbacks ?? [];
@@ -147,12 +144,8 @@ export default function DebugPanel() {
           // Ticks exist; this refresh just found nothing newer. Tell the human
           // it's current and when the scheduler last ran, so the empty result
           // reads as "up to date", not "broken".
-          let lastWhen = runs[0].run_at;
-          try {
-            lastWhen = new Date(runs[0].run_at).toLocaleTimeString();
-          } catch {
-            /* keep raw */
-          }
+          const tz = resolveTimeZone(readStoredTimezonePref());
+          const lastWhen = formatTime(runs[0].run_at, tz) || runs[0].run_at;
           debugPush(
             "info",
             `Up to date — no new scheduler runs since you last checked. It last ran at ${lastWhen} and checks again on its own about every half hour.`,

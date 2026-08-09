@@ -70,6 +70,16 @@ _DATE_FIELDS: dict[str, str] = {
     "sent": "last_sent_at",
 }
 
+
+def _is_instant_bound(value: str) -> bool:
+    """True when the bound is an ISO instant (has a time component), not YYYY-MM-DD.
+
+    The FE (#367) sends patron-local midnight as a UTC ISO string so the day
+    edge is the patron's, not UTC's. Bare dates keep the legacy ::date path.
+    """
+    s = (value or "").strip()
+    return "T" in s or " " in s
+
 # Patch keys a caller may set on update, mapped to their column cast. Caller
 # input only selects a key; the column expression never comes from the caller,
 # so an unknown patch key can't reach the query as raw SQL.
@@ -235,12 +245,22 @@ async def list_posts(
     if search:
         params.append(search)
         where += f" AND text_cache ~* ${len(params)}"
+    # Date bounds accept bare YYYY-MM-DD (legacy UTC-calendar day, end-inclusive
+    # via +1 day) or an ISO instant (patron-local midnight from the FE — #367).
+    # Instants compare as timestamptz; a trailing exclusive bound already embeds
+    # the +1 local day, so it must not gain another day.
     if date_from:
         params.append(date_from)
-        where += f" AND {date_col} >= ${len(params)}::date"
+        if _is_instant_bound(date_from):
+            where += f" AND {date_col} >= ${len(params)}::timestamptz"
+        else:
+            where += f" AND {date_col} >= ${len(params)}::date"
     if date_to:
         params.append(date_to)
-        where += f" AND {date_col} < (${len(params)}::date + interval '1 day')"
+        if _is_instant_bound(date_to):
+            where += f" AND {date_col} < ${len(params)}::timestamptz"
+        else:
+            where += f" AND {date_col} < (${len(params)}::date + interval '1 day')"
     if template_id:
         # "Occurrences of this template" — the sent snapshots a recurring post fired.
         params.append(template_id)

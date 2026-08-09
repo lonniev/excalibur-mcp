@@ -50,6 +50,8 @@ import {
 import {
   clearDraft, draftIsUnsaved, readDraft, saveError, writeDraft, type LocalDraft,
 } from "../lib/postDraft";
+import { datetimeLocalValueToIso, isoToDatetimeLocalValue } from "../lib/timezone";
+import { useTimezone } from "../lib/useTimezone";
 
 type Kind = "post" | "snippet";
 type Freq = "none" | "daily" | "weekdays" | "weekly" | "monthly";
@@ -86,6 +88,25 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   const listPath = isSnippet ? "/snippets" : "/";
   const nav = useNavigate();
   const { npub } = useSession();
+  const [, timeZone] = useTimezone();
+  // When the Profile zone changes, re-express wall datetime-local values so the
+  // underlying UTC instant stays put (acceptance: live update, no reload).
+  const prevTimeZone = useRef(timeZone);
+  useEffect(() => {
+    if (prevTimeZone.current === timeZone) return;
+    const from = prevTimeZone.current;
+    prevTimeZone.current = timeZone;
+    setPublishAt((prev) => {
+      if (!prev) return prev;
+      const iso = datetimeLocalValueToIso(prev, from);
+      return iso ? isoToDatetimeLocalValue(iso, timeZone) : prev;
+    });
+    setCeaseAt((prev) => {
+      if (!prev) return prev;
+      const iso = datetimeLocalValueToIso(prev, from);
+      return iso ? isoToDatetimeLocalValue(iso, timeZone) : prev;
+    });
+  }, [timeZone]);
   const createReqId = useRef(uid());
 
   const [blocks, setBlocks] = useState<Block[]>([{ id: uid(), text: "", flags: [] }]);
@@ -177,10 +198,10 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     // schedule clears the prior post's schedule state.
     const loaded = parsePostDoc(row.doc, row.text_cache);
     const rec = row.recurrence as Recurrence | undefined;
-    const pub = row.publish_at ? toLocalInput(row.publish_at) : "";
+    const pub = row.publish_at ? isoToDatetimeLocalValue(row.publish_at, timeZone) : "";
     const fq: Freq = rec?.freq ?? "none";
     const iv = rec?.interval || 1;
-    const cz = row.cease_at ? toLocalInput(row.cease_at) : "";
+    const cz = row.cease_at ? isoToDatetimeLocalValue(row.cease_at, timeZone) : "";
     const ttl = row.title ?? "";
     setBlocks(loaded);
     setPublishAt(pub);
@@ -192,7 +213,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     setLoadedStatus(row.status ?? "draft");
     setTemplateId(row.template_id ?? null);
     baseline.current = sigOf(loaded, pub, fq, iv, cz, ttl);
-  }, [sigOf]);
+  }, [sigOf, timeZone]);
 
   // ── load ────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -847,10 +868,16 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     setError(null);
     const status = willSchedule ? "scheduled" : "draft";
     const docPayload = serializeBlocks(blocks);
-    const publishIso = willSchedule && publishAt ? new Date(publishAt).toISOString() : undefined;
+    // #367 — datetime-local wall values are in the patron zone; convert to UTC ISO.
+    const publishIso =
+      willSchedule && publishAt
+        ? datetimeLocalValueToIso(publishAt, timeZone) ?? undefined
+        : undefined;
     const recurrence: Recurrence | undefined =
       willSchedule && freq !== "none" ? { freq, interval: Math.max(1, Number(interval) || 1) } : undefined;
-    const ceaseIso = ceaseAt ? new Date(ceaseAt).toISOString() : undefined;
+    const ceaseIso = ceaseAt
+      ? datetimeLocalValueToIso(ceaseAt, timeZone) ?? undefined
+      : undefined;
     // A schedule time already in the past won't miss — it fires on the next
     // scheduler tick. Say so, so the post isn't perceived as "not scheduled".
     const pastTime = !!publishIso && new Date(publishIso).getTime() < Date.now();
@@ -1345,7 +1372,11 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
       {pendingDraft && !isSnippet && (
         <div className="flex flex-wrap items-center gap-3 border-b border-amber-500/30 bg-amber-500/10 px-5 py-2.5 text-sm text-amber-200">
           <span className="min-w-0 flex-1">
-            You have unsaved edits from {new Date(pendingDraft.savedAt).toLocaleString()} that never finished saving.
+            You have unsaved edits from{" "}
+            {pendingDraft.savedAt
+              ? new Date(pendingDraft.savedAt).toLocaleString(undefined, { timeZone })
+              : "earlier"}{" "}
+            that never finished saving.
           </span>
           <button
             onClick={() => restoreDraft(pendingDraft)}
@@ -1634,6 +1665,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
                   freq={freq} setFreq={setFreq}
                   interval={interval} setInterval={setIntervalN}
                   ceaseAt={ceaseAt} setCeaseAt={setCeaseAt}
+                  timeZone={timeZone}
                   onSchedule={() => persist(true)} saving={saving}
                   onDiscard={handleDiscard} isNew={isNew}
                   isScheduled={loadedStatus === "scheduled"}
@@ -2269,12 +2301,14 @@ function VoiceTab({
 // ── schedule tab ────────────────────────────────────────────────────────────
 function ScheduleTab({
   publishAt, setPublishAt, freq, setFreq, interval, setInterval, ceaseAt, setCeaseAt,
+  timeZone,
   onSchedule, saving, onDiscard, isNew, isScheduled, onUnschedule,
 }: {
   publishAt: string; setPublishAt: (v: string) => void;
   freq: Freq; setFreq: (v: Freq) => void;
   interval: number; setInterval: (v: number) => void;
   ceaseAt: string; setCeaseAt: (v: string) => void;
+  timeZone: string;
   onSchedule: () => void; saving: boolean; onDiscard: () => void; isNew: boolean;
   isScheduled: boolean; onUnschedule: () => void;
 }) {
@@ -2286,8 +2320,9 @@ function ScheduleTab({
         <label className="mb-1.5 flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-widest text-zinc-500"><Calendar className="h-3.5 w-3.5" /> Publish at</label>
         <input type="datetime-local" value={publishAt} onChange={(e) => setPublishAt(e.target.value)} className={field} />
         <p className="mt-1.5 text-xs text-zinc-500">
-          The scheduler sweeps for due posts on the hour and the half hour, so a post goes out at the
-          next :00 or :30 after its publish time. Need it out this instant? Use <span className="text-amber-400">Post now</span>.
+          Times are in <span className="text-zinc-300">{timeZone}</span>. The scheduler sweeps on the hour and
+          the half hour, so a post goes out at the next :00 or :30 after its publish time. Need it out
+          this instant? Use <span className="text-amber-400">Post now</span>.
         </p>
       </div>
       <div>
@@ -2363,15 +2398,31 @@ function advance(d: Date, freq: Freq, interval: number): Date {
   return r;
 }
 
+// Parse a datetime-local wall string's calendar day without browser-zone bias.
+// The value is already in the patron zone; only Y-M-D matter for the month grid.
+function wallYmd(value: string): { y: number; m: number; d: number } | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(value.trim());
+  if (!m) return null;
+  return { y: Number(m[1]), m: Number(m[2]) - 1, d: Number(m[3]) };
+}
+
 // A compact month calendar that marks a scheduled post's start, its recurrence
 // occurrences, and the cease date — replaces the raw intent-JSON dump.
+// Day stepping uses Date only as a civil calendar helper (local construction of
+// Y/M/D), never as a UTC conversion of the scheduled instant.
 function CalendarPreview({ publishAt, freq, interval, ceaseAt }: {
   publishAt: string; freq: Freq; interval: number; ceaseAt: string;
 }) {
-  const start = publishAt ? new Date(publishAt) : null;
-  const valid = !!start && !isNaN(start.getTime());
-  const cease = ceaseAt ? new Date(ceaseAt) : null;
-  const ceaseValid = !!cease && !isNaN(cease.getTime());
+  const startYmd = publishAt ? wallYmd(publishAt) : null;
+  const valid = !!startYmd;
+  const ceaseYmd = ceaseAt ? wallYmd(ceaseAt) : null;
+  const ceaseValid = !!ceaseYmd;
+  const start = valid
+    ? new Date(startYmd!.y, startYmd!.m, startYmd!.d)
+    : null;
+  const cease = ceaseValid
+    ? new Date(ceaseYmd!.y, ceaseYmd!.m, ceaseYmd!.d)
+    : null;
 
   // Month currently shown; defaults to the start month, re-centering if it moves.
   const [view, setView] = useState(() => {
@@ -2458,9 +2509,4 @@ function CalendarPreview({ publishAt, freq, interval, ceaseAt }: {
   );
 }
 
-function toLocalInput(iso: string): string {
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "";
-  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
-  return local.toISOString().slice(0, 16);
-}
+// toLocalInput removed — use isoToDatetimeLocalValue(iso, timeZone) (#367).

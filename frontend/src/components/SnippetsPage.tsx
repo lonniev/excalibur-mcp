@@ -5,6 +5,8 @@ import {
   deleteSnippet, listSnippets, saveSnippet,
   type SnippetRow, type SortDir,
 } from "../lib/mcp";
+import { formatDateTime, localDateFilterBounds } from "../lib/timezone";
+import { useTimezone } from "../lib/useTimezone";
 import { PageControls, SortHeader, TableShell } from "./PagedTable";
 import TableFilter from "./TableFilter";
 import QuoteScroller from "./QuoteScroller";
@@ -26,6 +28,7 @@ export default function SnippetsPage() {
   const [dateField, setDateField] = useState("created");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [, timeZone] = useTimezone();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -33,8 +36,10 @@ export default function SnippetsPage() {
     setLoading(true);
     setError(null);
     try {
+      const bounds = localDateFilterBounds(dateFrom, dateTo, timeZone);
       const r = await listSnippets({
-        sortCol, sortDir, page, pageSize: PAGE_SIZE, search, dateFrom, dateTo, dateField,
+        sortCol, sortDir, page, pageSize: PAGE_SIZE, search,
+        dateFrom: bounds.dateFrom, dateTo: bounds.dateTo, dateField,
       });
       if (r.error) setError(r.error);
       setSnippets(r.snippets ?? []);
@@ -44,7 +49,7 @@ export default function SnippetsPage() {
     } finally {
       setLoading(false);
     }
-  }, [sortCol, sortDir, page, search, dateFrom, dateTo, dateField]);
+  }, [sortCol, sortDir, page, search, dateFrom, dateTo, dateField, timeZone]);
 
   useEffect(() => {
     refresh();
@@ -166,7 +171,7 @@ export default function SnippetsPage() {
                     <p className="truncate text-stone-500 dark:text-zinc-400">{s.text}</p>
                   </td>
                   <td className="px-3 py-2.5 align-top text-xs text-stone-400 dark:text-zinc-500 whitespace-nowrap">
-                    {s.updated_at ? fmt(s.updated_at) : "—"}
+                    {s.updated_at ? fmt(s.updated_at, timeZone) : "—"}
                   </td>
                   <td className="px-3 py-2.5 align-top text-right whitespace-nowrap">
                     <span className="inline-flex gap-2 text-xs text-stone-400 dark:text-zinc-500">
@@ -189,7 +194,6 @@ export default function SnippetsPage() {
   );
 }
 
-function fmt(iso: string): string {
-  const d = new Date(iso);
-  return isNaN(d.getTime()) ? iso : d.toLocaleString();
+function fmt(iso: string, timeZone: string): string {
+  return formatDateTime(iso, timeZone);
 }
