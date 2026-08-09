@@ -956,6 +956,15 @@ class TestRecurrenceDoesNotDrift:
         `_next_state` can be correct while `publish_one` still hands it the wrong
         anchor — reverting the call site alone broke no unit test, so this asserts
         the value that actually reaches the database.
+
+        The clock is frozen at the moment this fixture describes. `publish_one`
+        reads `_now()` for `sent_at` and passes it through as `now=`, so with a
+        live clock the fixture silently expired: once real time passed the
+        2026-08-09 09:00 occurrence, `_next_state` correctly skipped it — it must
+        never schedule into the past, which is exactly what
+        `test_a_missed_run_skips_to_the_next_real_occurrence` asserts — and this
+        test failed with the *right* answer, 2026-08-16. Every sibling here
+        already pins `now` explicitly; only this one read the wall clock.
         """
         rt = _runtime()
         client = SimpleNamespace(post_tweet=AsyncMock(
@@ -965,8 +974,10 @@ class TestRecurrenceDoesNotDrift:
             publish_at="2026-08-02 09:00:00+00",           # Sunday 09:00
             recurrence={"freq": "weekly", "interval": 1},
             last_attempt_at="2026-08-02 09:37:00+00",      # claimed 37 min late
-        ), patch.object(publisher.posts_db, "record_occurrence_and_advance",
-                        AsyncMock(return_value=True)) as occ, \
+        ), patch.object(publisher, "_now",
+                        return_value=self._sun(h=9, m=37)), \
+             patch.object(publisher.posts_db, "record_occurrence_and_advance",
+                          AsyncMock(return_value=True)) as occ, \
              patch("excalibur_mcp.server._resolve_x_client",
                    AsyncMock(return_value=(client, None))):
             out = await publisher.publish_one(rt, "p1")
