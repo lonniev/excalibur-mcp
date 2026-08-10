@@ -59,6 +59,14 @@ jobs:
       - name: Test
         run: uv run pytest tests/ -v
 
+      - name: Entrypoint inspects (the check Horizon performs at build time)
+        run: |
+          [ -f fastmcp.json ] || { echo "no fastmcp.json — not a FastMCP deployment; skipping"; exit 0; }
+          ENTRY=$(python -c "import json;print(json.load(open('fastmcp.json'))['server'])")
+          case "$ENTRY" in *:*) TARGET="$ENTRY";; *) TARGET="$ENTRY:mcp";; esac
+          echo "inspecting $TARGET"
+          uv run fastmcp inspect -f fastmcp -o /tmp/server-info.json "$TARGET"
+
       # `modal_app.py` sits outside `src/`, so nothing imported it — ruff read it as text
       # and no test touched it. Its deploy graph (image, mounted source, function spec)
       # was therefore first evaluated during `modal deploy`, i.e. after merge, and a
