@@ -404,18 +404,32 @@ async def test_compute_post_performance_surfaces_tier1_rates_and_tod_cohort():
     assert out["cohorts"]["time_of_day"]["14"]["n"] == 1
 
 
-def test_performance_page_surfaces_tier1_metric_columns():
-    """#361 static contract: Performance FE shows Tier 1 free metrics, not only clicks."""
+def _performance_ui_source() -> str:
+    """The Performance UI as one text, page plus its column definitions.
+
+    These are static contract checks, so they must follow the contract rather than
+    the file it currently lives in. #374 moved the column names out of the page's
+    JSX into `PERF_SORT_COLUMNS` as `{short, full}` — `full` drives `title` and
+    `aria-label`, `short` is the visible label that has to fit its column. The
+    guarantee ("these metrics are surfaced, spelled out, never bare EV/BR") was
+    unchanged and still honoured; only its address changed, and asserting against
+    one file made a good refactor look like a regression.
+    """
     from pathlib import Path
 
-    src = (
-        Path(__file__).resolve().parents[1]
-        / "frontend"
-        / "src"
-        / "components"
-        / "PerformancePage.tsx"
+    root = Path(__file__).resolve().parents[1] / "frontend" / "src"
+    return "\n".join(
+        p.read_text(encoding="utf-8")
+        for p in (
+            root / "components" / "PerformancePage.tsx",
+            root / "lib" / "performanceTable.ts",
+        )
     )
-    text = src.read_text(encoding="utf-8")
+
+
+def test_performance_page_surfaces_tier1_metric_columns():
+    """#361 static contract: Performance FE shows Tier 1 free metrics, not only clicks."""
+    text = _performance_ui_source()
 
     # Columns / labels the backlog asked to surface.
     assert "Profile" in text  # profile clicks column
@@ -516,10 +530,7 @@ def test_performance_page_source_is_human_legible():
     copy/structure decisions the Code Owner asked for so a regression that
     reintroduces ``post_id.slice`` or the opaque cohort heading fails CI.
     """
-    from pathlib import Path
-
-    src = Path(__file__).resolve().parents[1] / "frontend" / "src" / "components" / "PerformancePage.tsx"
-    text = src.read_text(encoding="utf-8")
+    text = _performance_ui_source()
 
     # Post identity is title/excerpt, not a truncated UUID.
     assert "post_id.slice" not in text
@@ -571,6 +582,12 @@ def test_performance_page_source_is_human_legible():
     assert "Breakout ratio" in text
     assert ">EV<" not in text
     assert ">BR<" not in text
+    # Visible labels are data now (`PERF_SORT_COLUMNS.short`) rather than JSX, so the
+    # no-bare-abbreviation rule is checked where it can actually be broken. The full
+    # name still reaches the reader via `title` / `aria-label`; what must never come
+    # back is a header whose only visible text is EV or BR.
+    assert 'short: "EV"' not in text
+    assert 'short: "BR"' not in text
 
     # Refresh stays on the right of the header row.
     assert "ml-auto" in text
@@ -584,16 +601,7 @@ def test_performance_page_ux_chart_loader_sort_no_link_col():
     regression that reverts to a ToD table, plain "Loading…", fixed-order rows,
     or a per-row Link column fails CI.
     """
-    from pathlib import Path
-
-    src = (
-        Path(__file__).resolve().parents[1]
-        / "frontend"
-        / "src"
-        / "components"
-        / "PerformancePage.tsx"
-    )
-    text = src.read_text(encoding="utf-8")
+    text = _performance_ui_source()
 
     # 1. Time of day is a continuous 24h chart (local), not a sparse UTC table.
     assert "TimeOfDayChart" in text or "time-of-day-chart" in text

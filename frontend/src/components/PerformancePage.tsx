@@ -22,6 +22,13 @@ import {
   type PostPerformanceResult,
 } from "../lib/mcp";
 import {
+  PERF_SORT_COLUMNS,
+  nextPerfSort,
+  sortPerformancePosts,
+  type PerfSortDir,
+  type PerfSortKey,
+} from "../lib/performanceTable";
+import {
   formatHourLabel,
   formatPostedShort,
   timeOfDayCohortInZone,
@@ -142,7 +149,7 @@ function Tip({ label, children }: { label: string; children: ReactNode }) {
   return (
     <span
       ref={ref}
-      className="relative inline-flex items-center gap-1"
+      className="relative inline-flex max-w-full min-w-0 items-center gap-1"
       onPointerEnter={(e) => e.pointerType !== "touch" && place()}
       onPointerLeave={(e) => e.pointerType !== "touch" && close()}
     >
@@ -389,77 +396,48 @@ function TimeOfDayChart({
   );
 }
 
-type SortKey =
-  | "posted"
-  | "impressions"
-  | "escape_velocity"
-  | "breakout_ratio"
-  | "clicks"
-  | "profile"
-  | "bookmarks"
-  | "reply_rate"
-  | "quote_to_repost";
-
-type SortDir = "asc" | "desc";
-
-function sortValue(p: PerformancePost, key: SortKey): number {
-  switch (key) {
-    case "posted": {
-      const t = p.last_sent_at ? Date.parse(p.last_sent_at) : NaN;
-      return Number.isNaN(t) ? Number.NEGATIVE_INFINITY : t;
-    }
-    case "impressions":
-      return p.latest_impressions ?? Number.NEGATIVE_INFINITY;
-    case "escape_velocity":
-      return p.escape_velocity ?? Number.NEGATIVE_INFINITY;
-    case "breakout_ratio":
-      return p.breakout_ratio ?? Number.NEGATIVE_INFINITY;
-    case "clicks":
-      return p.url_link_clicks ?? Number.NEGATIVE_INFINITY;
-    case "profile":
-      return p.user_profile_clicks ?? Number.NEGATIVE_INFINITY;
-    case "bookmarks":
-      return p.bookmarks ?? Number.NEGATIVE_INFINITY;
-    case "reply_rate":
-      return p.reply_rate ?? Number.NEGATIVE_INFINITY;
-    case "quote_to_repost":
-      return p.quote_to_repost_ratio ?? Number.NEGATIVE_INFINITY;
-  }
-}
-
-/** Sortable th that keeps Tip/icon children — SortHeader only takes string labels. */
+/**
+ * Sortable th for the Posts-by-reach table.
+ * #373 — no whitespace-nowrap: long labels used to overflow fixed-width
+ * columns and paint over neighbors. Short label + title= full name +
+ * min-w-0 / truncate keep the click target inside its col.
+ */
 function PerfSortHeader({
   sortKey,
   activeKey,
   dir,
   onSort,
   tip,
-  children,
+  icon,
   className = "",
 }: {
-  sortKey: SortKey;
-  activeKey: SortKey;
-  dir: SortDir;
-  onSort: (k: SortKey) => void;
+  sortKey: PerfSortKey;
+  activeKey: PerfSortKey;
+  dir: PerfSortDir;
+  onSort: (k: PerfSortKey) => void;
   tip?: string;
-  children: ReactNode;
+  icon?: ReactNode;
   className?: string;
 }) {
   const active = sortKey === activeKey;
+  const { short, full } = PERF_SORT_COLUMNS[sortKey];
   const btn = (
     <button
       type="button"
       onClick={() => onSort(sortKey)}
-      className={`inline-flex items-center gap-1 hover:text-amber-600 dark:hover:text-amber-400 transition-colors ${
+      title={full}
+      aria-label={active ? `${full}, sorted ${dir === "desc" ? "descending" : "ascending"}` : `Sort by ${full}`}
+      className={`inline-flex max-w-full min-w-0 items-center gap-0.5 hover:text-amber-600 dark:hover:text-amber-400 transition-colors ${
         active ? "text-amber-600 dark:text-amber-400" : ""
       }`}
     >
-      {children}
-      {active && <span aria-hidden>{dir === "desc" ? "▾" : "▴"}</span>}
+      {icon ? <span className="shrink-0">{icon}</span> : null}
+      <span className="min-w-0 truncate">{short}</span>
+      {active && <span className="shrink-0" aria-hidden>{dir === "desc" ? "▾" : "▴"}</span>}
     </button>
   );
   return (
-    <th className={`px-2 py-2 font-medium whitespace-nowrap ${className}`}>
+    <th className={`px-1.5 py-2 font-medium min-w-0 overflow-hidden ${className}`}>
       {tip ? <Tip label={tip}>{btn}</Tip> : btn}
     </th>
   );
@@ -470,8 +448,8 @@ export default function PerformancePage() {
   const [, timeZone] = useTimezone();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sortCol, setSortCol] = useState<SortKey>("impressions");
-  const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [sortCol, setSortCol] = useState<PerfSortKey>("impressions");
+  const [sortDir, setSortDir] = useState<PerfSortDir>("desc");
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -491,33 +469,17 @@ export default function PerformancePage() {
     void refresh();
   }, [refresh]);
 
-  const onSort = useCallback(
-    (col: SortKey) => {
-      if (col === sortCol) {
-        setSortDir((d) => (d === "desc" ? "asc" : "desc"));
-      } else {
-        setSortCol(col);
-        setSortDir("desc");
-      }
-    },
-    [sortCol],
-  );
+  const onSort = useCallback((col: PerfSortKey) => {
+    const next = nextPerfSort(sortCol, sortDir, col);
+    setSortCol(next.col);
+    setSortDir(next.dir);
+  }, [sortCol, sortDir]);
 
   const posts: PerformancePost[] = data?.posts ?? [];
-  const sortedPosts = useMemo(() => {
-    const copy = posts.slice();
-    const mul = sortDir === "desc" ? -1 : 1;
-    copy.sort((a, b) => {
-      const av = sortValue(a, sortCol);
-      const bv = sortValue(b, sortCol);
-      if (av === bv) {
-        // Stable secondary: impressions desc so ties still rank by reach.
-        return (b.latest_impressions ?? 0) - (a.latest_impressions ?? 0);
-      }
-      return av < bv ? -1 * mul : 1 * mul;
-    });
-    return copy;
-  }, [posts, sortCol, sortDir]);
+  const sortedPosts = useMemo(
+    () => sortPerformancePosts(posts, sortCol, sortDir),
+    [posts, sortCol, sortDir],
+  );
 
   const corpus = data?.corpus;
   const cohorts = data?.cohorts?.link_placement ?? {};
@@ -701,12 +663,10 @@ export default function PerformancePage() {
                     dir={sortDir}
                     onSort={onSort}
                     className="text-left"
-                  >
-                    Posted
-                  </PerfSortHeader>
-                  <th className="px-2 py-2 font-medium">
+                  />
+                  <th className="px-1.5 py-2 font-medium min-w-0 overflow-hidden">
                     <Tip label={TIPS.trend}>
-                      <span>Trend</span>
+                      <span title="Trend">Trend</span>
                     </Tip>
                   </th>
                   <PerfSortHeader
@@ -715,96 +675,68 @@ export default function PerformancePage() {
                     dir={sortDir}
                     onSort={onSort}
                     className="text-right"
-                  >
-                    Impr.
-                  </PerfSortHeader>
+                  />
                   <PerfSortHeader
                     sortKey="escape_velocity"
                     activeKey={sortCol}
                     dir={sortDir}
                     onSort={onSort}
                     tip={TIPS.escapeVelocity}
+                    icon={<Rocket className="h-3 w-3" aria-hidden />}
                     className="text-right"
-                  >
-                    <span className="inline-flex items-center gap-1">
-                      <Rocket className="h-3 w-3" aria-hidden />
-                      Escape velocity
-                    </span>
-                  </PerfSortHeader>
+                  />
                   <PerfSortHeader
                     sortKey="breakout_ratio"
                     activeKey={sortCol}
                     dir={sortDir}
                     onSort={onSort}
                     tip={TIPS.breakoutRatio}
+                    icon={<TrendingUp className="h-3 w-3" aria-hidden />}
                     className="text-right"
-                  >
-                    <span className="inline-flex items-center gap-1">
-                      <TrendingUp className="h-3 w-3" aria-hidden />
-                      Breakout ratio
-                    </span>
-                  </PerfSortHeader>
+                  />
                   <PerfSortHeader
                     sortKey="clicks"
                     activeKey={sortCol}
                     dir={sortDir}
                     onSort={onSort}
                     className="text-right"
-                  >
-                    Clicks
-                  </PerfSortHeader>
+                  />
                   <PerfSortHeader
                     sortKey="profile"
                     activeKey={sortCol}
                     dir={sortDir}
                     onSort={onSort}
                     tip={TIPS.profileClicks}
+                    icon={<UserRound className="h-3 w-3" aria-hidden />}
                     className="text-right"
-                  >
-                    <span className="inline-flex items-center gap-1">
-                      <UserRound className="h-3 w-3" aria-hidden />
-                      Profile
-                    </span>
-                  </PerfSortHeader>
+                  />
                   <PerfSortHeader
                     sortKey="bookmarks"
                     activeKey={sortCol}
                     dir={sortDir}
                     onSort={onSort}
                     tip={TIPS.bookmarks}
+                    icon={<Bookmark className="h-3 w-3" aria-hidden />}
                     className="text-right"
-                  >
-                    <span className="inline-flex items-center gap-1">
-                      <Bookmark className="h-3 w-3" aria-hidden />
-                      Bookmarks
-                    </span>
-                  </PerfSortHeader>
+                  />
                   <PerfSortHeader
                     sortKey="reply_rate"
                     activeKey={sortCol}
                     dir={sortDir}
                     onSort={onSort}
                     tip={TIPS.replyRate}
+                    icon={<MessageCircle className="h-3 w-3" aria-hidden />}
                     className="text-right"
-                  >
-                    <span className="inline-flex items-center gap-1">
-                      <MessageCircle className="h-3 w-3" aria-hidden />
-                      Reply rate
-                    </span>
-                  </PerfSortHeader>
+                  />
                   <PerfSortHeader
                     sortKey="quote_to_repost"
                     activeKey={sortCol}
                     dir={sortDir}
                     onSort={onSort}
                     tip={TIPS.quoteToRepost}
+                    icon={<Quote className="h-3 w-3" aria-hidden />}
                     className="text-right"
-                  >
-                    <span className="inline-flex items-center gap-1">
-                      <Quote className="h-3 w-3" aria-hidden />
-                      Quote/repost
-                    </span>
-                  </PerfSortHeader>
+                  />
                 </tr>
               </thead>
               <tbody>
