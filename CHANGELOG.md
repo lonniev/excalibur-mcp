@@ -89,6 +89,43 @@ invisible to in-process assertions because the timeout is baked into the deploym
 first deployed version carried a literal `timeout=3600`, nesting by luck at the ceiling
 of the day.
 
+## 0.39.0 — 2026-08-10
+
+### Added — the Performance page answers questions instead of listing numbers
+
+Tier 1 rates and a time-of-day cohort, a continuous 24-hour local chart in place of a sparse
+UTC table, a sortable posts-by-reach table whose headers fit their columns, and the breakout
+ratio re-based on rolling median final reach so a thin corpus reads as a thin corpus rather
+than a missing follower count. Column names live in one place now, with a full name for
+`title` and `aria-label` and a short one for the visible label.
+
+### Added — times render in the patron's own zone
+
+A Profile selector sets an IANA timezone and the app renders in it, rather than making the
+reader convert from UTC. The Profile page also surfaces an expired X token on the account
+card instead of letting a stale credential look healthy, and the Nostr profile collapses with
+an avatar badge.
+
+### Fixed — a test whose fixture expired took main red with no commit
+
+`test_publish_one_anchors_the_next_slot_on_publish_at` read the wall clock: `publish_one`
+takes `sent_at` from `_now()` and the fixture asserted the next weekly slot was a specific
+date. Once real time passed that instant, `_next_state` correctly skipped the occurrence —
+it must never schedule into the past — and the test failed while reporting the right answer.
+Two innocent PRs looked broken. The clock is pinned now, and the other date literals in that
+file were audited rather than only the one that fired.
+
+### Changed — track tollbooth-dpyc 0.85.0
+
+Picks up `check_authority_balance`, which failed for every operator, and the shared
+param-default binding.
+
+### Changed — CI runs the check the deploy runs
+
+The `test` job inspects the deploy entrypoint, the check Horizon performs at build time —
+placed in `test` rather than appended, since this repo's last job is `worker`. `release.yml`
+notes extraction accepts this CHANGELOG's heading style instead of publishing a 16-byte body.
+
 ## 0.38.0 — 2026-08-07
 
 
