@@ -50,7 +50,7 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version: "3.14"
 
       # The image runs `pip_install_from_pyproject`, so a pin that has not landed on PyPI
       # yet fails the build rather than merely resolving late. Same wait as ci.yml.
