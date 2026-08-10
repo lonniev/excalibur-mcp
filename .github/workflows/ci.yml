@@ -65,7 +65,11 @@ jobs:
           ENTRY=$(python -c "import json;print(json.load(open('fastmcp.json'))['server'])")
           case "$ENTRY" in *:*) TARGET="$ENTRY";; *) TARGET="$ENTRY:mcp";; esac
           echo "inspecting $TARGET"
-          uv run fastmcp inspect -f fastmcp -o /tmp/server-info.json "$TARGET"
+          if [ -f uv.lock ] && command -v uv >/dev/null 2>&1; then
+            uv run fastmcp inspect -f fastmcp -o /tmp/server-info.json "$TARGET"
+          else
+            fastmcp inspect -f fastmcp -o /tmp/server-info.json "$TARGET"
+          fi
 
       # `modal_app.py` sits outside `src/`, so nothing imported it — ruff read it as text
       # and no test touched it. Its deploy graph (image, mounted source, function spec)
