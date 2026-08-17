@@ -10,7 +10,10 @@ import assert from "node:assert/strict";
 import {
   PERF_HEADER_SHORT_MAX,
   PERF_SORT_COLUMNS,
+  formatLinkClicks,
+  formatLinkPlacement,
   nextPerfSort,
+  normalizeLinkPlacement,
   sortPerformancePosts,
   sortValue,
   type PerfSortKey,
@@ -92,6 +95,52 @@ describe("nextPerfSort — header click contract (#373)", () => {
       col: "escape_velocity",
       dir: "desc",
     });
+  });
+});
+
+describe("link placement three-state + clicks (#360)", () => {
+  it("normalizeLinkPlacement never invents body for null/blank/unknown", () => {
+    assert.equal(normalizeLinkPlacement(null), "none");
+    assert.equal(normalizeLinkPlacement(undefined), "none");
+    assert.equal(normalizeLinkPlacement(""), "none");
+    assert.equal(normalizeLinkPlacement("   "), "none");
+    assert.equal(normalizeLinkPlacement("garbage"), "none");
+    assert.equal(normalizeLinkPlacement("Body"), "body");
+    assert.equal(normalizeLinkPlacement("first_reply"), "first_reply");
+    assert.equal(normalizeLinkPlacement("reply"), "first_reply");
+    assert.equal(normalizeLinkPlacement("no_link"), "none");
+  });
+
+  it("formatLinkPlacement labels the three states without defaulting to Body", () => {
+    assert.equal(formatLinkPlacement(null), "None");
+    assert.equal(formatLinkPlacement("none"), "None");
+    assert.equal(formatLinkPlacement("body"), "Body");
+    assert.equal(formatLinkPlacement("first_reply"), "First reply");
+  });
+
+  it("formatLinkClicks distinguishes none / uncaptured / zero", () => {
+    // No link → always em-dash, even if a stale 0 leaked through.
+    assert.equal(formatLinkClicks(0, "none"), "—");
+    assert.equal(formatLinkClicks(0, null), "—");
+    assert.equal(formatLinkClicks(null, "none"), "—");
+    // Link present, not captured → em-dash.
+    assert.equal(formatLinkClicks(null, "body"), "—");
+    // Link present, measured zero → "0".
+    assert.equal(formatLinkClicks(0, "body"), "0");
+    assert.equal(formatLinkClicks(5, "first_reply"), "5");
+  });
+
+  it("sort by clicks parks no-link posts with nulls, not as zero", () => {
+    const rows = [
+      post({ post_id: "none", link_placement: "none", url_link_clicks: 0, latest_impressions: 1 }),
+      post({ post_id: "zero", link_placement: "body", url_link_clicks: 0, latest_impressions: 2 }),
+      post({ post_id: "hi", link_placement: "body", url_link_clicks: 9, latest_impressions: 3 }),
+    ];
+    const sorted = sortPerformancePosts(rows, "clicks", "desc");
+    assert.deepEqual(
+      sorted.map((p) => p.post_id),
+      ["hi", "zero", "none"],
+    );
   });
 });
 

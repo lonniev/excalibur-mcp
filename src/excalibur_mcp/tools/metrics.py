@@ -8,7 +8,9 @@ from typing import Any
 
 from excalibur_mcp.db import metrics as metrics_db
 from excalibur_mcp.metrics_harvest import (
+    clicks_for_placement,
     compute_post_performance,
+    normalize_link_placement,
     process_due_harvests,
     render_performance_infographic,
     schedule_after_send,
@@ -89,27 +91,31 @@ async def get_post_metrics(
             "note": "No metrics snapshots yet — harvest runs on a decaying cadence after send.",
         }
 
-    snapshots = [
-        {
-            "snapshot_id": r.get("snapshot_id"),
-            "captured_at": str(r.get("captured_at") or ""),
-            "t_offset": r.get("t_offset"),
-            "cadence_key": r.get("cadence_key"),
-            "impressions": r.get("impressions"),
-            "likes": r.get("likes"),
-            "replies": r.get("replies"),
-            "reposts": r.get("reposts"),
-            "quotes": r.get("quotes"),
-            "bookmarks": r.get("bookmarks"),
-            "url_link_clicks": r.get("url_link_clicks"),
-            "user_profile_clicks": r.get("user_profile_clicks"),
-            "link_placement": r.get("link_placement"),
-            "snippet_ids": r.get("snippet_ids") or [],
-            "voice_id": r.get("voice_id"),
-            "tweet_id": r.get("tweet_id"),
-        }
-        for r in rows
-    ]
+    snapshots = []
+    for r in rows:
+        place = normalize_link_placement(r.get("link_placement"))
+        snapshots.append(
+            {
+                "snapshot_id": r.get("snapshot_id"),
+                "captured_at": str(r.get("captured_at") or ""),
+                "t_offset": r.get("t_offset"),
+                "cadence_key": r.get("cadence_key"),
+                "impressions": r.get("impressions"),
+                "likes": r.get("likes"),
+                "replies": r.get("replies"),
+                "reposts": r.get("reposts"),
+                "quotes": r.get("quotes"),
+                "bookmarks": r.get("bookmarks"),
+                "url_link_clicks": clicks_for_placement(
+                    r.get("url_link_clicks"), place
+                ),
+                "user_profile_clicks": r.get("user_profile_clicks"),
+                "link_placement": place,
+                "snippet_ids": r.get("snippet_ids") or [],
+                "voice_id": r.get("voice_id"),
+                "tweet_id": r.get("tweet_id"),
+            }
+        )
     return {"success": True, "post_id": pid, "snapshots": snapshots}
 
 

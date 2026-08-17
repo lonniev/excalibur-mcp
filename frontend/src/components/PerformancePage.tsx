@@ -23,6 +23,8 @@ import {
 } from "../lib/mcp";
 import {
   PERF_SORT_COLUMNS,
+  formatLinkClicks,
+  formatLinkPlacement,
   nextPerfSort,
   sortPerformancePosts,
   type PerfSortDir,
@@ -587,7 +589,7 @@ export default function PerformancePage() {
                         provisional ? "text-stone-400 dark:text-zinc-500" : ""
                       }`}
                     >
-                      <td className="py-2 pr-3 capitalize">{place.replace("_", " ")}</td>
+                      <td className="py-2 pr-3">{formatLinkPlacement(place)}</td>
                       <td className="py-2 pr-3 tabular-nums">
                         {fmtInt(b.median)}
                         {provisional ? (
@@ -800,7 +802,7 @@ export default function PerformancePage() {
                         </Tip>
                       </td>
                       <td className="px-2 py-2.5 text-right tabular-nums text-stone-500 dark:text-zinc-400">
-                        {fmtInt(p.url_link_clicks)}
+                        {formatLinkClicks(p.url_link_clicks, p.link_placement)}
                       </td>
                       <td className="px-2 py-2.5 text-right tabular-nums">
                         <Tip label={TIPS.profileClicks}>
