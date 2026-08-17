@@ -228,6 +228,61 @@ async def test_xclient_get_tweet_metrics_requests_non_public_and_organic():
 # ---------------------------------------------------------------------------
 
 
+def test_metrics_harvest_does_not_import_native_xml():
+    """#499 — B410 / use-defused-xml: native xml is XXE-prone; do not import it.
+
+    This module only needed entity escaping for SVG text. tollbooth.infographic._text
+    already escapes content, so metrics_harvest must not pull in xml.* at all.
+    """
+    import ast
+    from pathlib import Path
+
+    src_path = Path(__file__).resolve().parents[1] / "src" / "excalibur_mcp" / "metrics_harvest.py"
+    tree = ast.parse(src_path.read_text(encoding="utf-8"))
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "xml" or alias.name.startswith("xml."):
+                    offenders.append(alias.name)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            if node.module == "xml" or node.module.startswith("xml."):
+                offenders.append(node.module)
+    assert offenders == [], f"native xml import(s) must not appear: {offenders}"
+
+
+def test_render_performance_infographic_escapes_special_chars_once():
+    """#499 — titles with <>& must be SVG-safe without double-escaping via xml.sax."""
+    from excalibur_mcp.metrics_harvest import render_performance_infographic
+
+    svg = render_performance_infographic(
+        {
+            "corpus": {"post_count": 1, "snapshot_count": 1, "rolling_median_t15": 10.0},
+            "posts": [
+                {
+                    "post_id": PID,
+                    "title": 'A < B & C > "D"',
+                    "excerpt": "",
+                    "latest_impressions": 42,
+                    "escape_velocity": 1.5,
+                    "breakout_ratio": 2.0,
+                    "link_placement": "body",
+                }
+            ],
+            "cohorts": {"link_placement": {"body": {"median": 42.0, "n": 1}}},
+        }
+    )
+    assert "<svg" in svg
+    # Single escape of the title characters (done inside tollbooth _text).
+    assert 'A &lt; B &amp; C &gt;' in svg
+    # Must not double-escape (the old xml.sax pre-escape + _text path).
+    assert '&amp;lt;' not in svg
+    assert '&amp;amp;' not in svg
+    assert '&amp;gt;' not in svg
+    # Raw markup must not leak into text content.
+    assert "A < B" not in svg
+
+
 def test_escape_velocity_compares_t15_to_rolling_median():
     from excalibur_mcp.metrics_harvest import escape_velocity
 
