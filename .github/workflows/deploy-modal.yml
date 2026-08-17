@@ -69,7 +69,7 @@ jobs:
             done
           fi
 
-      - uses: astral-sh/setup-uv@v9.0.0
+      - uses: astral-sh/setup-uv@v10.0.0
 
       # From the lockfile, for the same reason ci.yml does: the `modal` client that
       # performs the deploy should be the one this project pins, not a floating latest.
