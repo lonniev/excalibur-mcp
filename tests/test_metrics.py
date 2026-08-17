@@ -331,6 +331,190 @@ def test_link_placement_cohort_medians():
     assert cohort["none"]["n"] == 1
 
 
+def test_link_placement_three_state_never_defaults_to_body():
+    """#360 — null/blank/unknown placement is ``none``, never ``body``.
+
+    The field report saw every row as Link=Body with Clicks mostly —. That is the
+    Reading-A failure mode: missing placement rendered as a body link. Normalize
+    end-to-end so the cohort can actually vary once first_reply posts exist.
+    """
+    from excalibur_mcp.metrics_harvest import (
+        _detect_link_placement,
+        clicks_for_placement,
+        jobs_for_send,
+        link_placement_cohort,
+        normalize_link_placement,
+        resolve_link_placement,
+    )
+
+    # Detector from body text: URL → body; otherwise none. Never invent body.
+    assert _detect_link_placement(None) == "none"
+    assert _detect_link_placement("") == "none"
+    assert _detect_link_placement("plain text, no url") == "none"
+    assert _detect_link_placement("see https://example.com/x") == "body"
+
+    # Normalizer: missing/garbage → none (NOT body).
+    assert normalize_link_placement(None) == "none"
+    assert normalize_link_placement("") == "none"
+    assert normalize_link_placement("   ") == "none"
+    assert normalize_link_placement("Body") == "body"
+    assert normalize_link_placement("FIRST_REPLY") == "first_reply"
+    assert normalize_link_placement("reply") == "first_reply"
+    assert normalize_link_placement("no_link") == "none"
+    assert normalize_link_placement("garbage") == "none"
+
+    # Composition-time stamp wins over body heuristic — first_reply is real.
+    assert (
+        resolve_link_placement(
+            doc={"link_placement": "first_reply"},
+            text="body has https://example.com but stamp says reply",
+        )
+        == "first_reply"
+    )
+    # Explicit arg wins over doc.
+    assert (
+        resolve_link_placement(
+            link_placement="none",
+            doc={"link_placement": "body"},
+            text="https://example.com",
+        )
+        == "none"
+    )
+    # Doc stamp without body URL still sticks (reply-only link posts).
+    assert (
+        resolve_link_placement(doc={"link_placement": "first_reply"}, text="no url here")
+        == "first_reply"
+    )
+    # Heuristic only when nothing stamped.
+    assert resolve_link_placement(text="https://x.com/a") == "body"
+    assert resolve_link_placement(text="nope") == "none"
+
+    # Clicks: none-placement → None even if harvest stored 0 (null ≠ zero).
+    assert clicks_for_placement(0, "none") is None
+    assert clicks_for_placement(None, "none") is None
+    assert clicks_for_placement(0, "body") == 0
+    assert clicks_for_placement(5, "body") == 5
+    assert clicks_for_placement(None, "body") is None
+    assert clicks_for_placement(3, "first_reply") == 3
+
+    # Cohort folds null/blank into none — never a phantom "Body" bucket.
+    cohort = link_placement_cohort(
+        [
+            {"link_placement": None, "impressions": 10},
+            {"link_placement": "", "impressions": 30},
+            {"link_placement": "body", "impressions": 100},
+        ]
+    )
+    assert "none" in cohort
+    assert cohort["none"]["n"] == 2
+    assert cohort["body"]["n"] == 1
+    assert None not in cohort
+    assert "" not in cohort
+
+    # jobs_for_send normalizes so pending harvest rows never carry null placement.
+    sent_at = datetime(2026, 8, 1, 12, 0, 0, tzinfo=timezone.utc)
+    jobs = jobs_for_send(
+        post_id=PID, tweet_id=TWEET_ID, npub=NPUB, sent_at=sent_at, link_placement=None
+    )
+    assert all(j["link_placement"] == "none" for j in jobs)
+
+
+@pytest.mark.asyncio
+async def test_compute_post_performance_normalizes_placement_and_clicks():
+    """#360 — performance rows emit three-state placement; clicks null when none."""
+    from excalibur_mcp import metrics_harvest
+    from excalibur_mcp.db import posts as posts_db
+
+    none_pid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1"
+    body_pid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2"
+    reply_pid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa3"
+    snaps = [
+        {
+            "post_id": none_pid,
+            "tweet_id": "t1",
+            "cadence_key": "15m",
+            "t_offset": 900,
+            "impressions": 50,
+            "likes": 1,
+            "replies": 0,
+            "reposts": 0,
+            "quotes": 0,
+            "bookmarks": 0,
+            # Harvest stored 0 clicks on a no-link post — must not surface as 0.
+            "url_link_clicks": 0,
+            "user_profile_clicks": 0,
+            "link_placement": None,  # legacy null
+            "snippet_ids": [],
+            "voice_id": NPUB,
+            "captured_at": "2026-08-01T12:15:00+00:00",
+        },
+        {
+            "post_id": body_pid,
+            "tweet_id": "t2",
+            "cadence_key": "15m",
+            "t_offset": 900,
+            "impressions": 100,
+            "likes": 2,
+            "replies": 0,
+            "reposts": 0,
+            "quotes": 0,
+            "bookmarks": 0,
+            "url_link_clicks": 0,  # real zero on a body link
+            "user_profile_clicks": 1,
+            "link_placement": "body",
+            "snippet_ids": [],
+            "voice_id": NPUB,
+            "captured_at": "2026-08-01T12:15:00+00:00",
+        },
+        {
+            "post_id": reply_pid,
+            "tweet_id": "t3",
+            "cadence_key": "15m",
+            "t_offset": 900,
+            "impressions": 200,
+            "likes": 3,
+            "replies": 1,
+            "reposts": 0,
+            "quotes": 0,
+            "bookmarks": 0,
+            "url_link_clicks": 4,
+            "user_profile_clicks": 2,
+            "link_placement": "first_reply",
+            "snippet_ids": [],
+            "voice_id": NPUB,
+            "captured_at": "2026-08-01T12:15:00+00:00",
+        },
+    ]
+    identity = {
+        pid: {
+            "title": f"Post {pid[-1]}",
+            "excerpt": "",
+            "last_sent_at": "2026-08-01T12:00:00+00:00",
+            "publish_at": "2026-08-01T12:00:00+00:00",
+        }
+        for pid in (none_pid, body_pid, reply_pid)
+    }
+
+    with (
+        patch.object(metrics_harvest.metrics_db, "list_all_for_npub", AsyncMock(return_value=snaps)),
+        patch.object(posts_db, "summaries_for_ids", AsyncMock(return_value=identity)),
+    ):
+        out = await metrics_harvest.compute_post_performance(NPUB)
+
+    by_id = {p["post_id"]: p for p in out["posts"]}
+    assert by_id[none_pid]["link_placement"] == "none"
+    assert by_id[none_pid]["url_link_clicks"] is None  # not 0
+    assert by_id[body_pid]["link_placement"] == "body"
+    assert by_id[body_pid]["url_link_clicks"] == 0  # measured zero
+    assert by_id[reply_pid]["link_placement"] == "first_reply"
+    assert by_id[reply_pid]["url_link_clicks"] == 4
+
+    # Cohort has all three buckets — the variance #360 said was impossible.
+    lp = out["cohorts"]["link_placement"]
+    assert set(lp.keys()) == {"none", "body", "first_reply"}
+    assert all(lp[k]["n"] == 1 for k in lp)
+
+
 def test_tier1_engagement_rates_are_pure_ratios():
     """#361 Tier 1 — profile/bookmark/reply rates and quote-to-repost from payload fields.
 
@@ -682,6 +866,10 @@ def test_performance_page_ux_chart_loader_sort_no_link_col():
     assert "Link placement and reach" in text
     assert "Clicks" in text
     assert "url_link_clicks" in text
+    # #360 — three-state placement + null≠zero clicks helpers drive the UI.
+    assert "formatLinkPlacement" in text
+    assert "formatLinkClicks" in text
+    assert "normalizeLinkPlacement" in text
 
 
 @pytest.mark.asyncio

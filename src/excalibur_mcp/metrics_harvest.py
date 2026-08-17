@@ -66,6 +66,7 @@ def jobs_for_send(
     """Build the seven decaying-cadence harvest jobs for a newly-sent post."""
     if sent_at.tzinfo is None:
         sent_at = sent_at.replace(tzinfo=timezone.utc)
+    place = normalize_link_placement(link_placement)
     jobs: list[dict[str, Any]] = []
     for key, offset_s in HARVEST_CADENCE:
         jobs.append(
@@ -76,7 +77,7 @@ def jobs_for_send(
                 "cadence_key": key,
                 "due_at": sent_at + timedelta(seconds=offset_s),
                 "sent_at": sent_at,
-                "link_placement": link_placement,
+                "link_placement": place,
                 "snippet_ids": list(snippet_ids or []),
                 "voice_id": voice_id,
             }
@@ -98,17 +99,89 @@ def _parse_snippet_ids(doc: Any) -> list[str]:
     return out
 
 
-def _detect_link_placement(text: str | None) -> str:
-    """Heuristic: body has a URL → ``body``; otherwise ``none``.
+# Three-state placement. Never invent ``body`` for a missing value — that was the
+# #360 field-report failure mode (every row read "Body", cohort had zero variance).
+LINK_PLACEMENTS: frozenset[str] = frozenset({"none", "body", "first_reply"})
 
-    First-reply placement is a composition-time choice the FE can stamp later;
-    at harvest schedule time we only see the body that went out.
+
+def normalize_link_placement(value: Any) -> str:
+    """Coerce a stored/detected placement into ``none`` | ``body`` | ``first_reply``.
+
+    Unknown, blank, and null all become ``none``. Synonyms accepted so FE/API
+    stamps stay robust (``reply`` → ``first_reply``, ``no_link`` → ``none``).
+    """
+    if value is None:
+        return "none"
+    raw = str(value).strip().lower().replace("-", "_").replace(" ", "_")
+    if not raw:
+        return "none"
+    if raw in LINK_PLACEMENTS:
+        return raw
+    if raw in {"reply", "firstreply", "in_reply", "in_first_reply"}:
+        return "first_reply"
+    if raw in {"no_link", "nolink", "missing", "null"}:
+        return "none"
+    if raw in {"in_body", "body_link"}:
+        return "body"
+    return "none"
+
+
+def _detect_link_placement(text: str | None) -> str:
+    """Heuristic from outgoing body text: URL present → ``body``; else ``none``.
+
+    Cannot see a first-reply link (that text is not in the body). Composition-time
+    stamps override this via :func:`resolve_link_placement`.
     """
     if not text:
         return "none"
     if re.search(r"https?://\S+", text):
         return "body"
     return "none"
+
+
+def resolve_link_placement(
+    *,
+    link_placement: Any = None,
+    doc: Any = None,
+    text: str | None = None,
+) -> str:
+    """Pick the placement stamp for a send, in priority order:
+
+    1. Explicit ``link_placement`` arg (publisher / recovery tool).
+    2. ``doc.link_placement`` composition-time stamp (``first_reply`` lives here).
+    3. Body-text heuristic (``body`` | ``none`` only).
+    """
+    # Treat an explicit empty string as "not provided" so callers can pass through
+    # optional fields without forcing none over a doc stamp.
+    if link_placement is not None and str(link_placement).strip() != "":
+        return normalize_link_placement(link_placement)
+
+    if isinstance(doc, dict):
+        stamped = doc.get("link_placement") or doc.get("linkPlacement")
+        if stamped is not None and str(stamped).strip() != "":
+            return normalize_link_placement(stamped)
+
+    return _detect_link_placement(text)
+
+
+def clicks_for_placement(
+    url_link_clicks: Any, link_placement: str | None
+) -> int | None:
+    """Clicks are only meaningful when a link was placed.
+
+    For ``none``, return ``None`` (FE renders "—") even if the harvest stored 0 —
+    zero clicks on a no-link post is not a measured fact, and conflating it with
+    a real zero on a body link was the #360 Clicks-column ambiguity.
+    """
+    place = normalize_link_placement(link_placement)
+    if place == "none":
+        return None
+    if url_link_clicks is None:
+        return None
+    try:
+        return int(url_link_clicks)
+    except (TypeError, ValueError):
+        return None
 
 
 async def schedule_after_send(
@@ -121,6 +194,7 @@ async def schedule_after_send(
     doc: Any = None,
     text: str | None = None,
     voice_id: str | None = None,
+    link_placement: str | None = None,
 ) -> int:
     """Schedule harvest jobs after a successful publication. Best-effort."""
     tid = tweet_id or tweet_id_from_url(tweet_url)
@@ -133,7 +207,9 @@ async def schedule_after_send(
         tweet_id=tid,
         npub=npub,
         sent_at=when,
-        link_placement=_detect_link_placement(text),
+        link_placement=resolve_link_placement(
+            link_placement=link_placement, doc=doc, text=text
+        ),
         snippet_ids=_parse_snippet_ids(doc),
         voice_id=voice_id or npub,
     )
@@ -177,7 +253,9 @@ async def harvest_one(client: Any, job: dict[str, Any]) -> dict[str, Any]:
         bookmarks=metrics.get("bookmarks"),
         url_link_clicks=metrics.get("url_link_clicks"),
         user_profile_clicks=metrics.get("user_profile_clicks"),
-        link_placement=job.get("link_placement"),
+        # Always persist the three-state value so raw snapshots never carry null
+        # that a later reader could mis-render as "Body".
+        link_placement=normalize_link_placement(job.get("link_placement")),
         snippet_ids=job.get("snippet_ids") or [],
         voice_id=job.get("voice_id"),
         cadence_key=cadence,
@@ -322,10 +400,11 @@ def link_placement_cohort(rows: list[dict[str, Any]]) -> dict[str, dict[str, flo
 
     Each bucket is ``{"median": float, "n": int}`` so the FE can dim underpowered
     groups (n<3) instead of presenting a single-post "median" as authoritative.
+    Placement values are normalized to the three-state set; unknown/null → none.
     """
     buckets: dict[str, list[float]] = {}
     for r in rows:
-        place = str(r.get("link_placement") or "none")
+        place = normalize_link_placement(r.get("link_placement"))
         imp = r.get("impressions")
         if imp is None:
             continue
@@ -517,6 +596,9 @@ async def compute_post_performance(npub: str, *, follower_count: int | None = No
         latest_quotes = latest.get("quotes")
         latest_bookmarks = latest.get("bookmarks")
         latest_profile_clicks = latest.get("user_profile_clicks")
+        # #360 — always emit the three-state placement; never leave null for the
+        # FE to guess as "Body". Clicks are None when there is no link.
+        place = normalize_link_placement(latest.get("link_placement"))
         posts_out.append(
             {
                 "post_id": post_id,
@@ -524,7 +606,7 @@ async def compute_post_performance(npub: str, *, follower_count: int | None = No
                 "title": ident.get("title") or "",
                 "excerpt": ident.get("excerpt") or "",
                 "last_sent_at": ident.get("last_sent_at"),
-                "link_placement": latest.get("link_placement"),
+                "link_placement": place,
                 "voice_id": latest.get("voice_id"),
                 "snippet_ids": latest.get("snippet_ids") or [],
                 "latest_impressions": latest_imp,
@@ -533,7 +615,9 @@ async def compute_post_performance(npub: str, *, follower_count: int | None = No
                 "latest_reposts": latest_reposts,
                 "quotes": latest_quotes,
                 "bookmarks": latest_bookmarks,
-                "url_link_clicks": latest.get("url_link_clicks"),
+                "url_link_clicks": clicks_for_placement(
+                    latest.get("url_link_clicks"), place
+                ),
                 "user_profile_clicks": latest_profile_clicks,
                 "profile_click_rate": profile_click_rate(latest_profile_clicks, latest_imp),
                 "bookmark_rate": bookmark_rate(latest_bookmarks, latest_imp),

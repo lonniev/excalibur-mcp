@@ -5,6 +5,10 @@
 // #373 — fixed-width columns + long header text ("Escape velocity", …)
 // overlapped adjacent headers and made sort targets ambiguous. Short
 // labels carry the full name in `full` for title=/tooltip.
+//
+// #360 — link placement is a three-state value (none/body/first_reply).
+// Never render a missing placement as "Body"; never show 0 clicks for a
+// post with no link (that conflates null with zero).
 
 import type { PerformancePost } from "./mcp.ts";
 
@@ -20,6 +24,9 @@ export type PerfSortKey =
   | "quote_to_repost";
 
 export type PerfSortDir = "asc" | "desc";
+
+/** Canonical three-state link placement (#360). */
+export type LinkPlacement = "none" | "body" | "first_reply";
 
 /**
  * Visible header text must fit a ~6–10% table-fixed column (icon + tip +
@@ -44,6 +51,59 @@ export const PERF_SORT_COLUMNS: Record<
 /** Hard cap on visible short labels — guards against regressing to #373 overflow. */
 export const PERF_HEADER_SHORT_MAX = 8;
 
+/** Human labels for the three placement states — never invent "Body" for null. */
+export const LINK_PLACEMENT_LABELS: Record<LinkPlacement, string> = {
+  none: "None",
+  body: "Body",
+  first_reply: "First reply",
+};
+
+/**
+ * Coerce API/legacy placement into the three-state set.
+ * Blank, null, unknown → `none` (not `body` — that was the #360 bug).
+ */
+export function normalizeLinkPlacement(
+  value: string | null | undefined,
+): LinkPlacement {
+  if (value == null) return "none";
+  const raw = String(value).trim().toLowerCase().replace(/[-\s]/g, "_");
+  if (!raw) return "none";
+  if (raw === "body" || raw === "in_body" || raw === "body_link") return "body";
+  if (
+    raw === "first_reply" ||
+    raw === "firstreply" ||
+    raw === "reply" ||
+    raw === "in_reply" ||
+    raw === "in_first_reply"
+  ) {
+    return "first_reply";
+  }
+  if (raw === "none" || raw === "no_link" || raw === "nolink" || raw === "missing") {
+    return "none";
+  }
+  return "none";
+}
+
+/** Visible placement label for cohort rows / any residual per-row UI. */
+export function formatLinkPlacement(
+  value: string | null | undefined,
+): string {
+  return LINK_PLACEMENT_LABELS[normalizeLinkPlacement(value)];
+}
+
+/**
+ * Link clicks cell: `0` only when a link was placed and the harvest measured
+ * zero; `—` when there is no link OR the field was not captured.
+ */
+export function formatLinkClicks(
+  clicks: number | null | undefined,
+  placement: string | null | undefined,
+): string {
+  if (normalizeLinkPlacement(placement) === "none") return "—";
+  if (clicks == null || Number.isNaN(clicks)) return "—";
+  return Number(clicks).toLocaleString();
+}
+
 export function sortValue(p: PerformancePost, key: PerfSortKey): number {
   switch (key) {
     case "posted": {
@@ -56,8 +116,13 @@ export function sortValue(p: PerformancePost, key: PerfSortKey): number {
       return p.escape_velocity ?? Number.NEGATIVE_INFINITY;
     case "breakout_ratio":
       return p.breakout_ratio ?? Number.NEGATIVE_INFINITY;
-    case "clicks":
+    case "clicks": {
+      // No-link posts sort with uncaptured (bottom on desc), not as zero.
+      if (normalizeLinkPlacement(p.link_placement) === "none") {
+        return Number.NEGATIVE_INFINITY;
+      }
       return p.url_link_clicks ?? Number.NEGATIVE_INFINITY;
+    }
     case "profile":
       return p.user_profile_clicks ?? Number.NEGATIVE_INFINITY;
     case "bookmarks":
