@@ -19,7 +19,6 @@ import re
 import statistics
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from xml.sax.saxutils import escape
 
 from excalibur_mcp.db import metrics as metrics_db
 
@@ -726,8 +725,8 @@ def render_performance_infographic(data: dict[str, Any]) -> str:
             label = (p.get("title") or p.get("excerpt") or str(p.get("post_id") or ""))[:40]
             if len(str(p.get("title") or p.get("excerpt") or str(p.get("post_id") or ""))) > 40:
                 label = label.rstrip() + "…"
-            # SVG text must not carry raw <>&
-            label = escape(label)
+            # _text() (tollbooth.infographic) already escapes SVG text content —
+            # do not pre-escape here or titles like "a < b" become "&lt;".
             imp = p.get("latest_impressions")
             ev = p.get("escape_velocity")
             br = p.get("breakout_ratio")
@@ -786,10 +785,10 @@ def render_performance_infographic(data: dict[str, Any]) -> str:
             y += 28
         cy += ch + 12
 
-    # Footer
+    # Footer — _text() escapes content; pass the raw brand string.
     parts.append(
         _text(
-            WIDTH // 2, cy + 10, escape(theme.footer_brand),
+            WIDTH // 2, cy + 10, theme.footer_brand,
             size=10, fill=theme.text_dim, anchor="middle", family="sans-serif",
         )
     )
