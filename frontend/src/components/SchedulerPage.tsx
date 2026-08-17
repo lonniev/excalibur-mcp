@@ -12,6 +12,7 @@ import SchedulerPendingCard from "./SchedulerPendingCard";
 import RefreshButton from "./RefreshButton";
 import SchedulerStatusLine from "./SchedulerStatusLine";
 import { deriveSchedulerState, schedulerStatusTitle } from "../lib/schedulerState";
+import { attemptLabel } from "../lib/attemptLabel";
 
 const POLL_MS = 60 * 1000;
 
@@ -86,13 +87,18 @@ function RunCells({ summary: s }: { summary: SchedulerRun["summary"] }) {
             </div>
           )}
           {fell.length > 0 && (
+            // The reason is the whole point of the badge — "N on fallback"
+            // alone still made the owner open the post to learn WHY it went
+            // out as the consolation copy. Show the distinct reason(s) inline
+            // (deduped: four blocks all "out of credit" is one sentence), with
+            // the per-block breakdown kept in the tooltip.
             <span
               className="ml-1.5 text-amber-600 dark:text-amber-400"
-              title={`Posted, but ${fell.length === 1 ? "a dynamic block" : `${fell.length} dynamic blocks`} fell back to the author's text: ${fell
-                .map((f) => `${f.reason}${f.budget_s ? ` (budget ${f.budget_s}s)` : ""}`)
-                .join(", ")}`}
+              title={`Posted, but ${fell.length === 1 ? "a dynamic block" : `${fell.length} dynamic blocks`} fell back to the author's text:\n${fell
+                .map((f) => `block ${f.block}: ${attemptLabel(f.reason ?? "unreported")}${f.budget_s ? ` (budget ${f.budget_s}s)` : ""}`)
+                .join("\n")}`}
             >
-              ⚠ {fell.length} on fallback
+              ⚠ {Array.from(new Set(fell.map((f) => attemptLabel(f.reason ?? "unreported")))).join("; ")}
             </span>
           )}
           {!s.reason && !fell.length && <span className="text-stone-400">—</span>}
