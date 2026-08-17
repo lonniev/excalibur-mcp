@@ -34,7 +34,7 @@ jobs:
             done
           fi
 
-      - uses: astral-sh/setup-uv@v9.0.0
+      - uses: astral-sh/setup-uv@v10.0.0
 
       # Install from uv.lock — the SAME artifact Horizon builds from. Its build
       # config reads `Dependencies: uv.lock` and runs `uv sync --frozen`, so CI
