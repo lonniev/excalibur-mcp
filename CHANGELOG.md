@@ -89,6 +89,12 @@ invisible to in-process assertions because the timeout is baked into the deploym
 first deployed version carried a literal `timeout=3600`, nesting by luck at the ceiling
 of the day.
 
+## 0.39.1 — 2026-08-17
+
+### Changed — track tollbooth-dpyc 0.86.0 (GitHub-free bootstrap)
+
+Picks up the GitHub-free operator bootstrap: relays and Authority resolution now come from the Oracle via MCP, so this operator no longer reads the dpyc-community registry on GitHub — closing the fleet-wide bootstrap SPOF.
+
 ## 0.39.0 — 2026-08-10
 
 ### Added — the Performance page answers questions instead of listing numbers
