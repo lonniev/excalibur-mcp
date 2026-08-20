@@ -338,3 +338,36 @@ export function hourInZone(iso: string, timeZone: string): number | null {
   if (Number.isNaN(t)) return null;
   return getZonedParts(new Date(t), timeZone).hour;
 }
+
+// ── Time-of-day deep-link (Performance chart → Posts) ───────────────────────
+//
+// The Performance Time-of-day chart deep-links into Posts with `?hour=HH`
+// (local wall hour 0–23 in the patron zone). Posts applies that as a sent-hour
+// filter so the operator lands on the posts behind a clicked bar.
+
+/** Parse a URL/search hour param into 0–23, or null when absent/invalid. */
+export function parseLocalHourParam(raw: string | null | undefined): number | null {
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  // Accept "9", "09", optionally with trailing noise rejected.
+  if (!/^\d{1,2}$/.test(s)) return null;
+  const n = Number.parseInt(s, 10);
+  if (!Number.isInteger(n) || n < 0 || n > 23) return null;
+  return n;
+}
+
+/** Zero-pad a local hour for URL/query keys ("9" → "09"). */
+export function formatLocalHourParam(hour: number): string {
+  return pad2(hour);
+}
+
+/**
+ * Posts-page href that pre-applies a time-of-day filter for `localHour`.
+ * Invalid hours yield the bare posts root (no filter) so a bad click never 404s.
+ */
+export function postsHrefForLocalHour(localHour: number): string {
+  const h = parseLocalHourParam(String(localHour));
+  if (h == null) return "/";
+  return `/?hour=${formatLocalHourParam(h)}`;
+}

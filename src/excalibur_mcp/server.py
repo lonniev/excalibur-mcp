@@ -661,6 +661,8 @@ async def list_posts(
     date_to: str = "",
     date_field: str = "created",
     template_id: str = "",
+    sent_hour: int | None = None,
+    time_zone: str = "",
     npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "", dpop_token: str = "",
 ) -> dict:
     """List your stored posts, server-side sorted, filtered, and offset-paginated.
@@ -674,8 +676,11 @@ async def list_posts(
     the FE — exclusive upper bound when instant). Bound the ``date_field`` column,
     one of ``created|updated|scheduled|sent``
     (default ``created``). ``template_id`` filters to the sent occurrences a recurring
-    template fired. ``page`` is 0-indexed; ``page_size`` is 1..100. Each row carries
-    ``is_recurring``, ``has_dynamic``, and ``template_id`` (set on sent occurrences).
+    template fired. ``sent_hour`` (0–23) with ``time_zone`` (IANA) keeps only posts
+    whose ``last_sent_at`` local wall hour in that zone matches — used by the
+    Performance time-of-day chart deep-link. ``page`` is 0-indexed; ``page_size``
+    is 1..100. Each row carries ``is_recurring``, ``has_dynamic``, and
+    ``template_id`` (set on sent occurrences).
     Returns ``{posts:[…], total, page, page_size}`` reflecting the filtered set."""
     from excalibur_mcp.tools import posts as posts_tools
 
@@ -685,6 +690,7 @@ async def list_posts(
         page=page, page_size=page_size, npub=npub,
         search=search, date_from=date_from, date_to=date_to, date_field=date_field,
         template_id=template_id,
+        sent_hour=sent_hour, time_zone=time_zone,
     )
 
 
