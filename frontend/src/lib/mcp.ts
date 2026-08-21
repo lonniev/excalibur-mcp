@@ -697,6 +697,10 @@ export interface ListFilterOpts {
   dateFrom?: string;
   dateTo?: string;
   dateField?: string;
+  /** Local wall hour 0–23 of last_sent_at (Performance ToD deep-link #506). */
+  sentHour?: number;
+  /** IANA zone for sentHour (must match the chart's zone). */
+  timeZone?: string;
 }
 
 export async function listPosts(
@@ -714,6 +718,10 @@ export async function listPosts(
   if (opts.dateTo) args.date_to = opts.dateTo;
   if (opts.dateField) args.date_field = opts.dateField;
   if (opts.templateId) args.template_id = opts.templateId;
+  if (opts.sentHour != null && opts.timeZone) {
+    args.sent_hour = opts.sentHour;
+    args.time_zone = opts.timeZone;
+  }
   return callTool<ListPostsResult>("list_posts", args);
 }
 

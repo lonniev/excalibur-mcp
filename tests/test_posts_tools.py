@@ -131,6 +131,21 @@ async def test_list_threads_search_and_dates_to_db():
 
 
 @pytest.mark.asyncio
+async def test_list_threads_sent_hour_and_time_zone_to_db():
+    """#506 — chart deep-link hour filter reaches the DB layer."""
+    with patch.object(posts_tools.posts_db, "list_posts",
+                      new=AsyncMock(return_value={"posts": [], "total": 0, "page": 0, "page_size": 25})) as lp:
+        await posts_tools.list_(
+            _runtime(), TOOL, status="", sort_col="created", sort_dir="desc",
+            page=0, page_size=25, npub=NPUB,
+            sent_hour=14, time_zone="America/New_York",
+        )
+    kw = lp.await_args.kwargs
+    assert kw["sent_hour"] == 14
+    assert kw["time_zone"] == "America/New_York"
+
+
+@pytest.mark.asyncio
 async def test_get_rejects_non_uuid():
     with pytest.raises(ValueError):
         await posts_tools.get(_runtime(), TOOL, post_id="not-a-uuid", npub=NPUB)

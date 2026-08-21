@@ -800,6 +800,52 @@ async def test_list_posts_iso_instant_bounds_use_timestamptz():
 
 
 @pytest.mark.asyncio
+async def test_list_posts_sent_hour_filters_local_hour_in_zone():
+    """#506 — Performance ToD bar click → Posts filtered by local send hour."""
+    captured: dict = {}
+
+    async def fake_fetchrow(query, *args):
+        captured["count_args"] = args
+        return {"n": 0}
+
+    async def fake_fetch(query, *args):
+        captured["query"] = query
+        captured["args"] = args
+        return []
+
+    with patch.object(posts_db, "fetchrow", fake_fetchrow), \
+         patch.object(posts_db, "fetch", fake_fetch):
+        await posts_db.list_posts(
+            NPUB, sent_hour=9, time_zone="America/New_York", page=0, page_size=25,
+        )
+    q = captured["query"]
+    # Local hour via AT TIME ZONE — never EXTRACT on bare UTC (DST-wrong).
+    assert "AT TIME ZONE" in q
+    assert "EXTRACT(HOUR FROM last_sent_at AT TIME ZONE $2)::int = $3" in q
+    assert captured["args"][:3] == (NPUB, "America/New_York", 9)
+    assert captured["count_args"] == (NPUB, "America/New_York", 9)
+
+
+@pytest.mark.asyncio
+async def test_list_posts_sent_hour_ignores_invalid_zone_or_hour():
+    """#506 — bad zone/hour must not inject SQL or filter incorrectly."""
+    with patch.object(posts_db, "fetchrow", AsyncMock(return_value={"n": 0})), \
+         patch.object(posts_db, "fetch", AsyncMock(return_value=[])) as f:
+        await posts_db.list_posts(NPUB, sent_hour=9, time_zone="Not/AZone")
+        q = f.await_args.args[0]
+        assert "AT TIME ZONE" not in q
+        assert "EXTRACT(HOUR" not in q
+
+        await posts_db.list_posts(NPUB, sent_hour=24, time_zone="UTC")
+        q = f.await_args.args[0]
+        assert "EXTRACT(HOUR" not in q
+
+        await posts_db.list_posts(NPUB, sent_hour=9, time_zone="")
+        q = f.await_args.args[0]
+        assert "EXTRACT(HOUR" not in q
+
+
+@pytest.mark.asyncio
 async def test_list_posts_unknown_sort_falls_back_to_created():
     async def fake_fetchrow(query, *args):
         return {"n": 0}

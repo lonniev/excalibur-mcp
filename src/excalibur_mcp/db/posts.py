@@ -16,11 +16,39 @@ from __future__ import annotations
 import json
 import logging
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from excalibur_mcp.config import get_settings
 from excalibur_mcp.db.neon import execute, fetch, fetchrow
 
 logger = logging.getLogger(__name__)
+
+
+def _valid_iana_zone(name: str | None) -> str | None:
+    """Return ``name`` when it is a real IANA zone, else None (never trust raw input)."""
+    if not name or not isinstance(name, str):
+        return None
+    z = name.strip()
+    if not z or len(z) > 64:
+        return None
+    try:
+        ZoneInfo(z)
+    except (ZoneInfoNotFoundError, KeyError, ValueError):
+        return None
+    return z
+
+
+def _valid_sent_hour(hour: int | None) -> int | None:
+    """Return hour when it is an int in 0..23, else None."""
+    if hour is None:
+        return None
+    try:
+        h = int(hour)
+    except (TypeError, ValueError):
+        return None
+    if h < 0 or h > 23:
+        return None
+    return h
 
 
 def _as_list(value: Any) -> list[Any]:
@@ -212,6 +240,8 @@ async def list_posts(
     date_to: str | None = None,
     date_field: str = "created",
     template_id: str | None = None,
+    sent_hour: int | None = None,
+    time_zone: str | None = None,
 ) -> dict[str, Any]:
     """Server-side sorted, offset-paginated, optionally filtered list for the owner.
 
@@ -220,8 +250,11 @@ async def list_posts(
     is a stable tiebreak. ``search`` is a case-insensitive regex matched against
     ``text_cache`` (``~*``); ``date_from``/``date_to`` bound the ``date_field``
     column (``_DATE_FIELDS`` whitelist, default ``created_at``), end-inclusive.
-    All user input is parameterized. The same WHERE drives the COUNT and the
-    page. Returns ``{posts, total, page, page_size}``.
+    ``sent_hour`` + ``time_zone`` (IANA) keep only posts whose ``last_sent_at``
+    wall hour in that zone equals ``sent_hour`` (0–23) — the Performance
+    time-of-day chart deep-link (#506). All user input is parameterized. The
+    same WHERE drives the COUNT and the page. Returns
+    ``{posts, total, page, page_size}``.
     """
     psize = max(1, min(100, page_size))
     pg = max(0, page)
@@ -265,6 +298,20 @@ async def list_posts(
         # "Occurrences of this template" — the sent snapshots a recurring post fired.
         params.append(template_id)
         where += f" AND template_id = ${len(params)}::uuid"
+    # #506 — local send-hour filter for the Performance ToD chart deep-link.
+    # Both args must be valid; zone is parameterized (never interpolated). Hour
+    # is taken from last_sent_at AT TIME ZONE so DST edges match the chart.
+    zone = _valid_iana_zone(time_zone)
+    hour = _valid_sent_hour(sent_hour)
+    if zone is not None and hour is not None:
+        params.append(zone)
+        zone_idx = len(params)
+        params.append(hour)
+        hour_idx = len(params)
+        where += (
+            f" AND last_sent_at IS NOT NULL"
+            f" AND EXTRACT(HOUR FROM last_sent_at AT TIME ZONE ${zone_idx})::int = ${hour_idx}"
+        )
 
     total_row = await fetchrow(
         f"SELECT COUNT(*) AS n FROM posts WHERE {where}", *params

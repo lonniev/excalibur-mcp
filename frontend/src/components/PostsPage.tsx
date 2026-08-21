@@ -8,7 +8,12 @@ import {
 } from "../lib/mcp";
 import { uid } from "../lib/editorDoc";
 import { attemptLabel } from "../lib/attemptLabel";
-import { formatDateTime, localDateFilterBounds } from "../lib/timezone";
+import {
+  formatDateTime,
+  formatHourLabel,
+  localDateFilterBounds,
+  parseLocalHourParam,
+} from "../lib/timezone";
 import { useTimezone } from "../lib/useTimezone";
 import TweetPreviewModal from "./TweetPreviewModal";
 import { PageControls, SortHeader, TableShell } from "./PagedTable";
@@ -138,10 +143,14 @@ export default function PostsPage() {
   // When set (?template=<id>), the list is scoped to one template's published
   // occurrences — the "View published postings" view from the editor.
   const templateFilter = searchParams.get("template");
+  // #506 — Performance ToD chart deep-link: `?hour=HH` (local wall hour 0–23).
+  const hourFilter = parseLocalHourParam(searchParams.get("hour"));
   const [posts, setPosts] = useState<PostSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
   // The set of statuses to include. Starts fully selected (== the old "all" tab).
+  // A ToD hour filter already requires last_sent_at in SQL, so drafts drop out
+  // without needing a special status default.
   const [selected, setSelected] = useState<Set<string>>(() => new Set(POST_STATUSES));
   const [sortCol, setSortCol] = useState("created");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -197,6 +206,9 @@ export default function PostsPage() {
         dateTo: bounds.dateTo,
         dateField,
         templateId: templateFilter ?? undefined,
+        // #506 — local send-hour from the Performance chart deep-link.
+        sentHour: hourFilter ?? undefined,
+        timeZone: hourFilter != null ? timeZone : undefined,
       });
       if (r.error) setError(r.error);
       setPosts(r.posts ?? []);
@@ -210,7 +222,7 @@ export default function PostsPage() {
     // Best-effort and non-blocking: a row's OAuth affordance is suppressed only
     // on a definite "connected", so a failure here just leaves the old behaviour.
     void getXConnection().then(setXConn).catch(() => setXConn(null));
-  }, [selected, sortCol, sortDir, page, search, dateFrom, dateTo, dateField, templateFilter, timeZone]);
+  }, [selected, sortCol, sortDir, page, search, dateFrom, dateTo, dateField, templateFilter, timeZone, hourFilter]);
 
   useEffect(() => {
     refresh();
@@ -402,6 +414,39 @@ export default function PostsPage() {
         </div>
       )}
 
+      {hourFilter != null && (
+        <div
+          className="mb-4 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
+          data-testid="hour-filter-banner"
+        >
+          <span>
+            ⏱ Showing posts sent around{" "}
+            <strong className="font-medium">{formatHourLabel(hourFilter, timeZone)}</strong>
+            {" "}
+            <span className="text-amber-700/80 dark:text-amber-400/80">({timeZone})</span>
+            .
+          </span>
+          <Link
+            to="/performance"
+            className="underline underline-offset-2 hover:no-underline"
+          >
+            Back to Performance →
+          </Link>
+          <button
+            type="button"
+            onClick={() => {
+              const next = new URLSearchParams(searchParams);
+              next.delete("hour");
+              setSearchParams(next);
+              setPage(0);
+            }}
+            className="ml-auto rounded-md px-2 py-0.5 text-amber-800 hover:bg-amber-100 dark:text-amber-300 dark:hover:bg-amber-500/20"
+          >
+            Clear ✕
+          </button>
+        </div>
+      )}
+
       <div className="flex flex-wrap gap-1.5 mb-4 text-xs">
         <button
           onClick={selectAll}
@@ -493,7 +538,7 @@ export default function PostsPage() {
           <p className="text-sm text-stone-400 dark:text-zinc-500 mb-3">
             {noneSelected
               ? "No status selected — pick one above, or choose all."
-              : search || dateFrom || dateTo || !allSelected
+              : search || dateFrom || dateTo || hourFilter != null || !allSelected
                 ? "No posts match this filter."
                 : "No posts yet."}
           </p>

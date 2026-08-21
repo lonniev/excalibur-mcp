@@ -12,6 +12,8 @@ import {
   hourInZone,
   isoToDatetimeLocalValue,
   localDateFilterBounds,
+  parseLocalHourParam,
+  postsHrefForLocalHour,
   resolveTimeZone,
   startOfLocalDayIso,
   startOfNextLocalDayIso,
@@ -143,5 +145,33 @@ describe("formatPostedShort", () => {
     assert.match(s, /Jan/);
     assert.match(s, /15/);
     assert.match(s, /12:00/);
+  });
+});
+
+describe("time-of-day deep-link (Performance → Posts) #506", () => {
+  it("parses zero-padded and bare hour query values into 0–23", () => {
+    assert.equal(parseLocalHourParam("09"), 9);
+    assert.equal(parseLocalHourParam("9"), 9);
+    assert.equal(parseLocalHourParam("00"), 0);
+    assert.equal(parseLocalHourParam("23"), 23);
+  });
+
+  it("rejects missing and out-of-range hour params", () => {
+    assert.equal(parseLocalHourParam(null), null);
+    assert.equal(parseLocalHourParam(""), null);
+    assert.equal(parseLocalHourParam("24"), null);
+    assert.equal(parseLocalHourParam("-1"), null);
+    assert.equal(parseLocalHourParam("9am"), null);
+    assert.equal(parseLocalHourParam("abc"), null);
+  });
+
+  it("builds a Posts href that pre-sets the hour filter for a chart bar click", () => {
+    // Chart bars deep-link here so Posts can filter last_sent_at by local hour.
+    assert.equal(postsHrefForLocalHour(9), "/?hour=09");
+    assert.equal(postsHrefForLocalHour(0), "/?hour=00");
+    assert.equal(postsHrefForLocalHour(23), "/?hour=23");
+    // Invalid hours must not invent a filter.
+    assert.equal(postsHrefForLocalHour(24), "/");
+    assert.equal(postsHrefForLocalHour(-3), "/");
   });
 });

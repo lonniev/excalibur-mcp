@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   Bookmark,
   Camera,
@@ -33,6 +33,7 @@ import {
 import {
   formatHourLabel,
   formatPostedShort,
+  postsHrefForLocalHour,
   timeOfDayCohortInZone,
 } from "../lib/timezone";
 import { useTimezone } from "../lib/useTimezone";
@@ -300,6 +301,9 @@ type TodBar = { localHour: number; median: number; n: number };
  * relabeling UTC hour keys (wrong near DST edges and the date line).
  * Empty hours stay on the axis (the gaps are the signal). n is encoded as bar
  * opacity + a count label; n<3 reads as provisional.
+ *
+ * #506 — bars with data are buttons that deep-link to Posts filtered to that
+ * local send hour (`/?hour=HH`), so the operator can open the posts behind a bar.
  */
 function TimeOfDayChart({
   buckets,
@@ -308,6 +312,7 @@ function TimeOfDayChart({
   buckets: Record<string, CohortBucket | number>;
   timeZone: string;
 }) {
+  const nav = useNavigate();
   const bars: TodBar[] = useMemo(() => {
     const byLocal = new Map<number, TodBar>();
     for (let h = 0; h < 24; h++) {
@@ -333,8 +338,8 @@ function TimeOfDayChart({
     <div className="time-of-day-chart" data-testid="time-of-day-chart">
       <div
         className="flex items-end gap-px sm:gap-0.5 h-[120px]"
-        role="img"
-        aria-label="Median impressions by local send hour across a full day"
+        role="list"
+        aria-label="Median impressions by local send hour across a full day. Click a bar to open posts sent in that hour."
       >
         {bars.map((b) => {
           const has = b.n > 0;
@@ -344,11 +349,21 @@ function TimeOfDayChart({
           const opacity = !has ? 0 : provisional ? 0.35 + 0.15 * b.n : Math.min(1, 0.55 + 0.15 * Math.min(b.n, 4));
           const label = formatHourLabel(b.localHour, timeZone);
           const title = has
-            ? `${label} · median ${Math.round(b.median).toLocaleString()} impr. · n=${b.n}${provisional ? " (provisional)" : ""}`
+            ? `${label} · median ${Math.round(b.median).toLocaleString()} impr. · n=${b.n}${provisional ? " (provisional)" : ""} — open posts`
             : `${label} · no posts yet`;
+          const barClass = `w-full max-w-[18px] mx-auto rounded-t-sm ${
+            provisional
+              ? "bg-amber-400/80 dark:bg-amber-500/70"
+              : "bg-amber-500 dark:bg-amber-400"
+          } ${!has ? "bg-stone-100 dark:bg-zinc-800" : ""}`;
+          const barStyle = {
+            height: has ? hPx : 2,
+            opacity: has ? opacity : 0.35,
+          } as const;
           return (
             <div
               key={b.localHour}
+              role="listitem"
               className="flex-1 min-w-0 flex flex-col items-center justify-end h-full group relative"
               title={title}
             >
@@ -365,17 +380,18 @@ function TimeOfDayChart({
               ) : (
                 <span className="mb-0.5 text-[9px] leading-none opacity-0">n</span>
               )}
-              <div
-                className={`w-full max-w-[18px] mx-auto rounded-t-sm ${
-                  provisional
-                    ? "bg-amber-400/80 dark:bg-amber-500/70"
-                    : "bg-amber-500 dark:bg-amber-400"
-                } ${!has ? "bg-stone-100 dark:bg-zinc-800" : ""}`}
-                style={{
-                  height: has ? hPx : 2,
-                  opacity: has ? opacity : 0.35,
-                }}
-              />
+              {has ? (
+                <button
+                  type="button"
+                  data-testid={`tod-bar-${b.localHour}`}
+                  aria-label={`Open posts sent around ${label}`}
+                  onClick={() => nav(postsHrefForLocalHour(b.localHour))}
+                  className={`${barClass} cursor-pointer transition-opacity hover:opacity-100 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-1 dark:focus-visible:ring-offset-zinc-900`}
+                  style={barStyle}
+                />
+              ) : (
+                <div className={barClass} style={barStyle} aria-hidden />
+              )}
             </div>
           );
         })}
@@ -392,7 +408,7 @@ function TimeOfDayChart({
         ))}
       </div>
       <p className="mt-2 text-[10px] text-center text-stone-400 dark:text-zinc-500">
-        {`Local time (${timeZone}). Bars with n<3 are provisional.`}
+        {`Local time (${timeZone}). Bars with n<3 are provisional. Click a bar to open those posts.`}
       </p>
     </div>
   );

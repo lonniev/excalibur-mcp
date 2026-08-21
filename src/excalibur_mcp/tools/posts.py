@@ -156,13 +156,24 @@ async def list_(
     page: int, page_size: int, npub: str,
     search: str = "", date_from: str = "", date_to: str = "", date_field: str = "created",
     template_id: str = "",
+    sent_hour: int | None = None,
+    time_zone: str = "",
 ) -> dict[str, Any]:
+    # Coerce sent_hour from tool wire (may arrive as str/float); invalid → None.
+    hour: int | None = None
+    if sent_hour is not None and sent_hour != "":
+        try:
+            hour = int(sent_hour)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            hour = None
     return await posts_db.list_posts(
         npub, status=status or None, sort_col=sort_col, sort_dir=sort_dir,
         page=page, page_size=page_size,
         search=validate_search(search), date_from=date_from or None,
         date_to=date_to or None, date_field=date_field or "created",
         template_id=_require_uuid(template_id) if template_id else None,
+        sent_hour=hour,
+        time_zone=time_zone or None,
     )
 
 
