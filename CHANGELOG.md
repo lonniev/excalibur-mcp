@@ -89,6 +89,26 @@ invisible to in-process assertions because the timeout is baked into the deploym
 first deployed version carried a literal `timeout=3600`, nesting by luck at the ceiling
 of the day.
 
+## [0.39.4] — 2026-08-22
+
+### Changed — track tollbooth-dpyc 0.87.2
+
+An object argument a client serialised as a JSON string is now parsed
+rather than refused as `dict_type`. This is the fix for `update_post`
+rejecting a large `patch` — the payload was never malformed and its size
+was never the variable; the client had simply encoded it one time more
+than the schema asks. A 10 KB object was always accepted; a 12-byte
+string never was.
+
+## [0.39.3] — 2026-08-22
+
+### Changed — track tollbooth-dpyc 0.87.2
+
+An object argument a client serialised as a JSON string is now parsed
+rather than refused as `dict_type`. Fixes `update_post` rejecting a
+large patch and `update_design_text` rejecting a multi-key edits
+object.
+
 ## [0.39.2] — 2026-08-22
 
 ### Changed — track tollbooth-dpyc 0.87.1
