@@ -48,9 +48,28 @@ jobs:
         with:
           ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
 
+      # MUST match `debian_slim(python_version=...)` in modal_app.py. This runner
+      # was on 3.14 while the image, ci.yml and Horizon were all on 3.12, and the
+      # deploy failed every run from 2026-08-17: coincurve 21.0.0 (via pynostr)
+      # publishes no cp314 wheel, so `uv sync` built it from sdist and the build
+      # died against a newer cffi. Nothing about Modal was wrong; the runner just
+      # could not install the project. The step below keeps the two in step.
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.14"
+          python-version: "3.12"
+
+      - name: The runner's Python matches the image it deploys
+        run: |
+          set -euo pipefail
+          IMAGE_PY=$(grep -oE 'python_version="[0-9]+\.[0-9]+"' modal_app.py | head -1 | grep -oE '[0-9]+\.[0-9]+')
+          RUNNER_PY=$(python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+          echo "image=$IMAGE_PY runner=$RUNNER_PY"
+          if [ "$IMAGE_PY" != "$RUNNER_PY" ]; then
+            echo "::error::modal_app.py builds a Python $IMAGE_PY image but this runner is $RUNNER_PY."
+            echo "Resolution happens HERE, so a runner on a Python the dependencies have no wheels for"
+            echo "falls back to building from source and fails — while CI stays green on its own version."
+            exit 1
+          fi
 
       # The image runs `pip_install_from_pyproject`, so a pin that has not landed on PyPI
       # yet fails the build rather than merely resolving late. Same wait as ci.yml.
