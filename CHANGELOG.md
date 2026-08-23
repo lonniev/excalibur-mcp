@@ -89,6 +89,26 @@ invisible to in-process assertions because the timeout is baked into the deploym
 first deployed version carried a literal `timeout=3600`, nesting by luck at the ceiling
 of the day.
 
+## [0.39.6] — 2026-08-23
+
+### Changed — track tollbooth-dpyc 0.87.3
+
+Recovering an orphaned job now uses the detached executor it was
+dispatched to. The recovery path never resolved the executor, so a job
+orphaned by a container recycle was retried in-process on the new front
+— bypassing the detached runner precisely when it was the point.
+`resolve_dynamic_block` and `resolve_post_body` are exactly that shape.
+
+## [0.39.5] — 2026-08-22
+
+### Changed — track tollbooth-dpyc 0.87.3
+
+Recovering an orphaned job now uses the detached executor it was
+dispatched to. The recovery path never resolved the executor, so a
+job orphaned by a container recycle was retried in-process on the
+new front — bypassing the detached runner precisely when it was
+the point.
+
 ## [0.39.4] — 2026-08-22
 
 ### Changed — track tollbooth-dpyc 0.87.2
