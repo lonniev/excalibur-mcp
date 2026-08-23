@@ -73,25 +73,44 @@ jobs:
 
       # The image runs `pip_install_from_pyproject`, so a pin that has not landed on PyPI
       # yet fails the build rather than merely resolving late. Same wait as ci.yml.
+      # Two flaws fixed here on 2026-08-23, both of which turned a clear
+      # problem into a confusing one.
+      #
+      # It polled `pip index versions`, which reads the CDN-cached simple
+      # index. That view lags: a version visible on PyPI's JSON API within
+      # seconds of publish was still missing from pip's five minutes later.
+      #
+      # And on exhausting its attempts it fell through and exited SUCCESS,
+      # letting the install fail seconds later with "no matching
+      # distribution" and a 300-version list. A step whose only job is to
+      # prevent that failure must not go quiet when it cannot.
       - name: Wait for tollbooth-dpyc on PyPI
         run: |
-          REQUIRED=$(grep 'tollbooth-dpyc' pyproject.toml | grep -oP '==\K[0-9.]+')
-          if [ -n "$REQUIRED" ]; then
+            set -euo pipefail
+            REQUIRED=$(grep -oE 'tollbooth-dpyc(\[[a-z,]+\])?==[0-9.]+' pyproject.toml \
+                       | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+            if [ -z "$REQUIRED" ]; then
+              echo "No pinned tollbooth-dpyc version found; nothing to wait for."
+              exit 0
+            fi
             echo "Waiting for tollbooth-dpyc==$REQUIRED on PyPI..."
             for i in $(seq 1 30); do
-              if pip index versions tollbooth-dpyc 2>/dev/null | grep -q "$REQUIRED"; then
-                echo "Found tollbooth-dpyc==$REQUIRED on PyPI"
-                break
+              # The JSON API, not the cached simple index pip reads.
+              if curl -sf "https://pypi.org/pypi/tollbooth-dpyc/$REQUIRED/json" \
+                   -o /dev/null; then
+                echo "Found tollbooth-dpyc==$REQUIRED on PyPI (attempt $i)"
+                exit 0
               fi
               echo "Attempt $i/30 — not yet available, waiting 10s..."
               sleep 10
             done
-          fi
+            echo "::error::tollbooth-dpyc==$REQUIRED never appeared on PyPI after 5 minutes."
+            echo "The pin references a version that is not published. Check that the"
+            echo "release workflow's PyPI publish succeeded before re-running this."
+            exit 1
 
       - uses: astral-sh/setup-uv@v10.0.0
 
-      # From the lockfile, for the same reason ci.yml does: the `modal` client that
-      # performs the deploy should be the one this project pins, not a floating latest.
       - name: Install dependencies (the lockfile Horizon deploys)
         run: uv sync --locked --extra dev
 
