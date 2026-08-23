@@ -171,11 +171,21 @@ _DOMAIN_TOOLS = [
     ToolIdentity(tool_id=capability_uuid("scheduler_status"), capability="scheduler_status",
                  category="free", intent="Read the scheduler's configuration and status"),
     # Poke the Worker to run one tick now — claims a pending proof reply
-    # (completing authorization) and fires due posts. `restricted` (operator
-    # only), free. Lets the operator complete an approval on demand instead of
-    # waiting for the next cron tick.
+    # (completing authorization) and fires due posts. `free` + proof-gated: any
+    # proven patron may say "go look now".
+    #
+    # This was `restricted`, which read as caution and was in fact fiction: the
+    # poke proxies the Worker's `/tick`, an unauthenticated public route on a
+    # URL hardcoded in this public repo. The gate stopped nobody who wanted to
+    # abuse it and stopped exactly one person who shouldn't have been stopped —
+    # the patron who can SEE the scheduler is parked awaiting approval but is
+    # not the operator whose DM approves it. A poke carries no authority: a tick
+    # can only claim a reply the operator's own nsec signed (unforgeable here),
+    # fire posts already due, or re-DM the operator. Nothing a patron gains by
+    # asking the Worker to check early. The phrase itself stays operator-only —
+    # that's `scheduler_pending`, and it is the anti-impostor gate.
     ToolIdentity(tool_id=capability_uuid("scheduler_check_now"), capability="scheduler_check_now",
-                 category="restricted", intent="Operator: run a scheduler tick now"),
+                 category="free", intent="Ask the scheduler to run a tick now"),
     # Post-metrics harvest + derived reach analytics (#321). Handlers were
     # exported via paid_tool but must also seed ToolIdentity rows so the
     # tollbooth dispatch UUID-join succeeds (without these: tool_not_registered).
@@ -1586,18 +1596,26 @@ async def scheduler_status(
 @tool
 @runtime.paid_tool(capability_uuid("scheduler_check_now"), catch_errors=True)
 async def scheduler_check_now(
-    npub: Annotated[str, Field(description="The OPERATOR's npub (npub1...); this tool is operator-only.")] = "",
+    npub: Annotated[str, Field(description="Your npub (npub1...).")] = "",
     dpop_token: str = "",
 ) -> dict:
-    """Run one scheduler tick now (operator-only).
+    """Ask the scheduler to run one tick now (free; any proven patron).
 
     Pokes the Worker's ``/tick`` — the same work the ~30-minute cron does: it
-    claims a pending proof reply (completing your authorization) and fires any
-    due posts. Use it right after approving in Studio so you don't wait for the
-    next tick. The Worker runs the tick in the background and returns
-    immediately; re-read ``scheduler_status`` a few seconds later to see the
-    phase flip. Returns ``{started: true}`` or ``{started: false}`` if the
-    Worker couldn't be reached.
+    claims a pending proof reply (completing the operator's authorization) and
+    fires any due posts. Use it right after the operator approves in Studio so
+    nobody waits for the next tick.
+
+    Deliberately NOT operator-only. Approving is the operator's act; noticing
+    that they approved is anyone's, and a patron watching a parked scheduler is
+    often the one who notices first. The poke carries no authority — it cannot
+    approve anything, only ask the Worker to look. The challenge phrase stays
+    operator-gated (``scheduler_pending``).
+
+    The Worker runs the tick in the background and returns immediately; re-read
+    ``scheduler_status`` a few seconds later to see the phase flip. Returns
+    ``{started: true}`` or ``{started: false}`` if the Worker couldn't be
+    reached.
     """
     import httpx
 

@@ -1,17 +1,28 @@
 // The Device-Grant "second surface" for the scheduled-post Worker.
 //
 // When the cron Worker's authorization lapses it DMs the operator a challenge
-// phrase and waits. Asleep-at-3am, the operator later needs to know WHAT asked
+// phrase and parks. Asleep-at-3am, the operator later needs to know WHAT asked
 // and prove it's their own scheduler, not a well-timed impostor. This card is
 // that proof: it shows — owner-private, fed from the Worker's own KV — the same
 // phrase the DM carries. Matching the two is the approval gate. If the phrase
 // here doesn't appear in any DM, the operator should NOT approve.
 //
-// Hidden unless the scheduler is actually pending AND the viewer is the
-// operator (getSchedulerPending returns null otherwise — the MCP gates it to
-// the operator npub). A plain npub login suffices; the browser signs nothing.
-// Approval itself happens in Pricing Studio — the operator nsec that signs the
-// reply lives there, not in this browser.
+// Two viewers, two different needs:
+//
+//   The OPERATOR sees the phrase, because they are the one about to approve and
+//   the phrase is what they match the DM against. That read stays gated to the
+//   operator npub (`scheduler_pending`) — an impostor learning the phrase is
+//   exactly the attack this card exists to defeat.
+//
+//   A PATRON sees that the scheduler is parked, and nothing secret. Their posts
+//   are the ones not going out, so hiding the whole situation from them (which
+//   this card used to do — it rendered null for every non-operator) left the
+//   person most affected staring at a red "Stalled" dot with no explanation and
+//   no move to make. They get the one move that is legitimately theirs: "the
+//   operator says they approved — go look now." That poke carries no authority.
+//
+// Approval itself always happens in Pricing Studio — the operator nsec that
+// signs the reply lives there, not in this browser.
 
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -19,10 +30,18 @@ import {
   getSchedulerStatus,
   getStoredNpub,
   runSchedulerCheckNow,
-  type SchedulerPending,
 } from "../lib/mcp";
 
 const POLL_MS = 5 * 60 * 1000;
+
+/** A parked scheduler as THIS viewer is entitled to see it. `code` is the
+ *  operator's alone; everything else is public to any proven patron. */
+interface Parked {
+  isOperator: boolean;
+  reason: string;
+  requestedAt: number;
+  code?: string;
+}
 
 function relative(ms: number): string {
   const secs = Math.max(0, Math.round((Date.now() - ms) / 1000));
@@ -35,29 +54,44 @@ function relative(ms: number): string {
 }
 
 export default function SchedulerPendingCard() {
-  const [state, setState] = useState<SchedulerPending | null>(null);
+  const [state, setState] = useState<Parked | null>(null);
   const [busy, setBusy] = useState(false);
   const [poked, setPoked] = useState(false);
 
   const refresh = useCallback(async () => {
-    // Only the operator may read the pending phrase (scheduler_pending is
-    // operator-gated). A patron viewing this tab is NOT the operator — calling
-    // it would just log a misleading "proof cache invalid" error every poll. So
-    // check identity first via the free scheduler_status (which returns the
-    // operator npub) and skip the operator-only call for everyone else.
+    // `scheduler_status` is free to any proven patron and already carries the
+    // phase, the reason, and when it was asked — everything but the phrase. So
+    // the shared facts come from there, and the operator-only call is made only
+    // when the viewer IS the operator. Asking for the phrase as a patron would
+    // just log a misleading "proof cache invalid" error every poll.
     const status = await getSchedulerStatus();
-    const operator = status?.operator_npub;
-    if (!operator || getStoredNpub() !== operator) {
+    const auth = status?.authorization;
+    if (auth?.phase !== "pending") {
       setState(null);
       return;
     }
-    setState(await getSchedulerPending());
+    const operator = status?.operator_npub;
+    if (!operator || getStoredNpub() !== operator) {
+      setState({ isOperator: false, reason: auth.reason, requestedAt: auth.requestedAt });
+      return;
+    }
+    const pending = await getSchedulerPending();
+    if (pending?.phase !== "pending") {
+      setState(null);
+      return;
+    }
+    setState({
+      isOperator: true,
+      reason: pending.reason,
+      requestedAt: pending.requestedAt,
+      code: pending.code,
+    });
   }, []);
 
-  // "I've approved — check now": poke the scheduler to run a tick immediately so
-  // it claims the reply instead of waiting for the next cron. The Worker runs
-  // the tick in the background; give it a moment, then refresh — if it completed,
-  // the phase flips and this card disappears.
+  // "check now": poke the scheduler to run a tick immediately so it claims the
+  // reply instead of waiting for the next cron. The Worker runs the tick in the
+  // background; give it a moment, then refresh — if it completed, the phase
+  // flips and this card disappears.
   const checkNow = useCallback(async () => {
     setBusy(true);
     setPoked(false);
@@ -98,7 +132,7 @@ export default function SchedulerPendingCard() {
     };
   }, [refresh]);
 
-  if (state?.phase !== "pending") return null;
+  if (!state) return null;
 
   return (
     <div
@@ -107,33 +141,50 @@ export default function SchedulerPendingCard() {
     >
       <div className="flex items-center gap-2 font-medium">
         <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-amber-500" />
-        Your scheduler is waiting for your OK
+        {state.isOperator
+          ? "Your scheduler is waiting for your OK"
+          : "Scheduled posts are paused until the operator approves"}
       </div>
       <p className="mt-1.5 text-amber-800 dark:text-amber-200/90">{state.reason}</p>
-      <div className="mt-3">
-        <div className="text-xs uppercase tracking-wide text-amber-700/80 dark:text-amber-300/70">
-          Confirmation phrase
+
+      {state.isOperator && (
+        <div className="mt-3">
+          <div className="text-xs uppercase tracking-wide text-amber-700/80 dark:text-amber-300/70">
+            Confirmation phrase
+          </div>
+          <div className="mt-0.5 select-all font-mono text-base font-semibold text-amber-950 dark:text-amber-50">
+            {state.code}
+          </div>
         </div>
-        <div className="mt-0.5 select-all font-mono text-base font-semibold text-amber-950 dark:text-amber-50">
-          {state.code}
-        </div>
-      </div>
+      )}
+
       <p className="mt-3 text-xs leading-relaxed text-amber-700 dark:text-amber-300/80">
-        Requested {relative(state.requestedAt)}. Approve in <b>Pricing Studio</b> — reply to the
-        proof DM whose phrase matches this one. If you can't find a DM with this exact phrase,
-        don't approve it.
+        {state.isOperator ? (
+          <>
+            Requested {relative(state.requestedAt)}. Approve in <b>Pricing Studio</b> — reply to the
+            proof DM whose phrase matches this one. If you can't find a DM with this exact phrase,
+            don't approve it.
+          </>
+        ) : (
+          <>
+            Requested {relative(state.requestedAt)}. Nothing goes out until the operator replies —
+            only they can approve it. If you know they already have, check now and the scheduler
+            picks it up instead of waiting for the next run.
+          </>
+        )}
       </p>
+
       <div className="mt-3 flex flex-wrap items-center gap-3">
         <button
           onClick={() => void checkNow()}
           disabled={busy}
           className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-amber-500 disabled:opacity-60"
         >
-          {busy ? "Checking…" : "I've approved — check now"}
+          {busy ? "Checking…" : state.isOperator ? "I've approved — check now" : "Check now"}
         </button>
         {poked && !busy && (
           <span className="text-xs text-amber-700 dark:text-amber-300/80">
-            Still waiting — give your reply a moment to land, then check again.
+            Still waiting — give the reply a moment to land, then check again.
           </span>
         )}
       </div>

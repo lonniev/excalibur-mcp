@@ -7,7 +7,7 @@
 // you less about the scheduler than this toolbar did.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getSchedulerLog } from "../lib/mcp";
+import { getSchedulerLog, getSchedulerStatus } from "../lib/mcp";
 import {
   deriveSchedulerState, schedulerStatusTitle, UNKNOWN_STATE,
   type SchedulerState,
@@ -27,7 +27,15 @@ export default function SchedulerHealth() {
     try {
       // Enough rows that a tick is in the window even when publications — one per
       // post published — are interleaved with the heartbeats.
-      setState(deriveSchedulerState(await getSchedulerLog(25)));
+      //
+      // Status comes along for the ride because the rows alone cannot say WHY
+      // they stopped: an unauthorized Worker writes none, and this toolbar was
+      // calling that "stalled". It also carries the real resolve lease, which
+      // this surface was previously guessing with the fallback constant.
+      const [runs, status] = await Promise.all([getSchedulerLog(25), getSchedulerStatus()]);
+      const leaseSeconds = status?.resolve_budgets?.lease_seconds;
+      setState(deriveSchedulerState(
+        runs, leaseSeconds ? leaseSeconds * 1000 : undefined, status?.authorization?.phase));
     } catch {
       // Free + proof-gated; a failure means the sign-in proof lapsed, not that
       // the scheduler is down — show "unknown", never a false alarm.

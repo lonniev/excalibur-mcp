@@ -25,7 +25,23 @@ export const STALE_MS = 100 * 60 * 1000;
 // signal about publishers, which run long and report separately.)
 export const INFLIGHT_MS = 5 * 60 * 1000;
 
-export type Health = "loading" | "healthy" | "cutoff" | "quiet" | "stalled" | "unknown";
+export type Health =
+  | "loading"
+  | "healthy"
+  | "cutoff"
+  | "quiet"
+  | "stalled"
+  // The Worker is alive and ticking but has no authorization, so it writes no
+  // run rows at all — every tick parks at the proof DM. Age-based health cannot
+  // tell that apart from a dead cron, and used to call it "stalled": the one
+  // state with a known cause and a human waiting on it was reported as the
+  // state with neither. It is NOT derived from the rows; it comes from the
+  // Worker's own phase, which is why it is passed in.
+  | "unauthorized"
+  | "unknown";
+
+/** The Worker's authorization phase, from the free `scheduler_status`. */
+export type AuthPhase = "pending" | "active" | "idle";
 
 export interface StuckPost {
   id: string;
@@ -90,13 +106,22 @@ export function deriveSchedulerState(
   // scheduler_status should pass it; the fallback exists only for surfaces that
   // render before that round trip lands.
   leaseMs: number = FALLBACK_RESOLVE_LEASE_MS,
+  // The Worker's authorization phase, from the same scheduler_status fetch. A
+  // pending phase EXPLAINS a gap in the rows, so it outranks every age verdict
+  // below — reporting "stalled" over a known, human-actionable cause is how an
+  // approval wait got mistaken for a dead cron.
+  authPhase?: AuthPhase,
 ): SchedulerState {
+  const parked = authPhase === "pending";
   // Freshness must come from a TICK. A publication finishes minutes after the
   // tick that launched it, so reading its timestamp as the heartbeat would make
   // a dying cron look livelier than it is.
   const newest = runs.find((r) => r.summary?.kind !== "publication");
   if (!newest) {
-    return { health: "quiet", lastRun: null, stuck: [], resolving: [], soon: 0 };
+    return {
+      health: parked ? "unauthorized" : "quiet",
+      lastRun: null, stuck: [], resolving: [], soon: 0,
+    };
   }
 
   const s = newest.summary ?? {};
@@ -171,7 +196,9 @@ export function deriveSchedulerState(
   // behind them has died, and the dead cron is the thing worth saying. A publisher
   // being mid-flight is POST state, reported by the Resolving badge — the dot stays
   // about the cron so the two never compete to describe the same thing.
-  const health: Health = isNaN(age)
+  const health: Health = parked
+    ? "unauthorized"
+    : isNaN(age)
     ? "unknown"
     : s.status === "started" && age > INFLIGHT_MS
       ? "cutoff"
@@ -202,6 +229,9 @@ export function schedulerStatusTitle(
     : "";
   if (health === "unknown") {
     return `Couldn't read scheduler status — your sign-in proof may have lapsed.${clickable ? " Click to retry." : ""}`;
+  }
+  if (health === "unauthorized") {
+    return "The scheduler is running, but it's waiting for the operator to approve it before it can post. Nothing goes out until then.";
   }
   if (health === "cutoff") {
     return `A scheduler run started ${relative(lastRun ?? "")} and never finished — it was cut short before it could post. The next run picks the work back up.`;

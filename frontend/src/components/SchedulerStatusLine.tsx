@@ -18,6 +18,9 @@ const DOT: Record<SchedulerState["health"], string> = {
   cutoff: "bg-red-500",
   quiet: "bg-amber-400",
   stalled: "bg-red-500",
+  // Amber, not red: a scheduler awaiting approval is working exactly as designed
+  // and needs a person, not a repair.
+  unauthorized: "bg-amber-500",
   unknown: "bg-zinc-400",
 };
 
@@ -27,6 +30,7 @@ const LABEL: Record<SchedulerState["health"], string> = {
   cutoff: "Scheduler cut off",
   quiet: "Scheduler quiet",
   stalled: "Scheduler stalled",
+  unauthorized: "Scheduler awaiting approval",
   unknown: "Scheduler status unknown",
 };
 
@@ -41,7 +45,7 @@ export default function SchedulerStatusLine({
   collapseLabel?: boolean;
 }) {
   const { health, resolving, stuck, soon } = state;
-  const pulse = health === "healthy" || health === "quiet";
+  const pulse = health === "healthy" || health === "quiet" || health === "unauthorized";
   // Every badge must name a real Post status and land you on that Posts filter —
   // "publishing" and "not posted" were earlier inventions here, and a name with
   // nowhere to click is what makes a post hard to track down.
