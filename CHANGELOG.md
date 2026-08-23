@@ -89,6 +89,14 @@ invisible to in-process assertions because the timeout is baked into the deploym
 first deployed version carried a literal `timeout=3600`, nesting by luck at the ceiling
 of the day.
 
+## [0.39.7] — 2026-08-22
+
+### Changed — track tollbooth-dpyc 0.88.0
+
+A relay down for a moment no longer becomes a permanent verdict.
+The bootstrap relay poll is retried on a bounded ladder, and a
+transient failure is no longer cached for the life of the process.
+
 ## [0.39.6] — 2026-08-23
 
 ### Changed — track tollbooth-dpyc 0.87.3
