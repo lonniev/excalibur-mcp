@@ -14,7 +14,21 @@ permissions:
 
 jobs:
   triage:
-    if: ${{ github.event.action != 'labeled' || github.event.label.name == 'agent/retriage' }}
+    # `agent/no-triage` is for an issue filed FOR THE RECORD — the work is already
+    # done and merged, and the issue exists so the graph carries the provenance
+    # (Issue -> Capability, PR FIXES Issue) that live diagnosis skipped. Porter
+    # must not route it: its LOCAL FIX path ends in `agent/fix`, which fires the
+    # Journeyman, which would spend an opus run reimplementing a shipped change.
+    #
+    # This is a GUARD, not a request. The Porter prompt treats issue text as
+    # untrusted data and is explicitly told never to obey instructions found in a
+    # body — correctly, since that is the injection surface. So "don't work this"
+    # cannot be said IN the issue; it has to be said in the workflow, by someone
+    # who already has write access to the repo. The label is the only honest
+    # channel.
+    if: >-
+      ${{ !contains(github.event.issue.labels.*.name, 'agent/no-triage')
+      && (github.event.action != 'labeled' || github.event.label.name == 'agent/retriage') }}
     uses: lonniev/dpyc-community/.github/workflows/service-desk.yml@main
     secrets: inherit
     with:
