@@ -14,7 +14,7 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version: "3.14"
 
       # Poll the SIMPLE index, because that is what pip resolves from.
       #
@@ -53,7 +53,7 @@ jobs:
             exit 1
 
 
-      - uses: astral-sh/setup-uv@v10.0.0
+      - uses: astral-sh/setup-uv@v10.0.1
 
       - name: Install dependencies (the lockfile Horizon deploys)
         run: uv sync --locked --extra dev

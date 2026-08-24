@@ -56,7 +56,7 @@ jobs:
       # could not install the project. The step below keeps the two in step.
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version: "3.14"
 
       - name: The runner's Python matches the image it deploys
         run: |
@@ -108,7 +108,7 @@ jobs:
             exit 1
 
 
-      - uses: astral-sh/setup-uv@v10.0.0
+      - uses: astral-sh/setup-uv@v10.0.1
 
       - name: Install dependencies (the lockfile Horizon deploys)
         run: uv sync --locked --extra dev
