@@ -5,6 +5,39 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — A patron could see the scheduler was stuck, but not why, and could do nothing about it
+
+A patron watching the Scheduler saw a red "Scheduler stalled" dot, no explanation,
+and no move to make (#517).
+
+**"Stalled" was the wrong word.** Health is derived purely from run-row age
+(>100 min = three missed ticks), but only `process_scheduled_posts` opens a run
+row, and an unauthorized Worker never gets that far: every tick parks at the
+proof DM and writes nothing. The one state with a known cause and a human
+waiting on it was reported as the state with neither. `deriveSchedulerState` now
+takes the Worker's authorization phase — already carried on the free
+`scheduler_status` — and reports `unauthorized` ("Scheduler awaiting approval",
+amber), which outranks every age verdict because it explains them.
+
+**The pending card hid itself from everyone but the operator**, phrase and all.
+The phrase stays operator-only — an impostor knowing it is the attack the
+Device-Grant second surface defends against — but a parked scheduler is not a
+secret, and the patron's posts are the ones not going out. Patrons now get the
+banner and the poke, fed from `scheduler_status`; `scheduler_pending` is still
+called only when the viewer IS the operator, which also stops the misleading
+"proof cache invalid" error patrons logged on every poll.
+
+`scheduler_check_now` drops from `restricted` to `free` (proof-gated, unbilled)
+so that poke is reachable. The old gate read as caution and was fiction: it
+proxies the Worker's `/tick`, an unauthenticated public route whose URL is
+hardcoded in this public repo. A poke carries no authority — a tick can only
+claim a reply the operator's own nsec signed, fire posts already due, or re-DM
+the operator.
+
+Also: `SchedulerHealth` called `deriveSchedulerState` with no lease argument, so
+the Posts toolbar judged "still resolving" against the 60-minute fallback while
+the Scheduler page used the served value. Both now use the served lease.
+
 ### Changed — Performance page: chart Time of day, standard loader, sortable table, drop Link column
 
 Four UX fixes on the Performance view (#364):

@@ -252,7 +252,7 @@ export default function SchedulerPage() {
   // lease the server actually enforces instead of a copy of it.
   const leaseSeconds = status?.resolve_budgets?.lease_seconds;
   const schedState = deriveSchedulerState(
-    runs, leaseSeconds ? leaseSeconds * 1000 : undefined);
+    runs, leaseSeconds ? leaseSeconds * 1000 : undefined, status?.authorization?.phase);
   const workerDown = status?.worker === "unavailable";
 
   return (
