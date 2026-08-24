@@ -5,6 +5,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.40.0] — 2026-08-24
+
 ### Fixed — A patron could see the scheduler was stuck, but not why, and could do nothing about it
 
 A patron watching the Scheduler saw a red "Scheduler stalled" dot, no explanation,
