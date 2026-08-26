@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
 ## [0.40.1] — 2026-08-24
 
 ### Security — track tollbooth-dpyc 0.88.1 (cryptography floor raised to >=49.0.0)
@@ -15,8 +17,6 @@ which admitted every affected release.
 No install here was exposed: the resolved lock already carried a patched
 cryptography. What changes is what a fresh resolve is *allowed* to land on.
 See tollbooth-dpyc v0.88.1.
-
-## [Unreleased]
 
 ## [0.40.0] — 2026-08-24
 
