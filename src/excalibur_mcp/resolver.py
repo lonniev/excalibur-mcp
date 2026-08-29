@@ -333,11 +333,27 @@ async def resolve_one(runtime: Any, post_id: str) -> dict[str, Any]:
         await posts_db.save_render(post_id, {**render, "blocks": blocks}, claim_stamp)
         return await _finish(text, blocks_resolved=0, resumed=True)
 
-    try:
-        creds = await runtime.load_credentials(["llm_api_key"])
-        api_key = creds.get("llm_api_key")
-    except Exception:  # noqa: BLE001 — no key is a situation, not a crash
-        api_key = None
+    # The SITUATED read, not `load_credentials`. That convenience returns {} both
+    # when the vault holds nothing and when it could not be read, and its own
+    # docstring says callers who tell a human the difference must come here. This
+    # is such a caller: it used to report an unreachable vault as
+    # `no_operator_llm_key`, which blames the operator for configuration that is
+    # demonstrably present.
+    creds, cred_situation = await runtime._load_vault_creds(
+        runtime.operator_credential_service,
+    )
+    api_key = creds.get("llm_api_key", "")
+
+    if cred_situation:
+        # We could not ask — so nothing has been attempted and no fare has been
+        # charged yet (billing happens per block, below). The author's fallback is
+        # the wrong answer to an outage of OURS: it publishes consolation text as
+        # though the resolve had been tried and had failed. Hold instead, and the
+        # next tick re-reads a vault that is usually fine by then.
+        return await _hold(
+            cred_situation,
+            detail="could not read the operator credential vault",
+        )
 
     voice, bans = await _owner_voice(owner)
     degraded: list[dict[str, Any]] = []

@@ -914,11 +914,21 @@ async def refine_post_region(
         await runtime.rollback_debit(tool_id, npub)
         return {"success": False, "error_code": "tool_input_invalid", "error": "region is required."}
 
-    try:
-        creds = await runtime.load_credentials(["llm_api_key"])
-        key = creds.get("llm_api_key")
-    except Exception:
-        key = None
+    # Situated read: an unreadable vault is not an unconfigured operator.
+    creds, cred_situation = await runtime._load_vault_creds(
+        runtime.operator_credential_service,
+    )
+    key = creds.get("llm_api_key", "")
+    if cred_situation:
+        await runtime.rollback_debit(tool_id, npub)
+        return {
+            "success": False,
+            "error_code": cred_situation,
+            "message": (
+                "Refine is briefly unavailable — this service could not read its "
+                "own configuration just now. Try again shortly. No fare was charged."
+            ),
+        }
     if not key:
         await runtime.rollback_debit(tool_id, npub)
         return {
@@ -1052,11 +1062,22 @@ async def resolve_dynamic_block(
         return {"success": False, "error_code": "tool_input_invalid", "error": "prompt is required."}
 
     # Fast-fail before spinning a job: no operator key → refund, don't start.
-    try:
-        creds = await runtime.load_credentials(["llm_api_key"])
-        key = creds.get("llm_api_key")
-    except Exception:
-        key = None
+    # Situated read: an unreadable vault is not an unconfigured operator.
+    creds, cred_situation = await runtime._load_vault_creds(
+        runtime.operator_credential_service,
+    )
+    key = creds.get("llm_api_key", "")
+    if cred_situation:
+        await runtime.rollback_debit(tool_id, npub)
+        return {
+            "success": False,
+            "error_code": cred_situation,
+            "message": (
+                "Dynamic blocks are briefly unavailable — this service could not "
+                "read its own configuration just now. Try again shortly. No fare "
+                "was charged."
+            ),
+        }
     if not key:
         await runtime.rollback_debit(tool_id, npub)
         return {
@@ -1293,8 +1314,17 @@ async def _resolve_dynamic_runner(
     """
     import httpx
 
-    creds = await runtime.load_credentials(["llm_api_key"])
-    key = creds.get("llm_api_key")
+    # This runner executes INSIDE the Modal container, where the vault is
+    # rediscovered over Nostr on every cold start — so "could not read" is the
+    # likeliest failure here, and it must not be reported as "not configured".
+    creds, cred_situation = await runtime._load_vault_creds(
+        runtime.operator_credential_service,
+    )
+    key = creds.get("llm_api_key", "")
+    if cred_situation:
+        raise RuntimeError(
+            f"could not read the operator credential vault: {cred_situation}",
+        )
     if not key:
         raise RuntimeError("operator llm_api_key not configured")
 
