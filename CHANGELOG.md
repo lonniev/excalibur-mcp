@@ -5,6 +5,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.40.2] — 2026-08-29
+
 ### Fixed — an unreadable vault no longer accuses the operator of having no key
 
 The scheduler reported `no_operator_llm_key` for a key that was vaulted the whole
