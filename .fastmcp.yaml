@@ -10,3 +10,4 @@ environment:
 
 runtime:
   python: "3.12"
+# redeploy: 2026-08-29 issue #530 — Horizon still serving 8dafa3f / 0.40.1; expected e7f4764+ (0.40.2)
