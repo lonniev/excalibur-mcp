@@ -14,8 +14,8 @@ from excalibur_mcp import server
 
 @pytest.mark.asyncio
 async def test_runner_loads_key_and_resolves():
-    with patch.object(server.runtime, "load_credentials",
-                      AsyncMock(return_value={"llm_api_key": "k"})), \
+    with patch.object(server.runtime, "_load_vault_creds",
+                      AsyncMock(return_value=({"llm_api_key": "k"}, ""))), \
          patch("excalibur_mcp.resolve.resolve_block", AsyncMock(return_value="the copy")) as rb:
         out = await server._resolve_dynamic_runner(
             npub="np", prompt="p", context="c", voice="v",
@@ -32,9 +32,28 @@ async def test_runner_loads_key_and_resolves():
 @pytest.mark.asyncio
 async def test_runner_raises_without_key():
     # No key → raise, so the wheel marks the job errored and refunds the fare.
-    with patch.object(server.runtime, "load_credentials", AsyncMock(return_value={})):
+    with patch.object(server.runtime, "_load_vault_creds", AsyncMock(return_value=({}, ""))):
         with pytest.raises(RuntimeError):
             await server._resolve_dynamic_runner(prompt="p")
+
+
+@pytest.mark.asyncio
+async def test_runner_distinguishes_unreadable_vault_from_missing_key():
+    """This runner is what Modal executes, and the container rediscovers its
+    vault over Nostr on every cold start — so an unreadable vault is its most
+    likely failure, not a missing key. It must say which. Observed live
+    2026-08-29: every bootstrap relay was unreachable and the scheduler
+    reported `no_operator_llm_key` for a key that was vaulted all along.
+    """
+    with patch.object(server.runtime, "_load_vault_creds",
+                      AsyncMock(return_value=({}, "vault_bootstrapping"))):
+        with pytest.raises(RuntimeError) as exc:
+            await server._resolve_dynamic_runner(prompt="p")
+
+    assert "vault_bootstrapping" in str(exc.value)
+    assert "not configured" not in str(exc.value), (
+        "an unreadable vault must never be reported as an unconfigured operator"
+    )
 
 
 def test_runner_is_registered():
@@ -57,8 +76,8 @@ def _provider_resp(status, message):
 async def test_runner_maps_billing_400_to_unfunded_situation():
     resp = _provider_resp(400, "Your credit balance is too low to access the Anthropic API.")
     err = httpx.HTTPStatusError("400", request=resp.request, response=resp)
-    with patch.object(server.runtime, "load_credentials",
-                      AsyncMock(return_value={"llm_api_key": "k"})), \
+    with patch.object(server.runtime, "_load_vault_creds",
+                      AsyncMock(return_value=({"llm_api_key": "k"}, ""))), \
          patch("excalibur_mcp.resolve.resolve_block", AsyncMock(side_effect=err)):
         with pytest.raises(AsyncJobSituation) as ei:
             await server._resolve_dynamic_runner(prompt="p")
@@ -80,8 +99,8 @@ async def test_runner_maps_router_402_to_unfunded_situation():
     """
     resp = _provider_resp(402, "Insufficient credits. Add more using https://openrouter.ai/credits")
     err = httpx.HTTPStatusError("402", request=resp.request, response=resp)
-    with patch.object(server.runtime, "load_credentials",
-                      AsyncMock(return_value={"llm_api_key": "k"})), \
+    with patch.object(server.runtime, "_load_vault_creds",
+                      AsyncMock(return_value=({"llm_api_key": "k"}, ""))), \
          patch("excalibur_mcp.resolve.resolve_block", AsyncMock(side_effect=err)):
         with pytest.raises(AsyncJobSituation) as ei:
             await server._resolve_dynamic_runner(prompt="p")

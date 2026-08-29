@@ -53,6 +53,9 @@ def _runtime(*, cost: int = 3, billing_denies=None):
     rt._apply_billing = AsyncMock(return_value=billing_denies)
     rt.rollback_debit = AsyncMock()
     rt.load_credentials = AsyncMock(return_value={"llm_api_key": "k"})
+    rt.operator_credential_service = "excalibur-operator"
+    # (creds, situation) — "" means the vault ANSWERED. See _load_vault_creds.
+    rt._load_vault_creds = AsyncMock(return_value=({"llm_api_key": "k"}, ""))
     return rt
 
 
@@ -188,12 +191,44 @@ class TestFailure:
 
     @pytest.mark.asyncio
     async def test_no_operator_key_is_named_not_swallowed(self, _stub_writes):
+        """The vault ANSWERED and holds no key — the one case that may say so."""
         rt = _runtime()
-        rt.load_credentials = AsyncMock(side_effect=RuntimeError("vault cold"))
+        rt._load_vault_creds = AsyncMock(return_value=({}, ""))
         no_fb = {"text": "the price now", "flags": [], "dynamic": True}
         with _claimed(_doc(no_fb)):
             out = await resolver.resolve_one(rt, "p1")
         assert out["outcome"] == "held" and "no_operator_llm_key" in out["reason"]
+
+    @pytest.mark.asyncio
+    async def test_unreadable_vault_never_reads_as_a_missing_key(self, _stub_writes):
+        """The load-bearing NEGATIVE assertion.
+
+        An unreachable vault used to arrive here as `{}` — indistinguishable from
+        "the operator configured nothing" — and got published as
+        `no_operator_llm_key`. It is a claim about the operator's configuration,
+        and it was false: the key was vaulted the whole time. Observed live on
+        2026-08-29, when the Modal container could reach none of its bootstrap
+        relays and a post went out on its author's fallback text.
+        """
+        rt = _runtime()
+        rt._load_vault_creds = AsyncMock(return_value=({}, "vault_bootstrapping"))
+        dyn = {"text": "the price now", "flags": [], "dynamic": True,
+               "fallback": "Markets moved today."}
+        with _claimed(_doc(dyn)), \
+                patch("excalibur_mcp.resolve.resolve_block", AsyncMock()) as resolve:
+            out = await resolver.resolve_one(rt, "p1")
+
+        assert out["outcome"] == "held"
+        assert out["reason"] == "vault_bootstrapping"
+        assert "no_operator_llm_key" not in str(out), (
+            "an unreadable vault must never be reported as a missing key"
+        )
+        # A vault we could not read is OUR outage, not a failed resolve: the
+        # author's fallback must not be published as though the model had tried.
+        _stub_writes.done.assert_not_awaited()
+        resolve.assert_not_awaited()
+        # Nothing was attempted, so nothing may be charged.
+        rt._apply_billing.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_insufficient_balance_holds_before_spending_the_model(self, _stub_writes):

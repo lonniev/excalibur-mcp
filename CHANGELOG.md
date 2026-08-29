@@ -5,6 +5,41 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — an unreadable vault no longer accuses the operator of having no key
+
+The scheduler reported `no_operator_llm_key` for a key that was vaulted the whole
+time, and published the author's fallback text instead of the resolve the patron
+had asked for.
+
+`load_credentials` returns `{}` both when the vault holds nothing and when it
+could not be read — its own docstring says callers who tell a human the
+difference must use the situated read instead. Four sites ignored that, and the
+resolver additionally wrapped the call in a bare `except`, so a raised bootstrap
+failure landed on the same `None` that means "never configured".
+
+Confirmed live on 2026-08-29 from the Modal container's own logs:
+
+    Bootstrap relay poll failed: relays=4, events=0, errors=[
+      wss://nos.lol: Connection timed out;
+      wss://relay.damus.io: Handshake status 503;
+      wss://relay.nostr.band: timed out ]
+
+The container rediscovers its vault over Nostr on every cold start, so it is the
+one path that does a full relay round-trip per run — which is why this surfaced
+there and not on Horizon, which bootstraps once and caches.
+
+All four sites now use `_load_vault_creds` and report the real situation
+(`vault_bootstrapping`, `secure_courier_unavailable`, …). The resolver **holds**
+rather than falling back: we could not read our own key, so nothing was
+attempted, and publishing the author's consolation text would claim a resolve had
+been tried and failed. A hold costs nothing — billing is per block and happens
+after — and the next tick re-reads a vault that is usually fine by then.
+
+The test that covered this asserted the bug: it mocked a cold vault and demanded
+`no_operator_llm_key`. It now asserts the opposite, and the load-bearing
+assertion is negative — an unreadable vault must never read as a missing key.
+
+
 ## [0.40.1] — 2026-08-24
 
 ### Security — track tollbooth-dpyc 0.88.1 (cryptography floor raised to >=49.0.0)
