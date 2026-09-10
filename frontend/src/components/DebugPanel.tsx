@@ -30,6 +30,24 @@ function isFailure(entry: DebugEntry): boolean {
   return false;
 }
 
+// Auth and funding outcomes are situations, not faults. The service answered
+// correctly; the patron has a step to take (sign in, top up). These SDK
+// ErrorCode values render as a purple notice and stay out of the red count.
+const NOTICE_CODE =
+  /error_code\\?"\s*:\s*\\?"(npub_missing|proof_missing|proof_required|proof_refresh_needed|dpop_token_missing|oauth_not_yet_authorized|oauth_token_expired|upstream_auth_refresh_needed|insufficient_balance|authority_insufficient_balance|upstream_subscription_required|operator_llm_unfunded)\\?"/;
+
+type Severity = "ok" | "notice" | "failure";
+
+function severity(entry: DebugEntry): Severity {
+  if (!isFailure(entry)) return "ok";
+  return NOTICE_CODE.test(entry.message) ? "notice" : "failure";
+}
+
+const SEVERITY_CLASS: Record<Exclude<Severity, "ok">, { row: string; label: string; text: string }> = {
+  failure: { row: "-mx-1 rounded-sm bg-red-950/60 px-1", label: "font-bold text-red-400", text: "text-red-300" },
+  notice: { row: "-mx-1 rounded-sm bg-purple-950/60 px-1", label: "text-purple-300", text: "text-purple-200" },
+};
+
 const short = (id?: string) => (id ? id.slice(0, 8) : "?");
 
 // "47 min" reads fine; "1387 min" does not. Hours and days once it's worth it.
@@ -121,7 +139,8 @@ export default function DebugPanel() {
   const [busy, setBusy] = useState(false);
   const seen = useRef<Set<string>>(new Set()); // run_at values already rendered
 
-  const errorCount = log.filter(isFailure).length;
+  const errorCount = log.filter((e) => severity(e) === "failure").length;
+  const noticeCount = log.filter((e) => severity(e) === "notice").length;
 
   async function loadScheduler(silent: boolean): Promise<void> {
     setBusy(true);
@@ -230,29 +249,32 @@ export default function DebugPanel() {
         <button
           onClick={() => setOpen(!open)}
           className={`rounded-t-lg px-3 py-1 text-xs text-white ${
-            errorCount > 0 ? "bg-red-700 hover:bg-red-600" : "bg-zinc-800 hover:bg-zinc-700"
+            errorCount > 0
+              ? "bg-red-700 hover:bg-red-600"
+              : noticeCount > 0
+                ? "bg-purple-700 hover:bg-purple-600"
+                : "bg-zinc-800 hover:bg-zinc-700"
           }`}
         >
           {open ? "Hide" : "Debug"} ({log.length}
-          {errorCount > 0 ? ` · ${errorCount} err` : ""})
+          {errorCount > 0 ? ` · ${errorCount} err` : ""}
+          {noticeCount > 0 ? ` · ${noticeCount} notice` : ""})
         </button>
       </div>
       {open && (
         <div className="max-h-64 w-full overflow-y-auto border-t border-zinc-700 bg-zinc-950/95 p-3 font-mono text-xs backdrop-blur-sm">
           {log.length === 0 && <div className="text-zinc-500">No MCP activity yet.</div>}
           {log.map((entry, i) => {
-            const failed = isFailure(entry);
+            const sev = severity(entry);
+            const hl = sev === "ok" ? null : SEVERITY_CLASS[sev];
             return (
-              <div
-                key={i}
-                className={`flex gap-2 py-0.5 ${failed ? "-mx-1 rounded-sm bg-red-950/60 px-1" : ""}`}
-              >
+              <div key={i} className={`flex gap-2 py-0.5 ${hl?.row ?? ""}`}>
                 <span className="shrink-0 text-zinc-600">{entry.ts}</span>
-                <span className={`w-12 shrink-0 ${failed ? "font-bold text-red-400" : TYPE_COLOR[entry.type]}`}>
-                  {entry.type}
-                  {failed && entry.type !== "error" ? " !" : ""}
+                <span className={`w-12 shrink-0 ${hl?.label ?? TYPE_COLOR[entry.type]}`}>
+                  {sev === "notice" ? "notice" : entry.type}
+                  {sev === "failure" && entry.type !== "error" ? " !" : ""}
                 </span>
-                <span className={`break-all ${failed ? "text-red-300" : "text-zinc-300"}`}>{entry.message}</span>
+                <span className={`break-all ${hl?.text ?? "text-zinc-300"}`}>{entry.message}</span>
               </div>
             );
           })}
