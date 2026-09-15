@@ -18,6 +18,11 @@
  *      courier traffic at all).
  *   2. Pending proof       → receive_npub_proof (poison-scoped, so polling only
  *      pops the matching reply — safe). On success, cache the token and fire.
+ *      A check that can NEVER complete (the challenge was replaced, expired or
+ *      lost its record) sends a fresh request at once rather than waiting out
+ *      the hour, and every check's outcome is kept so the operator can see why
+ *      the scheduler is still waiting. The operator may also ask for a fresh
+ *      request directly (POST /reissue, operator-signed).
  *   3. No / expired token  → request_npub_proof, which DMs the operator npub.
  *      A key-holder (the operator, via Studio or any nsec-holding agent) replies
  *      once; the next tick completes the proof. Re-runs ~monthly at token expiry.
@@ -39,7 +44,7 @@ export interface Env {
 const SLUG = "excalibur";
 const KEY = "proof_state";
 const INFLIGHT_KEY = "inflight_until";
-const WORKER_VERSION = "0.4.0";
+const WORKER_VERSION = "0.5.0";
 // How long to leave a tick alone after its POST was cut off at the edge. The MCP
 // claims each post for 20 minutes before another tick may reclaim it, so we back
 // off for exactly that: firing again sooner can only collide with work that may
@@ -72,9 +77,32 @@ const REASON =
 const PENDING_U_TAG = "excalibur_scheduler_pending";
 const PROOF_KIND = 27235;
 const PENDING_PROOF_SKEW_S = 120; // clock-skew tolerance for the read gate
+// The operator asking for a fresh request — the same signed shape as the
+// pending read, bound to its own `u`-tag so a proof minted to READ the phrase
+// cannot be replayed to re-issue it, or the other way round.
+const REISSUE_U_TAG = "excalibur_scheduler_reissue";
+// The id of the last reissue proof honoured. A captured proof is good for its
+// skew window; this stops it being played again inside that window.
+const REISSUE_LAST_KEY = "reissue_last_proof";
+
+// What `receive_npub_proof` says when THIS challenge can never complete — the
+// SDK's own error codes. The service's record of the challenge was replaced by
+// a newer request, has expired, or is gone. Waiting out the re-request hour on
+// one of these is waiting on nothing: the reply the operator sends cannot be
+// matched to it. "No reply yet" (`courier_not_found`) and "the relay did not
+// answer" (`courier_relay_unreachable`) are NOT here — those are worth waiting on.
+const DEAD_CHALLENGE = new Set([
+  "courier_no_pending_record",
+  "courier_dpop_token_mismatch",
+  "courier_token_expired",
+  "courier_no_pinned_relay",
+]);
+
+/** The last attempt to collect the operator's reply, and what came back. */
+type LastCheck = { at: number; code: string; error: string };
 
 type ProofState =
-  | { phase: "pending"; poison: string; requestedAt: number; reason: string }
+  | { phase: "pending"; poison: string; requestedAt: number; reason: string; lastCheck?: LastCheck }
   // `issuedAt` is what makes the renewal lead RELATIVE: without it the granted
   // lifetime is unknowable after the fact, and the only options are a constant
   // (the bug) or spending a token until the instant it dies. A state written by
@@ -99,6 +127,8 @@ export default {
   // GET routes (all read server-side by the operator MCP, so no CORS to manage):
   //   /status  → non-sensitive config + current phase (no code, no token).
   //   /pending → the pending challenge phrase; gated to the operator npub.
+  //   /reissue → POST, operator-signed: drop the pending challenge and send a
+  //              fresh one now, for the operator who can see the first is stuck.
   //   /tick    → run one tick NOW, in the background; returns immediately so the
   //              caller (the "Check for approval now" button) isn't held for the
   //              minutes a post-firing tick can take. The operator MCP gates who
@@ -108,6 +138,7 @@ export default {
     const url = new URL(req.url);
     if (url.pathname === "/status") return statusView(env);
     if (url.pathname === "/pending") return pendingView(req, env);
+    if (url.pathname === "/reissue") return reissueView(req, env);
     if (url.pathname === "/tick") {
       ctx.waitUntil(tick(env).then((m) => console.log(`excalibur scheduler (poke): ${m}`)));
       return json({ started: true });
@@ -125,7 +156,14 @@ async function statusView(env: Env): Promise<Response> {
   const now = Date.now();
   const authorization =
     state?.phase === "pending"
-      ? { phase: "pending" as const, reason: state.reason, requestedAt: state.requestedAt }
+      ? {
+          phase: "pending" as const, reason: state.reason, requestedAt: state.requestedAt,
+          // When the reply was last looked for and the code that came back —
+          // the SDK's code, never its prose (that stays on the operator's
+          // /pending). A parked scheduler that says only "pending" is one
+          // nobody can help.
+          lastCheck: state.lastCheck ? { at: state.lastCheck.at, code: state.lastCheck.code } : null,
+        }
       : state?.phase === "active"
         ? {
             phase: "active" as const,
@@ -178,7 +216,7 @@ async function pendingView(req: Request, env: Env): Promise<Response> {
     if (!operatorNpub.startsWith("npub1")) {
       return json({ error: "operator_npub_unresolved" }, 502);
     }
-    if (!verifyPendingProof(proofRaw, operatorNpub)) {
+    if (!verifyOperatorProof(proofRaw, operatorNpub, PENDING_U_TAG)) {
       // Same 403 whether the signature is bad or the signer simply isn't the
       // operator — a non-operator learns nothing about the scheduler's state.
       return json({ error: "not_operator" }, 403);
@@ -192,6 +230,7 @@ async function pendingView(req: Request, env: Env): Promise<Response> {
         code: state.poison, // the phrase the operator matches against the DM
         reason: state.reason,
         requestedAt: state.requestedAt,
+        lastCheck: state.lastCheck ?? null,
       });
     }
     if (state?.phase === "active") return json({ phase: "active", expiresAt: state.expiresAt });
@@ -199,22 +238,71 @@ async function pendingView(req: Request, env: Env): Promise<Response> {
   }).catch((e) => json({ error: `pending_view_failed: ${(e as Error).message}` }, 502));
 }
 
-// Verify a kind-27235 event authorizes reading the pending view: valid Schnorr
-// signature, our `u`-tag, fresh, and signed by the operator npub. Keyless —
-// signature verification needs no secret on the worker.
-function verifyPendingProof(proofRaw: string, operatorNpub: string): boolean {
+// POST /reissue  {"proof": "<kind-27235 event JSON>"}. The operator, who can
+// see the pending request is not going to complete, asks for a fresh one NOW
+// instead of waiting out the hour. Gated exactly like /pending — the MCP signs
+// as the operator — but with its own `u`-tag, and each proof is honoured once.
+//
+// An authorized scheduler is left alone: re-issuing would throw away a token
+// that works, and the renewal window already re-requests when one is due.
+async function reissueView(req: Request, env: Env): Promise<Response> {
+  if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
+  let proofRaw = "";
+  try {
+    proofRaw = String(((await req.json()) as { proof?: unknown })?.proof ?? "");
+  } catch {
+    // An unreadable body is the same as no proof.
+  }
+  if (!proofRaw) return json({ error: "proof_required" }, 401);
+
+  return withClient(env.MCP_URL, async (call) => {
+    const whoami = await call("list_canonical_identities");
+    const operatorNpub = String(whoami?.operator_npub ?? "");
+    if (!operatorNpub.startsWith("npub1")) {
+      return json({ error: "operator_npub_unresolved" }, 502);
+    }
+    const ev = verifyOperatorProof(proofRaw, operatorNpub, REISSUE_U_TAG);
+    if (!ev) return json({ error: "not_operator" }, 403);
+    if ((await env.PROOF_KV.get(REISSUE_LAST_KEY)) === ev.id) {
+      return json({ error: "proof_already_used" }, 409);
+    }
+    await env.PROOF_KV.put(REISSUE_LAST_KEY, ev.id, { expirationTtl: 3600 });
+
+    const raw = await env.PROOF_KV.get(KEY);
+    const state: ProofState | null = raw ? (JSON.parse(raw) as ProofState) : null;
+    if (state?.phase === "active" && renewalIsNotDue(state, Date.now())) {
+      return json({ phase: "active", expiresAt: state.expiresAt, message: "Already authorized — nothing to re-issue." });
+    }
+    const message = await request(call, env, operatorNpub);
+    const after = await env.PROOF_KV.get(KEY);
+    const next: ProofState | null = after ? (JSON.parse(after) as ProofState) : null;
+    return json({
+      phase: next?.phase ?? "idle",
+      requestedAt: next?.phase === "pending" ? next.requestedAt : null,
+      message,
+    });
+  }).catch((e) => json({ error: `reissue_failed: ${(e as Error).message}` }, 502));
+}
+
+// Verify a kind-27235 event authorizes one operator-gated action: valid Schnorr
+// signature, the action's own `u`-tag, fresh, and signed by the operator npub.
+// Keyless — signature verification needs no secret on the worker. Returns the
+// verified event (so a caller can remember its id), or null.
+function verifyOperatorProof(
+  proofRaw: string, operatorNpub: string, uTag: string,
+): { id: string } | null {
   try {
     const ev = JSON.parse(proofRaw);
-    if (ev?.kind !== PROOF_KIND) return false;
+    if (ev?.kind !== PROOF_KIND) return null;
     const u = (ev.tags ?? []).find((t: string[]) => t[0] === "u")?.[1];
-    if (u !== PENDING_U_TAG) return false;
+    if (u !== uTag) return null;
     const age = Math.floor(Date.now() / 1000) - Number(ev.created_at ?? 0);
-    if (!Number.isFinite(age) || Math.abs(age) > PENDING_PROOF_SKEW_S) return false;
+    if (!Number.isFinite(age) || Math.abs(age) > PENDING_PROOF_SKEW_S) return null;
     const decoded = nip19.decode(operatorNpub);
-    if (decoded.type !== "npub" || ev.pubkey !== decoded.data) return false;
-    return verifyEvent(ev);
+    if (decoded.type !== "npub" || ev.pubkey !== decoded.data) return null;
+    return verifyEvent(ev) ? ev : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -270,8 +358,21 @@ async function tick(env: Env): Promise<string> {
         }));
         return fire(call, env, operatorNpub, r.dpop_token);
       }
+      const code = String(r?.error_code ?? "");
+      // A challenge the service can no longer match is dead: a reply to it can
+      // never count. Ask again now — the stuck first attempt was the whole bug.
+      if (DEAD_CHALLENGE.has(code)) {
+        return `${await request(call, env, operatorNpub)} (the previous request could not complete: ${code})`;
+      }
       if (now - state.requestedAt > REREQUEST_AFTER_MS) return request(call, env, operatorNpub);
-      return "Awaiting operator reply to the proof DM.";
+      // Keep what came back. It used to be discarded here, which left an
+      // operator looking at "pending" with no way to tell "no reply yet" from
+      // "your reply can never be matched".
+      await env.PROOF_KV.put(KEY, JSON.stringify({
+        ...state,
+        lastCheck: { at: now, code: code || "no_reply", error: String(r?.error ?? "").slice(0, 400) },
+      }));
+      return `Awaiting operator reply to the proof DM (${code || "no reply yet"}).`;
     }
 
     // 3) No / expiring token → request a fresh proof (DMs the operator npub).

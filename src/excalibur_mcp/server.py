@@ -186,6 +186,12 @@ _DOMAIN_TOOLS = [
     # that's `scheduler_pending`, and it is the anti-impostor gate.
     ToolIdentity(tool_id=capability_uuid("scheduler_check_now"), capability="scheduler_check_now",
                  category="free", intent="Ask the scheduler to run a tick now"),
+    # The operator, who can see the Worker's pending request will never
+    # complete, asks it to send a fresh one now. `restricted`: only the npub the
+    # request is addressed to may throw it away — unlike check_now, this one
+    # acts, and a patron re-issuing the operator's DM would be spam, not help.
+    ToolIdentity(tool_id=capability_uuid("scheduler_reissue"), capability="scheduler_reissue",
+                 category="restricted", intent="Operator: send the scheduler a fresh proof request"),
     # Post-metrics harvest + derived reach analytics (#321). Handlers were
     # exported via paid_tool but must also seed ToolIdentity rows so the
     # tollbooth dispatch UUID-join succeeds (without these: tool_not_registered).
@@ -1656,6 +1662,51 @@ async def scheduler_check_now(
         return {"started": resp.status_code in (200, 202)}
     except httpx.HTTPError:
         return {"started": False}
+
+
+@tool
+@runtime.paid_tool(capability_uuid("scheduler_reissue"), catch_errors=True)
+async def scheduler_reissue(
+    npub: Annotated[str, Field(description="The OPERATOR's npub (npub1...); this tool is operator-only.")] = "",
+    dpop_token: str = "",
+) -> dict:
+    """Send the scheduler's proof request again, now (operator-only).
+
+    For a pending request that is not going to complete — the reply went to an
+    older DM, or ``scheduler_pending`` shows a last check that says the request
+    was replaced or expired. The Worker drops it and DMs a fresh one straight
+    away instead of waiting out its hour. Approve the NEWEST DM in Studio, then
+    ``scheduler_check_now``.
+
+    Signed as the operator with a sentinel ``u``-tag the Worker checks
+    literally, like ``scheduler_pending``, so the browser signs nothing. An
+    already-authorized scheduler is left alone. ``restricted``: gated to the
+    operator npub, free. Returns ``{success, phase, requestedAt, message}``.
+    """
+    import httpx
+    from tollbooth.identity_proof import create_proof
+
+    proof = create_proof(runtime._get_nsec(), "excalibur_scheduler_reissue")
+    url = f"{get_settings().scheduler_worker_url.rstrip('/')}/reissue"
+    try:
+        # Long enough for the Worker to open a courier channel: it publishes the
+        # challenge and reads it back before answering.
+        async with httpx.AsyncClient(timeout=45) as client:
+            resp = await client.post(url, json={"proof": proof})
+        body = resp.json()
+    except (httpx.HTTPError, ValueError):
+        return {
+            "success": False,
+            "error_code": "scheduler_unavailable",
+            "error": "The scheduler could not be reached — try again shortly.",
+        }
+    if resp.status_code != 200:
+        return {
+            "success": False,
+            "error_code": "scheduler_refused",
+            "error": f"The scheduler did not re-issue: {body.get('error', resp.status_code)}.",
+        }
+    return {"success": True, **body}
 
 
 # ---------------------------------------------------------------------------

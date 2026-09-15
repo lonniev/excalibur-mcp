@@ -1338,8 +1338,35 @@ export async function getSchedulerLog(limit = 25): Promise<SchedulerRun[]> {
 /// browser signs nothing — a plain npub login is enough. Returns null when
 /// there's nothing to show or the caller isn't the operator (card stays hidden).
 export type SchedulerPending =
-  | { phase: "pending"; code: string; reason: string; requestedAt: number }
+  | { phase: "pending"; code: string; reason: string; requestedAt: number; lastCheck?: SchedulerLastCheck | null }
   | { phase: "active" | "idle" | "unavailable" };
+
+/// The Worker's last attempt to collect the operator's reply: when, and the
+/// SDK's code for what came back. `error` (its prose) is the operator's only.
+export interface SchedulerLastCheck {
+  at: number;
+  code: string;
+  error?: string;
+}
+
+export interface SchedulerReissue {
+  success?: boolean;
+  phase?: string;
+  requestedAt?: number | null;
+  message?: string;
+  error?: string;
+  error_code?: string;
+}
+
+/// Operator-only: drop the Worker's pending request and have it DM a fresh one
+/// now. For the request that is visibly never going to complete.
+export async function reissueSchedulerProof(): Promise<SchedulerReissue> {
+  try {
+    return await callTool<SchedulerReissue>("scheduler_reissue", {}, { bestEffort: true });
+  } catch (e) {
+    return { success: false, error: String((e as Error)?.message ?? e) };
+  }
+}
 
 export async function getSchedulerPending(): Promise<SchedulerPending | null> {
   try {
@@ -1377,7 +1404,7 @@ export interface SchedulerStatus {
   mcpUrl?: string;
   verifyAt?: string | null;
   authorization?:
-    | { phase: "pending"; reason: string; requestedAt: number }
+    | { phase: "pending"; reason: string; requestedAt: number; lastCheck?: SchedulerLastCheck | null }
     // `spendable` false means the Worker HOLDS a valid token but is inside its
     // renewal window, so the next tick re-requests rather than posting. Without
     // it, a Worker declining to spend a good token looked exactly like one that
