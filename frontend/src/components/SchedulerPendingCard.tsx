@@ -23,14 +23,22 @@
 //
 // Approval itself always happens in Pricing Studio — the operator nsec that
 // signs the reply lives there, not in this browser.
+//
+// What this card CAN do for the operator is un-stick a request that is never
+// going to complete. The Worker keeps its last look for the reply; the card
+// says what it found, and the operator can have a fresh request sent now
+// instead of waiting out the Worker's hour on a dead one.
 
 import { useCallback, useEffect, useState } from "react";
 import {
   getSchedulerPending,
   getSchedulerStatus,
   getStoredNpub,
+  reissueSchedulerProof,
   runSchedulerCheckNow,
+  type SchedulerLastCheck,
 } from "../lib/mcp";
+import { isDead, lastCheckLine } from "../lib/schedulerCheck";
 
 const POLL_MS = 5 * 60 * 1000;
 
@@ -41,6 +49,7 @@ interface Parked {
   reason: string;
   requestedAt: number;
   code?: string;
+  lastCheck?: SchedulerLastCheck | null;
 }
 
 function relative(ms: number): string {
@@ -57,6 +66,7 @@ export default function SchedulerPendingCard() {
   const [state, setState] = useState<Parked | null>(null);
   const [busy, setBusy] = useState(false);
   const [poked, setPoked] = useState(false);
+  const [reissued, setReissued] = useState("");
 
   const refresh = useCallback(async () => {
     // `scheduler_status` is free to any proven patron and already carries the
@@ -72,7 +82,10 @@ export default function SchedulerPendingCard() {
     }
     const operator = status?.operator_npub;
     if (!operator || getStoredNpub() !== operator) {
-      setState({ isOperator: false, reason: auth.reason, requestedAt: auth.requestedAt });
+      setState({
+        isOperator: false, reason: auth.reason, requestedAt: auth.requestedAt,
+        lastCheck: auth.lastCheck ?? null,
+      });
       return;
     }
     const pending = await getSchedulerPending();
@@ -85,8 +98,26 @@ export default function SchedulerPendingCard() {
       reason: pending.reason,
       requestedAt: pending.requestedAt,
       code: pending.code,
+      lastCheck: pending.lastCheck ?? null,
     });
   }, []);
+
+  // "send a fresh request": the operator can see this one is stuck — an older
+  // DM answered, or a last check saying it can never complete — and has the
+  // Worker drop it and DM a new phrase now. The card then shows that phrase.
+  const reissue = useCallback(async () => {
+    setBusy(true);
+    setPoked(false);
+    setReissued("");
+    const r = await reissueSchedulerProof();
+    await refresh();
+    setBusy(false);
+    setReissued(
+      r.success
+        ? "A fresh request is on its way. Approve the newest DM in Pricing Studio — the one whose phrase matches the one above — then check now."
+        : `No fresh request was sent: ${r.error ?? "the scheduler didn't answer"}`,
+    );
+  }, [refresh]);
 
   // "check now": poke the scheduler to run a tick immediately so it claims the
   // reply instead of waiting for the next cron. The Worker runs the tick in the
@@ -162,8 +193,8 @@ export default function SchedulerPendingCard() {
         {state.isOperator ? (
           <>
             Requested {relative(state.requestedAt)}. Approve in <b>Pricing Studio</b> — reply to the
-            proof DM whose phrase matches this one. If you can't find a DM with this exact phrase,
-            don't approve it.
+            proof DM whose phrase matches this one; a reply to any older DM does not count. If you
+            can't find a DM with this exact phrase, don't approve it — send a fresh request instead.
           </>
         ) : (
           <>
@@ -174,6 +205,16 @@ export default function SchedulerPendingCard() {
         )}
       </p>
 
+      {lastCheckLine(state.lastCheck) && (
+        <p className="mt-2 text-xs leading-relaxed text-amber-800 dark:text-amber-200/90">
+          {lastCheckLine(state.lastCheck)}
+          {isDead(state.lastCheck) &&
+            (state.isOperator
+              ? " A fresh request goes out on the next check — or send one now."
+              : " A fresh request goes out on the next check.")}
+        </p>
+      )}
+
       <div className="mt-3 flex flex-wrap items-center gap-3">
         <button
           onClick={() => void checkNow()}
@@ -182,12 +223,24 @@ export default function SchedulerPendingCard() {
         >
           {busy ? "Checking…" : state.isOperator ? "I've approved — check now" : "Check now"}
         </button>
+        {state.isOperator && (
+          <button
+            onClick={() => void reissue()}
+            disabled={busy}
+            className="rounded-lg border border-amber-600/60 px-3 py-1.5 text-xs font-medium text-amber-800 transition-colors hover:bg-amber-100 disabled:opacity-60 dark:text-amber-200 dark:hover:bg-amber-900/40"
+          >
+            Send a fresh request
+          </button>
+        )}
         {poked && !busy && (
           <span className="text-xs text-amber-700 dark:text-amber-300/80">
             Still waiting — give the reply a moment to land, then check again.
           </span>
         )}
       </div>
+      {reissued && !busy && (
+        <p className="mt-2 text-xs leading-relaxed text-amber-800 dark:text-amber-200/90">{reissued}</p>
+      )}
     </div>
   );
 }

@@ -131,7 +131,8 @@ call with `check_price`. Read and auth tools are free.
 | `get_scheduler_log` | Read recent scheduler-tick outcomes |
 | `scheduler_status` | The scheduler's configuration and current status (free; any proven patron) |
 | `scheduler_pending` | What the scheduled-post cron Worker is waiting on (operator-only) |
-| `scheduler_check_now` | Run one scheduler tick now (operator-only) |
+| `scheduler_check_now` | Run one scheduler tick now (any proven patron) |
+| `scheduler_reissue` | Send the scheduler's proof request again, now (operator-only) |
 
 OAuth flow tools (`begin_oauth`, `check_oauth_status`) are now standard tools
 provided by the wheel (see the Standard Tools table above).
