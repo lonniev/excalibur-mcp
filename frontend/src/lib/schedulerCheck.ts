@@ -7,6 +7,27 @@
 // keeps the last one it got.
 
 import type { SchedulerLastCheck } from "./mcp";
+import { collapsedNpubLabel } from "./nostrProfilePresentation.ts";
+
+/// An npub as a person reads it: the name its profile publishes, else the
+/// shortened npub. Never the empty string for a real npub.
+export function whoIs(npub: string, name?: string | null): string {
+  const t = (name ?? "").trim();
+  return t || collapsedNpubLabel(npub);
+}
+
+/// For a viewer who is not the operator: whose approval the scheduler waits on,
+/// and who they are signed in as. The operator-only controls are hidden from
+/// them, and the commonest reason for that is being signed in as a different
+/// npub than the operator's — which this makes visible at a glance.
+export function waitingOnLine(
+  operator: { npub: string; name?: string | null },
+  viewer: { npub: string; name?: string | null } | null,
+): string {
+  const op = whoIs(operator.npub, operator.name);
+  if (!viewer?.npub) return `Waiting on the operator, ${op}.`;
+  return `Waiting on the operator, ${op} — you're signed in as ${whoIs(viewer.npub, viewer.name)}.`;
+}
 
 /// Codes meaning THIS request can never complete. Mirrors the Worker's
 /// `DEAD_CHALLENGE` — on any of these it sends a fresh request by itself on its
