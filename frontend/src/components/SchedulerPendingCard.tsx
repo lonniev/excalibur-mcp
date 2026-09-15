@@ -31,6 +31,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
+  getNostrProfile,
   getSchedulerPending,
   getSchedulerStatus,
   getStoredNpub,
@@ -38,7 +39,22 @@ import {
   runSchedulerCheckNow,
   type SchedulerLastCheck,
 } from "../lib/mcp";
-import { isDead, lastCheckLine } from "../lib/schedulerCheck";
+import { isDead, lastCheckLine, waitingOnLine } from "../lib/schedulerCheck";
+
+// Profile names, looked up once per npub per page load: the card re-polls
+// every few minutes and a name does not change in that time.
+const names = new Map<string, Promise<string | null>>();
+
+function nameOf(npub: string): Promise<string | null> {
+  let p = names.get(npub);
+  if (!p) {
+    p = getNostrProfile(npub)
+      .then((r) => (r.success ? r.profile?.display_name || r.profile?.name || null : null))
+      .catch(() => null);
+    names.set(npub, p);
+  }
+  return p;
+}
 
 const POLL_MS = 5 * 60 * 1000;
 
@@ -50,6 +66,9 @@ interface Parked {
   requestedAt: number;
   code?: string;
   lastCheck?: SchedulerLastCheck | null;
+  /** For a non-operator: whose approval this waits on, and who they are
+   *  signed in as — so being signed in as the wrong npub is obvious. */
+  waitingOn?: string;
 }
 
 function relative(ms: number): string {
@@ -81,10 +100,17 @@ export default function SchedulerPendingCard() {
       return;
     }
     const operator = status?.operator_npub;
-    if (!operator || getStoredNpub() !== operator) {
+    const viewer = getStoredNpub();
+    if (!operator || viewer !== operator) {
+      const [opName, viewerName] = operator
+        ? await Promise.all([nameOf(operator), viewer ? nameOf(viewer) : Promise.resolve(null)])
+        : [null, null];
       setState({
         isOperator: false, reason: auth.reason, requestedAt: auth.requestedAt,
         lastCheck: auth.lastCheck ?? null,
+        waitingOn: operator
+          ? waitingOnLine({ npub: operator, name: opName }, viewer ? { npub: viewer, name: viewerName } : null)
+          : undefined,
       });
       return;
     }
@@ -177,6 +203,9 @@ export default function SchedulerPendingCard() {
           : "Scheduled posts are paused until the operator approves"}
       </div>
       <p className="mt-1.5 text-amber-800 dark:text-amber-200/90">{state.reason}</p>
+      {state.waitingOn && (
+        <p className="mt-1.5 text-xs font-medium text-amber-900 dark:text-amber-100">{state.waitingOn}</p>
+      )}
 
       {state.isOperator && (
         <div className="mt-3">

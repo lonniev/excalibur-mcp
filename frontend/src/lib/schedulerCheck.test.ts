@@ -5,7 +5,30 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { DEAD_CHALLENGE, isDead, lastCheckLine } from "./schedulerCheck.ts";
+import { DEAD_CHALLENGE, isDead, lastCheckLine, waitingOnLine, whoIs } from "./schedulerCheck.ts";
+
+const OP = "npub19gqrkwsssnz5dl6mj54memy65g4lq7qu7efu532nma3p8c6yzugse3f7a2";
+const ME = "npub1d999638gqpn8c594teklxtxva0uvxdng80q3ycyqvldjdl457c7qcrq64z";
+
+describe("naming who the scheduler is waiting on", () => {
+  it("uses the published name, and the short npub when there is none", () => {
+    assert.equal(whoIs(OP, "eXcalibur"), "eXcalibur");
+    assert.equal(whoIs(OP, "   "), "npub19gq…f7a2");
+    assert.equal(whoIs(OP), "npub19gq…f7a2");
+  });
+
+  it("puts the operator beside the npub the viewer is signed in as", () => {
+    assert.equal(
+      waitingOnLine({ npub: OP, name: "eXcalibur" }, { npub: ME, name: "Lonnie" }),
+      "Waiting on the operator, eXcalibur — you're signed in as Lonnie.",
+    );
+    assert.equal(
+      waitingOnLine({ npub: OP }, { npub: ME }),
+      "Waiting on the operator, npub19gq…f7a2 — you're signed in as npub1d99…q64z.",
+    );
+    assert.equal(waitingOnLine({ npub: OP, name: "eXcalibur" }, null), "Waiting on the operator, eXcalibur.");
+  });
+});
 
 const NOW = Date.UTC(2026, 8, 15, 12, 0, 0);
 const check = (code: string, minsAgo = 12) => ({ at: NOW - minsAgo * 60_000, code });
