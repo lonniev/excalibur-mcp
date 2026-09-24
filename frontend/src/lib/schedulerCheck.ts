@@ -7,13 +7,13 @@
 // keeps the last one it got.
 
 import type { SchedulerLastCheck } from "./mcp";
-import { collapsedNpubLabel } from "./nostrProfilePresentation.ts";
+import { shortNpub } from "@tollbooth-dpyc/web";
 
 /// An npub as a person reads it: the name its profile publishes, else the
 /// shortened npub. Never the empty string for a real npub.
 export function whoIs(npub: string, name?: string | null): string {
   const t = (name ?? "").trim();
-  return t || collapsedNpubLabel(npub);
+  return t || shortNpub(npub);
 }
 
 /// For a viewer who is not the operator: whose approval the scheduler waits on,

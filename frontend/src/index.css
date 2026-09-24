@@ -1,9 +1,11 @@
 @import 'tailwindcss';
+@import '@tollbooth-dpyc/web/theme.css';
 
 /* Replaces v3's `content` array. Stated explicitly rather than leaning on v4's
    automatic detection, so the scan surface stays reviewable. */
 @source '../index.html';
 @source './**/*.{ts,tsx}';
+@source '../node_modules/@tollbooth-dpyc/web/dist';
 
 /* Replaces v3's `darkMode: "class"`. lib/theme.ts toggles `.dark` on <html>,
    so the variant must match descendants of `.dark` — `:is()`, not `:where()`,
@@ -20,4 +22,42 @@
 }
 .dark ::-webkit-scrollbar-thumb {
   background: #3f3f46; /* zinc-700 */
+}
+
+/* The shared account pieces from @tollbooth-dpyc/web, in eXcalibur's stone /
+   zinc / amber. Dark follows lib/theme.ts's `.dark` class, not the device:
+   the light block also claims `:root:not([data-theme="light"])` so the
+   package's prefers-color-scheme block never wins, and `:root.dark` comes
+   after it at the same specificity. */
+:root,
+:root:not([data-theme="light"]) {
+  --tb-accent: var(--color-amber-600);
+  --tb-on-accent: var(--color-white);
+  --tb-surface: var(--color-white);
+  --tb-surface-2: var(--color-stone-50);
+  --tb-ink: var(--color-stone-900);
+  --tb-muted: var(--color-stone-500);
+  --tb-line: var(--color-stone-200);
+  --tb-ok: var(--color-green-700);
+  --tb-warn-bg: var(--color-amber-50);
+  --tb-warn-line: var(--color-amber-200);
+  --tb-warn-ink: var(--color-amber-800);
+  --tb-err-bg: var(--color-red-50);
+  --tb-err-line: var(--color-red-200);
+  --tb-err-ink: var(--color-red-700);
+}
+
+:root.dark {
+  --tb-surface: var(--color-zinc-900);
+  --tb-surface-2: var(--color-zinc-950);
+  --tb-ink: var(--color-zinc-100);
+  --tb-muted: var(--color-zinc-400);
+  --tb-line: var(--color-zinc-800);
+  --tb-ok: var(--color-green-400);
+  --tb-warn-bg: color-mix(in oklab, var(--color-amber-500) 10%, transparent);
+  --tb-warn-line: color-mix(in oklab, var(--color-amber-500) 30%, transparent);
+  --tb-warn-ink: var(--color-amber-400);
+  --tb-err-bg: color-mix(in oklab, var(--color-red-500) 10%, transparent);
+  --tb-err-line: color-mix(in oklab, var(--color-red-500) 30%, transparent);
+  --tb-err-ink: var(--color-red-400);
 }
