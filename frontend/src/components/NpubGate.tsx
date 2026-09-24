@@ -11,7 +11,7 @@ import {
   setStoredProof,
   type RecentLogin,
 } from "../lib/mcp";
-import { setSessionNsec } from "../lib/sessionNsec";
+import { setSessionNsec } from "@tollbooth-dpyc/web";
 
 // Flow mirrors optionality-mcp's NpubGate (the reference "good" npub-login):
 //   begin → request_npub_proof → awaiting-reply → receive_npub_proof → app.

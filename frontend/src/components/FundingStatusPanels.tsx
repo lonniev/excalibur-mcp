@@ -22,7 +22,7 @@ import {
   serviceStatus,
   type CheckBalanceResult,
 } from "../lib/mcp";
-import { hasSessionNsec, sessionNsecNpub } from "../lib/sessionNsec";
+import { hasSessionNsec, sessionNsecNpub } from "@tollbooth-dpyc/web";
 import {
   composeOperatorRows,
   composePatronRows,

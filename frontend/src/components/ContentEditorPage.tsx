@@ -10,8 +10,8 @@ import {
 } from "lucide-react";
 import { getResolveBudgets } from "../lib/mcp";
 import { useSession } from "../App";
-import Avatar from "./Avatar";
-import { avatarFor } from "../lib/avatar";
+import { Avatar } from "@tollbooth-dpyc/web/react";
+import { avatarFor } from "@tollbooth-dpyc/web";
 import { cachedXProfile, ensureXProfile } from "../lib/xProfile";
 import type { XProfile } from "../lib/mcp";
 import { styleText, type UnicodeStyle } from "../lib/unicodeFormat";
