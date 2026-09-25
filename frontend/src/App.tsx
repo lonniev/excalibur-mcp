@@ -9,10 +9,11 @@ import {
   type ServiceStatus,
 } from "./lib/mcp";
 import { hydrateAvatarFromNostr } from "@tollbooth-dpyc/web";
+import { DebugPanel } from "@tollbooth-dpyc/web/react";
 import Nav from "./components/Nav";
 import Hero from "./components/Hero";
 import NpubGate from "./components/NpubGate";
-import DebugPanel from "./components/DebugPanel";
+import SchedulerLogSection from "./components/SchedulerLogSection";
 import PostsPage from "./components/PostsPage";
 import SnippetsPage from "./components/SnippetsPage";
 import ContentEditorPage from "./components/ContentEditorPage";
@@ -114,7 +115,9 @@ export default function App() {
             <Footer status={status} />
           </>
         )}
-        <DebugPanel />
+        <DebugPanel>
+          <SchedulerLogSection />
+        </DebugPanel>
       </Ctx.Provider>
     </div>
   );
