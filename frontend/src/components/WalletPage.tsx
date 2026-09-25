@@ -3,9 +3,9 @@ import {
   checkBalance,
   checkPayment,
   purchaseCredits,
-  type CheckBalanceResult,
   type PurchaseCreditsResult,
-} from "../lib/mcp";
+} from "@tollbooth-dpyc/web";
+import type { WheelBalance } from "../lib/mcp";
 import { formatDate, formatDateTime } from "../lib/timezone";
 import { useTimezone } from "../lib/useTimezone";
 import { PatronFundingStatus, OperatorFundingStatus } from "./FundingStatusPanels";
@@ -17,7 +17,7 @@ const PRESETS = [1000, 5000, 25000];
 
 export default function WalletPage() {
   const [, timeZone] = useTimezone();
-  const [bal, setBal] = useState<CheckBalanceResult | null>(null);
+  const [bal, setBal] = useState<WheelBalance | null>(null);
   const [amount, setAmount] = useState(1000);
   const [invoice, setInvoice] = useState<PurchaseCreditsResult | null>(null);
   const [busy, setBusy] = useState(false);

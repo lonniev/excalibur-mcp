@@ -15,7 +15,8 @@ import {
   Loader2,
   RefreshCw,
 } from "lucide-react";
-import { beginOauth, checkOauthStatus, getXConnection, getStoredNpub } from "../lib/mcp";
+import { getStoredNpub } from "@tollbooth-dpyc/web";
+import { beginOauth, checkOauthStatus, getXConnection } from "../lib/mcp";
 import { ensureXProfile } from "../lib/xProfile";
 import { presentXConnectedCard } from "../lib/xConnectPresentation";
 

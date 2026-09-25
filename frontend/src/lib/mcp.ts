@@ -1,370 +1,36 @@
 /**
- * eXcalibur MCP client.
+ * eXcalibur's own tools, called through @tollbooth-dpyc/web.
  *
- * Pattern modeled on optionality-mcp/frontend/src/lib/mcp.ts:
+ * The client core is the package's: the one MCP connection, the npub/proof
+ * envelope (a fresh kind-27235 inline proof when this tab holds a session key
+ * for the signed-in npub, else the cached DM proof), the proof-bounce signal,
+ * the identity storage and the standard tools (balance, top-up, payment,
+ * statement, proof status, profile). What stays here is eXcalibur's alone:
  *
- * 1. One singleton @modelcontextprotocol/sdk Client over the
- *    StreamableHTTPClientTransport. The SDK handles the initialize
- *    handshake, SSE session tracking, and reconnection.
- * 2. Auth = uniform npub-proof. Two tactics, transparent to callers:
- *      - session nsec in browser → fresh kind-27235 inline proof per call
- *        (signInlineProof), scoped to the runtime tool name.
- *      - npub + DM login → the poison-phrase proof_token the wheel cached
- *        at receive_npub_proof time, sent verbatim.
- * 3. Bootstrap/auth/balance tools are free and pre-login-safe.
+ *   - posts, snippets, the writing Voice, metrics and performance;
+ *   - the X OAuth dance and the X-connection reading;
+ *   - dynamic blocks (the claim-check resolve) and region refinement;
+ *   - the scheduler: its status, log, pending request and operator controls;
+ *   - the operator's readiness probes and patron coupons, which the package
+ *     does not wrap yet;
+ *   - the wider readings of service_status and check_balance this site shows.
  */
 
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import {
+  callTool,
+  getStoredNpub,
+  type CheckBalanceResult,
+  type ServiceStatus,
+} from "@tollbooth-dpyc/web";
 
-import { clearSessionNsec, debugPush, hasSessionNsec, sessionNsecNpub, signInlineProof } from "@tollbooth-dpyc/web";
+// ─── Wider readings of standard tools ────────────────────────────────────
+// The package types the fields every site reads. The wheel answers with more,
+// and eXcalibur shows it: the build footer, the operator's health panel and
+// the wallet's tranche count. Same calls, read wider.
 
-const SLUG = "excalibur";
-
-const _envUrl = (import.meta.env.VITE_MCP_URL as string | undefined) ?? "";
-const MCP_URL = _envUrl.startsWith("/")
-  ? `${window.location.origin}${_envUrl}`
-  : _envUrl;
-
-const NPUB_STORAGE_KEY = "excalibur:patron_npub:v1";
-const PROOF_STORAGE_KEY = "excalibur:proof_token:v1";
-
-let client: Client | null = null;
-let connecting: Promise<void> | null = null;
-
-function requireUrl(): string {
-  if (!MCP_URL) {
-    throw new Error("VITE_MCP_URL is not configured. Set it in .env (e.g. /mcp).");
-  }
-  return MCP_URL;
-}
-
-async function getClient(): Promise<Client> {
-  if (client) return client;
-  if (connecting) {
-    await connecting;
-    return client!;
-  }
-  connecting = (async () => {
-    const url = requireUrl();
-    const c = new Client({ name: "excalibur-frontend", version: "0.1.0" });
-    const transport = new StreamableHTTPClientTransport(new URL(url));
-    await c.connect(transport);
-    client = c;
-    connecting = null;
-  })();
-  await connecting;
-  return client!;
-}
-
-// ─── Stored identity ─────────────────────────────────────────────────────
-
-export function getStoredNpub(): string {
-  return window.localStorage.getItem(NPUB_STORAGE_KEY) ?? "";
-}
-
-export function setStoredNpub(npub: string): void {
-  window.localStorage.setItem(NPUB_STORAGE_KEY, npub);
-}
-
-export function getStoredProof(): string {
-  return window.localStorage.getItem(PROOF_STORAGE_KEY) ?? "";
-}
-
-export function setStoredProof(proof: string): void {
-  window.localStorage.setItem(PROOF_STORAGE_KEY, proof);
-}
-
-// ─── Recent logins (skip the DM on return) ───────────────────────────────
-// Ported from optionality-mcp's proven pattern: cache (npub, proof_token,
-// expiresAt) tuples so a returning patron re-enters on the cached proof
-// until the server-side cache actually expires.
-
-const RECENT_LOGINS_KEY = "excalibur:recent-logins:v1";
-const MAX_RECENT_LOGINS = 5;
-
-export interface RecentLogin {
-  npub: string;
-  proof: string;
-  expiresAt: number; // unix ms
-  lastUsed: number; // unix ms
-}
-
-function readRecentLogins(): RecentLogin[] {
-  try {
-    const raw = window.localStorage.getItem(RECENT_LOGINS_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (e): e is RecentLogin =>
-        typeof e === "object" && e !== null &&
-        typeof e.npub === "string" && typeof e.proof === "string" &&
-        typeof e.expiresAt === "number" && typeof e.lastUsed === "number",
-    );
-  } catch {
-    return [];
-  }
-}
-
-function writeRecentLogins(entries: RecentLogin[]): void {
-  window.localStorage.setItem(RECENT_LOGINS_KEY, JSON.stringify(entries));
-}
-
-/// Unexpired recent logins, MRU-sorted. Prunes expired entries as a side effect.
-export function getValidRecentLogins(): RecentLogin[] {
-  const now = Date.now();
-  const entries = readRecentLogins();
-  const valid = entries.filter((e) => e.expiresAt > now);
-  if (valid.length !== entries.length) writeRecentLogins(valid);
-  valid.sort((a, b) => b.lastUsed - a.lastUsed);
-  return valid;
-}
-
-/// Record (or refresh) a successful login. Derate the TTL by 30s so a
-/// straggler can't serve an already-expired token to the next paid call.
-export function recordRecentLogin(npub: string, proof: string, expiresInSec: number): void {
-  const safeTtl = Math.max(0, expiresInSec - 30);
-  const next: RecentLogin = {
-    npub,
-    proof,
-    expiresAt: Date.now() + safeTtl * 1000,
-    lastUsed: Date.now(),
-  };
-  const others = readRecentLogins().filter((e) => e.npub !== npub);
-  writeRecentLogins(
-    [next, ...others].sort((a, b) => b.lastUsed - a.lastUsed).slice(0, MAX_RECENT_LOGINS),
-  );
-}
-
-export function forgetRecentLogin(npub: string): void {
-  writeRecentLogins(readRecentLogins().filter((e) => e.npub !== npub));
-}
-
-/// "Logged in" = we have the patron's npub AND a way to prove ownership:
-/// either a cached DM proof_token, or a session nsec whose npub matches.
-export function isLoggedIn(): boolean {
-  const npub = getStoredNpub();
-  if (!npub) return false;
-  if (getStoredProof()) return true;
-  if (hasSessionNsec() && sessionNsecNpub() === npub) return true;
-  return false;
-}
-
-export function logOut(): void {
-  window.localStorage.removeItem(NPUB_STORAGE_KEY);
-  window.localStorage.removeItem(PROOF_STORAGE_KEY);
-  try {
-    clearSessionNsec();
-  } catch {
-    /* noop */
-  }
-}
-
-/// Resolve the proof for a paid call: prefer a fresh inline proof signed
-/// by the session nsec (if it matches the stored npub), else the cached
-/// DM proof_token. Stale session-nsec entries (from a prior identity) are
-/// evicted so they don't poison the call.
-function getCachedProof(toolName: string): string {
-  try {
-    const currentNpub = getStoredNpub();
-    const sessionNpub = hasSessionNsec() ? sessionNsecNpub() : null;
-    if (sessionNpub && sessionNpub === currentNpub) {
-      return signInlineProof(`${SLUG}_${toolName}`);
-    }
-    if (sessionNpub && sessionNpub !== currentNpub) {
-      clearSessionNsec();
-    }
-  } catch {
-    /* fall through to the cached poison token */
-  }
-  return getStoredProof();
-}
-
-// ─── callTool ────────────────────────────────────────────────────────────
-
-interface ToolResultText {
-  type: string;
-  text?: string;
-}
-
-interface ToolResult {
-  isError?: boolean;
-  content?: ToolResultText[];
-  structuredContent?: unknown;
-}
-
-/// Thrown when the server rejects a paid call because the proof expired or
-/// was never sent. The gate catches this and bounces the user to sign-in.
-export class ProofRequiredError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ProofRequiredError";
-  }
-}
-
-// ─── Proof-expiry signal ───────────────────────────────────────────────────
-// A paid call can bounce for an expired proof from anywhere (Posts, editor,
-// wallet). `callTool` clears the stale token synchronously, but the React tree
-// needs to KNOW so it can re-present sign-in — otherwise the user is stranded
-// on a page whose data won't load, staring at a red banner. Any component
-// (App) subscribes; the tool layer fires on every proof bounce.
-
-type ProofExpiredListener = (message: string) => void;
-const proofExpiredListeners = new Set<ProofExpiredListener>();
-
-/// Subscribe to proof-expiry bounces. Returns an unsubscribe fn. App wires this
-/// to drop the user back to the sign-in gate when the cached DM proof lapses.
-export function onProofExpired(cb: ProofExpiredListener): () => void {
-  proofExpiredListeners.add(cb);
-  return () => proofExpiredListeners.delete(cb);
-}
-
-function emitProofExpired(message: string): void {
-  for (const cb of proofExpiredListeners) {
-    try {
-      cb(message);
-    } catch {
-      /* a listener error must not swallow the throw that follows */
-    }
-  }
-}
-
-/// Tools whose wheel signature takes no npub/proof envelope. Pydantic
-/// strict mode rejects unexpected kwargs, so we must NOT inject them here.
-const BOOTSTRAP_TOOLS = new Set([
-  "request_npub_proof",
-  "receive_npub_proof",
-  "service_status",
-  // Takes an explicit patron_npub, no proof envelope (free readiness probe).
-  "session_status",
-  // Public kind-0 profile reads/relays — take explicit npub, no proof envelope.
-  "get_nostr_profile",
-  "publish_nostr_profile",
-  // Free operator diagnostics — no npub/proof envelope (operator identity is
-  // the process's own nsec; a patron calling these just sees empty/error).
-  "get_operator_onboarding_status",
-  "check_authority_balance",
-  // Takes explicit patron_npub + dpop_token (the cached phrase), not the
-  // injected envelope — same shape as receive_npub_proof.
-  "check_proof_status",
-]);
-
-/// Tools too noisy/background to clutter the debug log (polled liveness +
-/// profile hydration). Everything else — posting, OAuth, posts, snippets,
-/// credits — is logged so the panel shows what the FE is actually doing.
-const QUIET_TOOLS = new Set([
-  "service_status",
-  "get_nostr_profile",
-  // The scheduler-log poll feeds the debug panel its own synthesized entries;
-  // logging the poll call itself would just be noise.
-  "get_scheduler_log",
-  // Background personalization hydration (the editor's @handle) — not noteworthy.
-  "get_x_profile",
-  // NOTE: `fetch_dynamic_block` (the claim-check poll for a resolving dynamic
-  // block) is intentionally NOT quiet. Each poll's status (pending → done/error)
-  // must be visible in the debug panel — otherwise a resolve looks like it never
-  // calls back, and a silent poll failure (e.g. a proof bounce) is undiagnosable.
-]);
-
-async function callTool<T = unknown>(
-  toolName: string,
-  args: Record<string, unknown> = {},
-  opts: { bestEffort?: boolean; timeoutMs?: number } = {},
-): Promise<T> {
-  const quiet = QUIET_TOOLS.has(toolName);
-  // `args` holds only the wrapper's own params — never npub/proof (those are
-  // injected below), so it is safe to log verbatim.
-  if (!quiet) debugPush("call", `${SLUG}_${toolName}(${JSON.stringify(args).slice(0, 140)})`);
-
-  const c = await getClient();
-  const merged: Record<string, unknown> = BOOTSTRAP_TOOLS.has(toolName)
-    ? { ...args }
-    : { npub: getStoredNpub(), dpop_token: getCachedProof(toolName), ...args };
-
-  let result: ToolResult;
-  try {
-    result = (await c.callTool(
-      { name: `${SLUG}_${toolName}`, arguments: merged },
-      undefined,
-      { timeout: opts.timeoutMs ?? 120_000 },
-    )) as ToolResult;
-  } catch (e) {
-    if (!quiet) debugPush("error", `${SLUG}_${toolName}: ${(e as Error).message}`);
-    throw new Error(`${SLUG}_${toolName}: ${(e as Error).message}`);
-  }
-
-  if (result.isError) {
-    const errText = (result.content ?? [])
-      .filter((b) => b.type === "text" && typeof b.text === "string")
-      .map((b) => String(b.text))
-      .join("\n") || "Tool call failed";
-    if (!quiet) debugPush("error", `${SLUG}_${toolName}: ${errText.slice(0, 200)}`);
-    throw new Error(errText);
-  }
-
-  let payload: unknown;
-  if (result.structuredContent !== undefined) {
-    payload = result.structuredContent;
-  } else {
-    const textBlocks = (result.content ?? []).filter((b) => b.type === "text");
-    if (textBlocks.length > 0) {
-      const text = String(textBlocks[0].text ?? "");
-      try {
-        payload = JSON.parse(text);
-      } catch {
-        payload = text;
-      }
-    } else {
-      payload = result;
-    }
-  }
-
-  if (!quiet) {
-    const preview = typeof payload === "string" ? payload : JSON.stringify(payload);
-    const p = payload as Record<string, unknown> | null;
-    const failed = p && typeof p === "object" && (p.success === false || p.error);
-    debugPush(failed ? "error" : "result", `${SLUG}_${toolName} → ${String(preview).slice(0, 220)}`);
-  }
-
-  // Soft proof failures arrive as {success:false, error_code:...} with no
-  // isError flag. Treat them as auth bounces: clear the stale token and let the
-  // gate re-arm sign-in. NOT for best-effort calls (personalization/diagnostics)
-  // — a non-essential tool must never be able to log the user out of everything.
-  if (!opts.bestEffort && payload && typeof payload === "object") {
-    const p = payload as Record<string, unknown>;
-    // The wheel's ErrorCode values are lowercase snake_case ("proof_required",
-    // "proof_refresh_needed") — normalize before comparing. (A prior uppercase
-    // comparison never matched, so the bounce silently never fired and the raw
-    // "cache entry is no longer valid" text just landed in an inline banner.)
-    const errCode = String(p.error_code ?? "").toLowerCase();
-    if (p.success === false && (errCode === "proof_required" || errCode === "proof_refresh_needed")) {
-      // The cached DM proof_token the server just rejected is the SAME token the
-      // recent-login one-tap would replay — evict it too, or the returning-user
-      // shortcut immediately re-bounces. (nsec sessions don't record a recent
-      // login and re-sign inline, so this only touches DM-login users.)
-      const bouncedNpub = getStoredNpub();
-      window.localStorage.removeItem(PROOF_STORAGE_KEY);
-      if (bouncedNpub) forgetRecentLogin(bouncedNpub);
-      const msg = String(p.error ?? "Sign-in required.");
-      emitProofExpired(msg);
-      throw new ProofRequiredError(msg);
-    }
-  }
-  return payload as T;
-}
-
-// ─── Service / auth (free) ───────────────────────────────────────────────
-
-export interface ServiceStatus {
-  operator_npub_hash?: string;
-  lifecycle?: string;
-  message?: string;
-  version?: string;
-  tollbooth_dpyc_version?: string;
+/// service_status as the build footer and the operator panel read it.
+export interface WheelStatus extends ServiceStatus {
   process_id?: number;
-  service?: string;
-  slug?: string;
   vault_configured?: boolean;
   courier_has_vault?: boolean;
   // Durable long-runner diagnostics (operator only; present when op_npub resolves).
@@ -389,56 +55,6 @@ export interface ServiceStatus {
   };
 }
 
-export async function serviceStatus(): Promise<ServiceStatus> {
-  return callTool<ServiceStatus>("service_status", {});
-}
-
-export interface NpubProofResult {
-  success?: boolean;
-  proven_npub?: string;
-  verified?: boolean; // legacy field; current wheel uses `success`
-  status?: string;
-  message?: string;
-  dpop_token?: string; // wheel 0.57.0+ (was proof_token)
-  popped_dms?: number;
-  expires_in_seconds?: number;
-  expires_at?: string;
-  error?: string;
-  error_code?: string;
-}
-
-/// Step 1 of DM login. Sends a Secure Courier challenge DM to the npub.
-/// The user replies in their own Nostr client. Free.
-///
-/// `verifyAt` is the OAuth2 Device-Grant `verification_uri` (RFC 8628): the
-/// place where THIS app displays the session phrase. The DM names it so the
-/// human can cross-check — "the code in this DM was shown to you at <verifyAt>;
-/// approve only if it matches." Trust rests on that two-surface match, so we
-/// pass this app's own URL: an impostor firing the same tool from elsewhere
-/// cannot make the human's open eXcalibur tab show the attacker's code.
-export async function requestNpubProof(
-  patronNpub: string,
-  verifyAt?: string,
-  reason?: string,
-): Promise<NpubProofResult> {
-  return callTool<NpubProofResult>("request_npub_proof", {
-    patron_npub: patronNpub,
-    ...(verifyAt ? { verify_at: verifyAt } : {}),
-    ...(reason ? { reason } : {}),
-  });
-}
-
-/// Step 2 of DM login. Destructively drains DMs looking for the signed
-/// reply to step 1. Call ONLY after the user has actually replied — do not
-/// poll or speculatively retry (feedback_human_in_loop_courier). `dpopToken`
-/// is the dpop_token from step 1 (wheel 0.57.0+; was the poison/proof_token).
-export async function receiveNpubProof(patronNpub: string, dpopToken: string): Promise<NpubProofResult> {
-  return callTool<NpubProofResult>("receive_npub_proof", {
-    patron_npub: patronNpub,
-    dpop_token: dpopToken,
-  });
-}
-
 export interface CreditTranche {
   id: string;
   amount_sats: number;
@@ -447,58 +63,18 @@ export interface CreditTranche {
   created_at: string | null;
 }
 
-export interface CheckBalanceResult {
-  success?: boolean;
-  balance_api_sats?: number;
-  total_deposited_api_sats?: number;
-  total_consumed_api_sats?: number;
+/// check_balance as the wallet and the account-health panel read it.
+export interface WheelBalance extends CheckBalanceResult {
   active_tranches?: number;
   tranches?: CreditTranche[];
-  next_expiration_iso?: string;
-  /** Sats in active tranches that expire within 24h (wheel check_balance). */
-  expiring_within_24h_sats?: number;
-  total_expired_api_sats?: number;
-  seed_balance_granted?: boolean;
   vault_unavailable?: boolean;
   warning?: string;
-  npub?: string;
-  error?: string;
-  error_code?: string;
 }
 
-export async function checkBalance(): Promise<CheckBalanceResult> {
-  return callTool<CheckBalanceResult>("check_balance", {});
-}
-
-// ─── Funding / credential status probes (compose into StatusSurface) ─────────
-// All free. Patron rows use check_balance + session_status + check_proof_status.
+// ─── Operator readiness probes (free, no proof envelope) ─────────────────
 // Operator rows use service_status + get_operator_onboarding_status +
-// check_authority_balance, gated client-side to the operator npub the same way
-// scheduler_pending is (getSchedulerStatus().operator_npub === stored npub).
-
-export interface ProofStatusResult {
-  success?: boolean;
-  status?: "valid" | "expired" | "unknown" | string;
-  expires_in_seconds?: number | null;
-  message?: string;
-  error?: string;
-  error_code?: string;
-}
-
-/// Whether the cached DM proof_token is still accepted. For session-nsec logins
-/// there is nothing to check (fresh inline proof each call) — callers should
-/// skip this and treat the proof row as ok. Free; takes explicit args so the
-/// envelope is not double-injected.
-export async function checkProofStatus(
-  patronNpub: string,
-  dpopToken: string,
-): Promise<ProofStatusResult> {
-  return callTool<ProofStatusResult>(
-    "check_proof_status",
-    { patron_npub: patronNpub, dpop_token: dpopToken },
-    { bestEffort: true },
-  );
-}
+// check_authority_balance + session_status, shown only when the signed-in npub
+// is scheduler_status.operator_npub (see FundingStatusPanels).
 
 export interface OnboardingField {
   field: string;
@@ -522,8 +98,8 @@ export interface OperatorOnboardingResult {
 }
 
 /// Operator credential readiness (BTCPay / X app / llm_api_key present-or-not).
-/// Free, no proof. A non-operator still gets the structural answer; the FE hides
-/// the panel unless the viewer is the operator npub.
+/// A non-operator still gets the structural answer; the FE hides the panel
+/// unless the viewer is the operator npub.
 export async function getOperatorOnboardingStatus(): Promise<OperatorOnboardingResult> {
   return callTool<OperatorOnboardingResult>(
     "get_operator_onboarding_status",
@@ -541,7 +117,7 @@ export interface AuthorityBalanceResult {
 }
 
 /// This operator's tax balance at the Authority (sats available to certify
-/// patron purchases). Free. Best-effort — a failure is itself a status signal.
+/// patron purchases). Best-effort — a failure is itself a status signal.
 export async function checkAuthorityBalance(): Promise<AuthorityBalanceResult> {
   return callTool<AuthorityBalanceResult>(
     "check_authority_balance",
@@ -560,7 +136,7 @@ export interface SessionLifecycleResult {
 }
 
 /// Operator lifecycle (ready / warming_up / misconfigured / quota_exceeded / …).
-/// Free. Optional patron_npub also yields upstream_oauth (used by getXConnection).
+/// Optional patron_npub also yields upstream_oauth (used by getXConnection).
 export async function getSessionLifecycle(
   patronNpub?: string,
 ): Promise<SessionLifecycleResult> {
@@ -569,74 +145,6 @@ export async function getSessionLifecycle(
     patronNpub ? { patron_npub: patronNpub } : {},
     { bestEffort: true },
   );
-}
-
-export interface CheckPriceResult {
-  success: boolean;
-  tool_id?: string;
-  tool_name?: string;
-  base_cost?: number;
-  effective_cost?: number;
-  cost?: number;
-  error?: string;
-  error_code?: string;
-}
-
-export async function checkPrice(
-  toolCapability: string,
-  toolKwargs: Record<string, unknown> = {},
-): Promise<CheckPriceResult> {
-  return callTool<CheckPriceResult>("check_price", {
-    tool_id: toolCapability,
-    tool_kwargs: JSON.stringify(toolKwargs),
-  });
-}
-
-export interface PurchaseCreditsResult {
-  success?: boolean;
-  invoice_id?: string;
-  checkout_link?: string;
-  lightning_invoice?: string;
-  payment_request?: string;
-  expires_at?: string;
-  amount_sats?: number;
-  error?: string;
-  error_code?: string;
-}
-
-export async function purchaseCredits(sats: number): Promise<PurchaseCreditsResult> {
-  return callTool<PurchaseCreditsResult>("purchase_credits", { amount_sats: sats });
-}
-
-export interface CheckPaymentResult {
-  success?: boolean;
-  status?: "New" | "Processing" | "Settled" | "Expired" | "Invalid" | string;
-  message?: string;
-  invoice_id?: string;
-  credits_granted?: number;
-  balance_api_sats?: number;
-  error?: string;
-  error_code?: string;
-}
-
-export async function checkPayment(invoiceId: string): Promise<CheckPaymentResult> {
-  return callTool<CheckPaymentResult>("check_payment", { invoice_id: invoiceId });
-}
-
-export interface AccountStatementResult {
-  success?: boolean;
-  npub?: string;
-  balance_api_sats?: number;
-  total_deposited_api_sats?: number;
-  total_consumed_api_sats?: number;
-  total_expired_api_sats?: number;
-  active_tranches?: number;
-  today_usage?: Record<string, { calls: number; api_sats: number }>;
-  error?: string;
-}
-
-export async function getAccountStatement(days = 30): Promise<AccountStatementResult> {
-  return callTool<AccountStatementResult>("account_statement", { days });
 }
 
 // ─── Posts CRUD (paid) ───────────────────────────────────────────────────

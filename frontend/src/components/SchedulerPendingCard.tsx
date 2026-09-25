@@ -30,11 +30,10 @@
 // instead of waiting out the Worker's hour on a dead one.
 
 import { useCallback, useEffect, useState } from "react";
-import { getNostrProfile } from "@tollbooth-dpyc/web";
+import { getNostrProfile, getStoredNpub } from "@tollbooth-dpyc/web";
 import {
   getSchedulerPending,
   getSchedulerStatus,
-  getStoredNpub,
   reissueSchedulerProof,
   runSchedulerCheckNow,
   type SchedulerLastCheck,

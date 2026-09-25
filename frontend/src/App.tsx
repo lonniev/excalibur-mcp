@@ -2,17 +2,16 @@ import { createContext, useContext, useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from "react-router-dom";
 import {
   getStoredNpub,
+  hydrateAvatarFromNostr,
   isLoggedIn,
   logOut as mcpLogOut,
   onProofExpired,
   serviceStatus,
-  type ServiceStatus,
-} from "./lib/mcp";
-import { hydrateAvatarFromNostr } from "@tollbooth-dpyc/web";
-import { DebugPanel } from "@tollbooth-dpyc/web/react";
+} from "@tollbooth-dpyc/web";
+import { DebugPanel, NpubGate } from "@tollbooth-dpyc/web/react";
+import type { WheelStatus } from "./lib/mcp";
 import Nav from "./components/Nav";
 import Hero from "./components/Hero";
-import NpubGate from "./components/NpubGate";
 import SchedulerLogSection from "./components/SchedulerLogSection";
 import PostsPage from "./components/PostsPage";
 import SnippetsPage from "./components/SnippetsPage";
@@ -24,7 +23,7 @@ import PerformancePage from "./components/PerformancePage";
 
 interface SessionCtx {
   npub: string;
-  status: ServiceStatus | null;
+  status: WheelStatus | null;
   logOut: () => void;
 }
 
@@ -39,10 +38,10 @@ export function useSession(): SessionCtx {
 export default function App() {
   const [loggedIn, setLoggedIn] = useState(isLoggedIn());
   const [npub, setNpub] = useState(getStoredNpub());
-  const [status, setStatus] = useState<ServiceStatus | null>(null);
+  const [status, setStatus] = useState<WheelStatus | null>(null);
   // Set when a paid call bounced for an expired proof and we re-presented the
   // gate. Rendered as a reassuring "this is routine" note above sign-in, not an
-  // error — the user just needs to re-sign, and their npub is still pre-filled.
+  // error — the user just needs to re-sign.
   const [reauthNotice, setReauthNotice] = useState("");
 
   useEffect(() => {
@@ -146,7 +145,7 @@ function TopBar() {
   );
 }
 
-function Footer({ status }: { status: ServiceStatus | null }) {
+function Footer({ status }: { status: WheelStatus | null }) {
   return (
     <footer className="border-t border-stone-100 px-4 py-3 text-center text-xs text-stone-400 dark:border-zinc-900 dark:text-zinc-600 space-y-0.5">
       <div>
