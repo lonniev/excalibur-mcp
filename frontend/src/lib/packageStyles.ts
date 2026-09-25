@@ -23,16 +23,6 @@ const input =
 const errorBox =
   "rounded-lg p-3 text-xs bg-red-50 border border-red-200 text-red-700 dark:bg-red-500/10 dark:border-red-500/30 dark:text-red-400";
 
-const createInvoice = [
-  "[&:has(>input)>button]:ml-auto",
-  "[&:has(>input)>button]:px-4",
-  "[&:has(>input)>button]:py-2",
-  "[&:has(>input)>button]:bg-amber-600",
-  "[&:has(>input)>button]:text-white",
-  "[&:has(>input)>button]:hover:bg-amber-500",
-  "dark:[&:has(>input)>button]:text-white",
-  "dark:[&:has(>input)>button]:hover:bg-amber-500",
-].join(" ");
 
 export const walletStyles: WalletPageClassNames = {
   // The balance's own title is the small muted label it always was.
@@ -46,13 +36,19 @@ export const walletStyles: WalletPageClassNames = {
   stat: "tabular-nums",
   notice: "text-xs text-amber-600 dark:text-amber-400",
   error: errorBox,
-  // Every action is a quiet chip; a link chip (Open checkout) is amber. The
-  // one primary action — Create invoice, beside the amount box — is told
-  // apart by the row it sits in (the only chip row holding an input).
+  // Every action is a quiet chip. The one that moves a top-up forward is the
+  // amber button it always was — Create invoice, pushed to the end of its row;
+  // Open checkout, a link, stays the amber text link it always was.
   chip:
-    "inline-flex items-center px-3 py-1.5 rounded-lg text-sm transition-colors text-stone-500 hover:bg-stone-100 dark:text-zinc-400 dark:hover:bg-zinc-800 disabled:opacity-40 disabled:pointer-events-none [a&]:text-amber-600 dark:[a&]:text-amber-400",
+    "inline-flex items-center px-3 py-1.5 rounded-lg text-sm transition-colors text-stone-500 hover:bg-stone-100 dark:text-zinc-400 dark:hover:bg-zinc-800 disabled:opacity-40 disabled:pointer-events-none",
+  primary: [
+    "inline-flex items-center ml-auto px-4 py-2 rounded-lg text-sm transition-colors",
+    "bg-amber-600 text-white hover:bg-amber-500 disabled:opacity-40 disabled:pointer-events-none",
+    "[a&]:ml-0 [a&]:px-3 [a&]:py-1.5 [a&]:bg-transparent [a&]:hover:bg-transparent [a&]:hover:underline",
+    "[a&]:text-amber-600 dark:[a&]:text-amber-400",
+  ].join(" "),
   chipActive: "bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-400",
-  chips: `flex flex-wrap items-center gap-2 ${createInvoice}`,
+  chips: "flex flex-wrap items-center gap-2",
   input: `${input} w-32`,
   invoice: "rounded-lg border border-stone-200 dark:border-zinc-800 p-3 space-y-2",
   bolt11: "font-mono text-xs break-all bg-stone-50 dark:bg-zinc-950 rounded-sm p-2",
@@ -67,20 +63,16 @@ export const couponStyles: CouponsPanelClassNames = {
   intro: "text-xs text-stone-500 dark:text-zinc-400 mb-4",
   form: "flex gap-2 mb-3",
   input: `${input} flex-1 min-w-0 py-2 uppercase`,
-  // Redeem is the primary chip; each row's Remove is quieted by its row.
-  chip: "bg-amber-600 hover:bg-amber-500 text-white text-sm px-4 py-2 rounded-lg disabled:opacity-40 transition-colors whitespace-nowrap",
+  // Redeem is the amber button; each row's Remove is a quiet mark that reddens.
+  primary: "bg-amber-600 hover:bg-amber-500 text-white text-sm px-4 py-2 rounded-lg disabled:opacity-40 transition-colors whitespace-nowrap",
+  chip: "px-2 py-1 rounded-lg transition-colors text-stone-400 hover:text-red-500 dark:text-zinc-500 dark:hover:text-red-400",
   message: "rounded-lg p-2.5 mb-3 text-xs border",
   ok: "bg-green-50 border-green-200 text-green-700 dark:bg-green-500/10 dark:border-green-500/30 dark:text-green-400",
   error: "bg-red-50 border-red-200 text-red-700 dark:bg-red-500/10 dark:border-red-500/30 dark:text-red-400",
   loading: "text-xs text-stone-400 dark:text-zinc-500 py-2",
   empty: "text-xs text-stone-400 dark:text-zinc-500 leading-relaxed",
   list: "divide-y divide-stone-100 dark:divide-zinc-800",
-  row: [
-    "flex items-center gap-3 py-2.5 [&>div]:flex-1 [&>div]:min-w-0",
-    "[&>button]:bg-transparent [&>button]:hover:bg-transparent [&>button]:px-2 [&>button]:py-1",
-    "[&>button]:text-stone-400 [&>button]:hover:text-red-500",
-    "dark:[&>button]:text-zinc-500 dark:[&>button]:hover:text-red-400",
-  ].join(" "),
+  row: "flex items-center gap-3 py-2.5 [&>div]:flex-1 [&>div]:min-w-0",
   name: "font-mono text-sm",
   discount: "ml-1 text-sm font-semibold text-amber-600 dark:text-amber-400",
   meta: "text-xs text-stone-400 dark:text-zinc-500 mt-0.5",
