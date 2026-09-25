@@ -21,6 +21,7 @@ import {
 } from "../lib/snippets";
 import { QuoteScroller } from "@tollbooth-dpyc/web/react";
 import { QUOTES } from "../lib/quotes";
+import { quoteStyles } from "../lib/quoteStyles";
 
 // Categorized symbols + emoji for the picker. X renders the full Unicode/Twemoji
 // set, so this is a broad curated palette (authors shouldn't memorize code
@@ -1201,8 +1202,9 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
 
   if (loading) {
     return (
-      <div className="tb-dark min-h-screen bg-zinc-950 flex items-center justify-center">
-        <QuoteScroller quotes={QUOTES} spinner heading={isSnippet ? "Opening the snippet…" : "Opening the editor…"} />
+      // Always dark: `dark` here turns on the dark: utilities inside, whatever the site theme.
+      <div className="dark min-h-screen bg-zinc-950 flex items-center justify-center">
+        <QuoteScroller quotes={QUOTES} spinner heading={isSnippet ? "Opening the snippet…" : "Opening the editor…"} classNames={quoteStyles} />
       </div>
     );
   }

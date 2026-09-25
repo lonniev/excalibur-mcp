@@ -11,6 +11,7 @@ import { PageControls, SortHeader, TableShell } from "./PagedTable";
 import TableFilter from "./TableFilter";
 import { QuoteScroller } from "@tollbooth-dpyc/web/react";
 import { QUOTES } from "../lib/quotes";
+import { quoteStyles } from "../lib/quoteStyles";
 
 const DATE_FIELDS = [
   { value: "created", label: "Created" },
@@ -123,7 +124,9 @@ export default function SnippetsPage() {
       )}
 
       {loading && snippets.length === 0 ? (
-        <QuoteScroller quotes={QUOTES} spinner heading="Loading your snippets…" className="py-16" />
+        <div className="py-16">
+          <QuoteScroller quotes={QUOTES} spinner heading="Loading your snippets…" classNames={quoteStyles} />
+        </div>
       ) : snippets.length === 0 ? (
         (search || dateFrom || dateTo) ? (
           <div className="text-center py-12">
