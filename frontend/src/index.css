@@ -45,6 +45,9 @@
   --tb-err-bg: var(--color-red-50);
   --tb-err-line: var(--color-red-200);
   --tb-err-ink: var(--color-red-700);
+  --tb-notice-bg: var(--color-purple-50);
+  --tb-notice-line: var(--color-purple-200);
+  --tb-notice-ink: var(--color-purple-800);
 }
 
 :root.dark {
@@ -60,4 +63,7 @@
   --tb-err-bg: color-mix(in oklab, var(--color-red-500) 10%, transparent);
   --tb-err-line: color-mix(in oklab, var(--color-red-500) 30%, transparent);
   --tb-err-ink: var(--color-red-400);
+  --tb-notice-bg: color-mix(in oklab, var(--color-purple-500) 10%, transparent);
+  --tb-notice-line: color-mix(in oklab, var(--color-purple-500) 30%, transparent);
+  --tb-notice-ink: var(--color-purple-300);
 }

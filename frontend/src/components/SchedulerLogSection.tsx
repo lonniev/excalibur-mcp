@@ -1,52 +1,27 @@
-// On-screen MCP activity log, ported from taxsort-mcp. A fixed bottom bar that
-// shows every MCP call/result/error so you can see what the FE is doing —
-// invaluable for diagnosing "Post does nothing" and the OAuth flow.
+// eXcalibur's own section of the shared debug panel (@tollbooth-dpyc/web's
+// DebugPanel renders it above the log while the panel is open).
 //
-// It also surfaces the Cloudflare cron Worker's traffic, which is otherwise
+// It surfaces the Cloudflare cron Worker's traffic, which is otherwise
 // invisible here: "Scheduler ↻" pulls recent process_scheduled_posts ticks
 // (operator-only) and merges each run — with its per-post skip/error reasons —
-// into this same log. With "auto" on it re-polls every 5 min while the panel is
-// open AND the tab is visible — a hidden tab stops polling so it never keeps the
-// Neon compute awake in the background.
+// into the same page-wide log. With "auto" on it re-polls every 5 min while the
+// panel is open AND the tab is visible — a hidden tab stops polling so it never
+// keeps the Neon compute awake in the background.
 
-import { useEffect, useRef, useState } from "react";
-import { clearDebug, debugPush, useDebugLog, type DebugEntry } from "../lib/debugLog";
+import { useEffect, useState } from "react";
+import { debugEntries, debugPush, onDebug } from "@tollbooth-dpyc/web";
 import { getSchedulerLog, type SchedulerOutcome, type SchedulerRun } from "../lib/mcp";
 import { formatTime, resolveTimeZone, readStoredTimezonePref } from "../lib/timezone";
 
-const TYPE_COLOR: Record<DebugEntry["type"], string> = {
-  info: "text-sky-400",
-  call: "text-amber-400",
-  result: "text-green-400",
-  error: "text-red-400",
-};
+// Module-level, not component state: the panel unmounts this section when it
+// closes, and neither the rendered ticks nor the auto choice should reset then.
+const seen = new Set<string>(); // run_at values already rendered
+let autoPoll = false;
 
-function isFailure(entry: DebugEntry): boolean {
-  if (entry.type === "error") return true;
-  if (entry.type === "result") {
-    const m = entry.message;
-    return m.includes('"success":false') || m.includes('"error"') || m.includes("error_code");
-  }
-  return false;
-}
-
-// Auth and funding outcomes are situations, not faults. The service answered
-// correctly; the patron has a step to take (sign in, top up). These SDK
-// ErrorCode values render as a purple notice and stay out of the red count.
-const NOTICE_CODE =
-  /error_code\\?"\s*:\s*\\?"(npub_missing|proof_missing|proof_required|proof_refresh_needed|dpop_token_missing|oauth_not_yet_authorized|oauth_token_expired|upstream_auth_refresh_needed|insufficient_balance|authority_insufficient_balance|upstream_subscription_required|operator_llm_unfunded)\\?"/;
-
-type Severity = "ok" | "notice" | "failure";
-
-function severity(entry: DebugEntry): Severity {
-  if (!isFailure(entry)) return "ok";
-  return NOTICE_CODE.test(entry.message) ? "notice" : "failure";
-}
-
-const SEVERITY_CLASS: Record<Exclude<Severity, "ok">, { row: string; label: string; text: string }> = {
-  failure: { row: "-mx-1 rounded-sm bg-red-950/60 px-1", label: "font-bold text-red-400", text: "text-red-300" },
-  notice: { row: "-mx-1 rounded-sm bg-purple-950/60 px-1", label: "text-purple-300", text: "text-purple-200" },
-};
+// Clear empties the shared log; let ticks render again after that.
+onDebug(() => {
+  if (debugEntries().length === 0) seen.clear();
+});
 
 const short = (id?: string) => (id ? id.slice(0, 8) : "?");
 
@@ -132,24 +107,21 @@ function pushRun(run: SchedulerRun): void {
   );
 }
 
-export default function DebugPanel() {
-  const log = useDebugLog();
-  const [open, setOpen] = useState(false);
-  const [auto, setAuto] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const seen = useRef<Set<string>>(new Set()); // run_at values already rendered
+const control =
+  "min-h-10 rounded-lg border border-[var(--tb-line)] bg-[var(--tb-surface-2)] px-3 text-xs text-[var(--tb-ink)]";
 
-  const errorCount = log.filter((e) => severity(e) === "failure").length;
-  const noticeCount = log.filter((e) => severity(e) === "notice").length;
+export default function SchedulerLogSection() {
+  const [auto, setAuto] = useState(autoPoll);
+  const [busy, setBusy] = useState(false);
 
   async function loadScheduler(silent: boolean): Promise<void> {
     setBusy(true);
     try {
       const runs = await getSchedulerLog();
       // Render oldest→newest so the latest tick ends up on top.
-      const fresh = runs.filter((r) => !seen.current.has(r.run_at)).reverse();
+      const fresh = runs.filter((r) => !seen.has(r.run_at)).reverse();
       for (const r of fresh) {
-        seen.current.add(r.run_at);
+        seen.add(r.run_at);
         pushRun(r);
       }
       if (!silent && fresh.length === 0) {
@@ -179,11 +151,12 @@ export default function DebugPanel() {
     }
   }
 
-  // Auto re-poll every 5 min while the panel is open, auto is on, AND the tab is
-  // visible. A hidden tab stops polling so it never keeps the Neon compute awake
-  // in the background; it catches up immediately when the tab becomes visible.
+  // Auto re-poll every 5 min while the panel is open (this section is mounted
+  // only then), auto is on, AND the tab is visible. A hidden tab stops polling
+  // so it never keeps the Neon compute awake in the background; it catches up
+  // immediately when the tab becomes visible.
   useEffect(() => {
-    if (!open || !auto) return;
+    if (!auto) return;
     let id: number | null = null;
     const stop = () => {
       if (id !== null) {
@@ -212,74 +185,28 @@ export default function DebugPanel() {
       document.removeEventListener("visibilitychange", onVisibility);
       stop();
     };
-  }, [open, auto]);
+  }, [auto]);
 
-  function handleClear(): void {
-    clearDebug();
-    seen.current.clear(); // allow ticks to re-render after a manual clear
+  function toggleAuto(next: boolean): void {
+    autoPoll = next;
+    setAuto(next);
   }
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-50 flex flex-col items-end">
-      {/* Control bar — always in flow ABOVE the panel, so the minimize (Hide)
-          tab is never overlapped by the expanded log. */}
-      <div className="flex gap-1 pr-3">
-        {open && (
-          <>
-            <button
-              onClick={() => void loadScheduler(false)}
-              disabled={busy}
-              title="Pull recent scheduler-Worker ticks into the log (operator-only)"
-              className="rounded-t-lg bg-indigo-700 px-3 py-1 text-xs text-zinc-100 hover:bg-indigo-600 disabled:opacity-50"
-            >
-              Scheduler ↻
-            </button>
-            <label className="flex items-center gap-1 rounded-t-lg bg-zinc-700 px-2 py-1 text-xs text-zinc-200">
-              <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} />
-              auto
-            </label>
-            <button
-              onClick={handleClear}
-              className="rounded-t-lg bg-zinc-700 px-3 py-1 text-xs text-zinc-200 hover:bg-zinc-600"
-            >
-              Clear
-            </button>
-          </>
-        )}
-        <button
-          onClick={() => setOpen(!open)}
-          className={`rounded-t-lg px-3 py-1 text-xs text-white ${
-            errorCount > 0
-              ? "bg-red-700 hover:bg-red-600"
-              : noticeCount > 0
-                ? "bg-purple-700 hover:bg-purple-600"
-                : "bg-zinc-800 hover:bg-zinc-700"
-          }`}
-        >
-          {open ? "Hide" : "Debug"} ({log.length}
-          {errorCount > 0 ? ` · ${errorCount} err` : ""}
-          {noticeCount > 0 ? ` · ${noticeCount} notice` : ""})
-        </button>
-      </div>
-      {open && (
-        <div className="max-h-64 w-full overflow-y-auto border-t border-zinc-700 bg-zinc-950/95 p-3 font-mono text-xs backdrop-blur-sm">
-          {log.length === 0 && <div className="text-zinc-500">No MCP activity yet.</div>}
-          {log.map((entry, i) => {
-            const sev = severity(entry);
-            const hl = sev === "ok" ? null : SEVERITY_CLASS[sev];
-            return (
-              <div key={i} className={`flex gap-2 py-0.5 ${hl?.row ?? ""}`}>
-                <span className="shrink-0 text-zinc-600">{entry.ts}</span>
-                <span className={`w-12 shrink-0 ${hl?.label ?? TYPE_COLOR[entry.type]}`}>
-                  {sev === "notice" ? "notice" : entry.type}
-                  {sev === "failure" && entry.type !== "error" ? " !" : ""}
-                </span>
-                <span className={`break-all ${hl?.text ?? "text-zinc-300"}`}>{entry.message}</span>
-              </div>
-            );
-          })}
-        </div>
-      )}
+    <div className="flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        onClick={() => void loadScheduler(false)}
+        disabled={busy}
+        title="Pull recent scheduler-Worker ticks into the log (operator-only)"
+        className={`${control} disabled:opacity-50`}
+      >
+        Scheduler ↻
+      </button>
+      <label className={`${control} flex items-center gap-2`}>
+        <input type="checkbox" checked={auto} onChange={(e) => toggleAuto(e.target.checked)} />
+        auto
+      </label>
     </div>
   );
 }
