@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { Plus } from "lucide-react";
+import { Plus, Search, X } from "lucide-react";
 import {
   createPost, deletePost, getPost, getXConnection, listPosts, OAUTH_NEEDED_CODES,
   postTweet, updatePost,
-  type PostSummary, type Recurrence, type SortDir, type XConnectionState,
+  type PostSummary, type Recurrence, type XConnectionState,
 } from "../lib/mcp";
 import { uid } from "../lib/editorDoc";
 import { attemptLabel } from "../lib/attemptLabel";
@@ -16,9 +16,21 @@ import {
 } from "../lib/timezone";
 import { useTimezone } from "../lib/useTimezone";
 import TweetPreviewModal from "./TweetPreviewModal";
-import { PageControls, SortHeader, TableShell } from "./PagedTable";
-import TableFilter from "./TableFilter";
-import { QuoteScroller } from "@tollbooth-dpyc/web/react";
+import type { SortDir } from "@tollbooth-dpyc/web";
+import {
+  PageControls,
+  QuoteScroller,
+  SortHeader,
+  TableFilter,
+  TableShell,
+} from "@tollbooth-dpyc/web/react";
+import {
+  actionsHeaderStyles,
+  pageControlsStyles,
+  sortHeaderStyles,
+  tableFilterStyles,
+  tableShellStyles,
+} from "../lib/packageStyles";
 import { QUOTES } from "../lib/quotes";
 import { quoteStyles } from "../lib/quoteStyles";
 import SchedulerHealth from "./SchedulerHealth";
@@ -505,16 +517,25 @@ export default function PostsPage() {
 
       {hasLoaded && (
         <TableFilter
-          search={search}
-          onSearch={(t) => { setSearch(t); setPage(0); }}
-          dateField={dateField}
-          dateFieldOptions={DATE_FIELDS}
-          onDateField={(v) => { setDateField(v); setPage(0); }}
-          dateFrom={dateFrom}
-          dateTo={dateTo}
-          onDateFrom={(v) => { setDateFrom(v); setPage(0); }}
-          onDateTo={(v) => { setDateTo(v); setPage(0); }}
+          search={{
+            value: search,
+            onSearch: (t) => { setSearch(t); setPage(0); },
+            placeholder: "Search content (regex)…",
+            title: "Case-insensitive regular expression matched against the content",
+          }}
+          dates={{
+            from: dateFrom,
+            to: dateTo,
+            onFrom: (v) => { setDateFrom(v); setPage(0); },
+            onTo: (v) => { setDateTo(v); setPage(0); },
+            field: dateField,
+            fields: DATE_FIELDS,
+            onField: (v) => { setDateField(v); setPage(0); },
+          }}
           onClear={() => { setSearch(""); setDateFrom(""); setDateTo(""); setDateField("created"); setPage(0); }}
+          searchIcon={<Search className="h-3.5 w-3.5" />}
+          clearLabel={<><X className="h-3.5 w-3.5" /> Clear</>}
+          classNames={tableFilterStyles}
         />
       )}
 
@@ -552,15 +573,15 @@ export default function PostsPage() {
         </div>
       ) : (
         <>
-          <TableShell>
+          <TableShell classNames={tableShellStyles}>
             <thead className="border-b border-stone-200 dark:border-zinc-800">
               <tr>
-                <SortHeader label="Status" col="status" activeCol={sortCol} dir={sortDir} onSort={onSort} />
-                <SortHeader label="Post" activeCol={sortCol} dir={sortDir} onSort={onSort} />
-                <SortHeader label="Scheduled" col="scheduled" activeCol={sortCol} dir={sortDir} onSort={onSort} />
-                <SortHeader label="Edited" col="updated" activeCol={sortCol} dir={sortDir} onSort={onSort} />
-                <SortHeader label="Posted" activeCol={sortCol} dir={sortDir} onSort={onSort} />
-                <SortHeader label="" activeCol={sortCol} dir={sortDir} onSort={onSort} className="text-right" />
+                <SortHeader label="Status" col="status" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
+                <SortHeader label="Post" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
+                <SortHeader label="Scheduled" col="scheduled" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
+                <SortHeader label="Edited" col="updated" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
+                <SortHeader label="Posted" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
+                <SortHeader label="" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={actionsHeaderStyles} />
               </tr>
             </thead>
             <tbody>
@@ -807,7 +828,7 @@ export default function PostsPage() {
               })}
             </tbody>
           </TableShell>
-          <PageControls page={page} pageSize={PAGE_SIZE} total={total} onPage={setPage} />
+          <PageControls page={page} pageSize={PAGE_SIZE} total={total} onPage={setPage} classNames={pageControlsStyles} />
         </>
       )}
     </div>
