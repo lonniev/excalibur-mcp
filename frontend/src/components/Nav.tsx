@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import { useSession } from "../App";
-import { checkBalance } from "../lib/mcp";
 import { Avatar } from "@tollbooth-dpyc/web/react";
-import { avatarFor, AVATAR_EVENT } from "@tollbooth-dpyc/web";
+import { avatarFor, AVATAR_EVENT, checkBalance } from "@tollbooth-dpyc/web";
 
 export default function Nav() {
   const { npub, logOut } = useSession();

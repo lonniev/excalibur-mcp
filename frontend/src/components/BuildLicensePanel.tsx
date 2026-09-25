@@ -3,11 +3,11 @@
 // + Horizon commit (service_status), source repos, and the open-source /
 // private-commerce licensing posture.
 
-import type { ServiceStatus } from "../lib/mcp";
+import type { WheelStatus } from "../lib/mcp";
 
 const card = "rounded-xl border border-stone-200 dark:border-zinc-800 bg-white dark:bg-zinc-900";
 
-export default function BuildLicensePanel({ status }: { status: ServiceStatus | null }) {
+export default function BuildLicensePanel({ status }: { status: WheelStatus | null }) {
   const mcpVersion = status?.version;
   const mcpCommit = status?.build_info?.fastmcp_cloud_git_commit_sha?.slice(0, 7);
   const mcpRepo = status?.build_info?.fastmcp_cloud_git_repo;

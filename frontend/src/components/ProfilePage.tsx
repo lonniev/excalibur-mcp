@@ -3,7 +3,7 @@ import { useSession } from "../App";
 import { useTheme, type Theme } from "../lib/theme";
 import { TIMEZONE_OPTIONS } from "../lib/timezone";
 import { useTimezone } from "../lib/useTimezone";
-import { getAccountStatement, type AccountStatementResult } from "../lib/mcp";
+import { getAccountStatement, type AccountStatementResult } from "@tollbooth-dpyc/web";
 import { NostrProfilePanel, SessionKeyClaim } from "@tollbooth-dpyc/web/react";
 import XConnectPanel from "./XConnectPanel";
 import { PatronFundingStatus, OperatorFundingStatus } from "./FundingStatusPanels";

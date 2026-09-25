@@ -11,18 +11,22 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   checkAuthorityBalance,
-  checkBalance,
-  checkProofStatus,
   getOperatorOnboardingStatus,
   getSchedulerStatus,
   getSessionLifecycle,
+  getXConnection,
+  type WheelBalance,
+  type WheelStatus,
+} from "../lib/mcp";
+import {
+  checkBalance,
+  checkProofStatus,
   getStoredNpub,
   getStoredProof,
-  getXConnection,
+  hasSessionNsec,
   serviceStatus,
-  type CheckBalanceResult,
-} from "../lib/mcp";
-import { hasSessionNsec, sessionNsecNpub } from "@tollbooth-dpyc/web";
+  sessionNsecNpub,
+} from "@tollbooth-dpyc/web";
 import {
   composeOperatorRows,
   composePatronRows,
@@ -70,7 +74,7 @@ export function PatronFundingStatus() {
       const sessionKey = isSessionKeyLogin(npub);
 
       const [bal, xconn, proof] = await Promise.all([
-        checkBalance().catch((e: Error) => ({ error: e.message }) as CheckBalanceResult),
+        checkBalance().then((b): WheelBalance => b).catch((e: Error): WheelBalance => ({ error: e.message })),
         getXConnection(),
         sessionKey || !getStoredProof()
           ? Promise.resolve(null)
@@ -143,7 +147,7 @@ export function OperatorFundingStatus() {
       setVisible(true);
 
       const [svc, onb, auth, life] = await Promise.all([
-        serviceStatus().catch(() => ({})),
+        serviceStatus().then((s): WheelStatus => s).catch((): WheelStatus => ({})),
         getOperatorOnboardingStatus().catch(() => ({})),
         checkAuthorityBalance().catch((e: Error) => ({
           success: false as const,
