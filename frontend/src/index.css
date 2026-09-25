@@ -28,8 +28,7 @@
    zinc / amber. Dark follows lib/theme.ts's `.dark` class, not the device:
    the light block also claims `:root:not([data-theme="light"])` so the
    package's prefers-color-scheme block never wins, and `:root.dark` comes
-   after it at the same specificity. `.tb-dark` gives the always-dark editor
-   gate the dark set whatever the site theme. */
+   after it at the same specificity. */
 :root,
 :root:not([data-theme="light"]) {
   --tb-accent: var(--color-amber-600);
@@ -51,8 +50,7 @@
   --tb-notice-ink: var(--color-purple-800);
 }
 
-:root.dark,
-.tb-dark {
+:root.dark {
   --tb-surface: var(--color-zinc-900);
   --tb-surface-2: var(--color-zinc-950);
   --tb-ink: var(--color-zinc-100);

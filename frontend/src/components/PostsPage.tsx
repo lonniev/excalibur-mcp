@@ -20,6 +20,7 @@ import { PageControls, SortHeader, TableShell } from "./PagedTable";
 import TableFilter from "./TableFilter";
 import { QuoteScroller } from "@tollbooth-dpyc/web/react";
 import { QUOTES } from "../lib/quotes";
+import { quoteStyles } from "../lib/quoteStyles";
 import SchedulerHealth from "./SchedulerHealth";
 import SchedulerPendingCard from "./SchedulerPendingCard";
 import RefreshButton from "./RefreshButton";
@@ -533,7 +534,9 @@ export default function PostsPage() {
         // first load. A filter/tab switch keeps the prior posts in state, so
         // without this the stale table just sits there (no feedback) and the
         // human click-spams the tabs while the MCP cold-starts.
-        <QuoteScroller quotes={QUOTES} spinner heading="Loading your posts…" className="py-16" />
+        <div className="py-16">
+          <QuoteScroller quotes={QUOTES} spinner heading="Loading your posts…" classNames={quoteStyles} />
+        </div>
       ) : posts.length === 0 ? (
         <div className="text-center py-12">
           <p className="text-sm text-stone-400 dark:text-zinc-500 mb-3">
