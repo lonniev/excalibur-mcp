@@ -4,9 +4,8 @@
 // operator npub alone, the operator's dependencies — and every date in the
 // patron's chosen display zone. Coupons live on Profile, as they always have.
 
-import { WalletPage as SharedWalletPage } from "@tollbooth-dpyc/web/react";
-import { formatDate, formatDateTime } from "../lib/timezone";
-import { useTimezone } from "../lib/useTimezone";
+import { formatDate, formatDateTime } from "@tollbooth-dpyc/web";
+import { WalletPage as SharedWalletPage, useTimezone } from "@tollbooth-dpyc/web/react";
 import { walletStyles } from "../lib/packageStyles";
 import { PatronFundingStatus, OperatorFundingStatus } from "./FundingStatusPanels";
 

@@ -1,107 +1,18 @@
-// Pure-logic tests for display-timezone preference + conversions.
-// Run with: node --experimental-strip-types --test frontend/src/lib/timezone.test.ts
+// Tests for eXcalibur's own clock helpers; the generic zone conversions are
+// @tollbooth-dpyc/web's and tested there.
+// Run with: node --test frontend/src/lib/timezone.test.ts
 //
 // #367 — all patron-facing times render/parse in an IANA zone (default Auto).
 
-import { describe, it, before, after } from "node:test";
+import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { hourInZone } from "@tollbooth-dpyc/web";
 import {
-  datetimeLocalValueToIso,
   formatPostedShort,
-  getZonedParts,
-  hourInZone,
-  isoToDatetimeLocalValue,
-  localDateFilterBounds,
   parseLocalHourParam,
   postsHrefForLocalHour,
-  resolveTimeZone,
-  startOfLocalDayIso,
-  startOfNextLocalDayIso,
   timeOfDayCohortInZone,
-  zonedWallTimeToUtcMs,
 } from "./timezone.ts";
-
-// Minimal localStorage so read/write helpers don't throw under node:test.
-const store = new Map<string, string>();
-before(() => {
-  // @ts-expect-error test shim
-  globalThis.window = {
-    localStorage: {
-      getItem: (k: string) => store.get(k) ?? null,
-      setItem: (k: string, v: string) => {
-        store.set(k, v);
-      },
-      removeItem: (k: string) => {
-        store.delete(k);
-      },
-    },
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    dispatchEvent: () => true,
-  };
-  // @ts-expect-error test shim
-  globalThis.localStorage = globalThis.window.localStorage;
-});
-after(() => {
-  store.clear();
-});
-
-describe("resolveTimeZone", () => {
-  it("passes through an explicit IANA zone", () => {
-    assert.equal(resolveTimeZone("America/New_York"), "America/New_York");
-    assert.equal(resolveTimeZone("UTC"), "UTC");
-  });
-});
-
-describe("zoned wall time ↔ UTC (DST-aware)", () => {
-  it("maps America/New_York winter wall time to the correct UTC instant", () => {
-    // 2026-01-15 12:00 EST = UTC-5 → 17:00Z
-    const ms = zonedWallTimeToUtcMs(2026, 1, 15, 12, 0, 0, "America/New_York");
-    assert.equal(new Date(ms).toISOString(), "2026-01-15T17:00:00.000Z");
-  });
-
-  it("maps America/New_York summer wall time to the correct UTC instant", () => {
-    // 2026-07-15 12:00 EDT = UTC-4 → 16:00Z
-    const ms = zonedWallTimeToUtcMs(2026, 7, 15, 12, 0, 0, "America/New_York");
-    assert.equal(new Date(ms).toISOString(), "2026-07-15T16:00:00.000Z");
-  });
-
-  it("round-trips ISO through datetime-local in a non-UTC zone", () => {
-    const iso = "2026-01-15T17:00:00.000Z";
-    const local = isoToDatetimeLocalValue(iso, "America/New_York");
-    assert.equal(local, "2026-01-15T12:00");
-    const back = datetimeLocalValueToIso(local, "America/New_York");
-    assert.equal(back, iso);
-  });
-
-  it("renders a winter send in the offset that applied at send time (not 'now')", () => {
-    // Viewed any time of year, a January send in NY is EST (UTC-5).
-    const parts = getZonedParts(new Date("2026-01-15T17:00:00.000Z"), "America/New_York");
-    assert.equal(parts.hour, 12);
-    assert.equal(parts.month, 1);
-  });
-});
-
-describe("local day filter bounds", () => {
-  it("converts a New York calendar day into UTC instants spanning that local day", () => {
-    // 2026-08-01 in America/New_York (EDT, UTC-4):
-    //   start 00:00 EDT = 04:00Z
-    //   next  00:00 EDT = 04:00Z next day
-    const start = startOfLocalDayIso("2026-08-01", "America/New_York");
-    const next = startOfNextLocalDayIso("2026-08-01", "America/New_York");
-    assert.equal(start, "2026-08-01T04:00:00.000Z");
-    assert.equal(next, "2026-08-02T04:00:00.000Z");
-
-    const bounds = localDateFilterBounds("2026-08-01", "2026-08-01", "America/New_York");
-    assert.equal(bounds.dateFrom, start);
-    assert.equal(bounds.dateTo, next);
-  });
-
-  it("uses UTC midnight when the zone is UTC", () => {
-    assert.equal(startOfLocalDayIso("2026-08-01", "UTC"), "2026-08-01T00:00:00.000Z");
-    assert.equal(startOfNextLocalDayIso("2026-08-01", "UTC"), "2026-08-02T00:00:00.000Z");
-  });
-});
 
 describe("time-of-day cohort computed in the patron zone (not UTC-relabeled)", () => {
   it("buckets by local hour so a UTC-14 send near a TZ edge lands on the local hour", () => {

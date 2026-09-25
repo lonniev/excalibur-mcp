@@ -5,15 +5,14 @@ import {
   deleteSnippet, listSnippets, saveSnippet,
   type SnippetRow,
 } from "../lib/mcp";
-import { formatDateTime, localDateFilterBounds } from "../lib/timezone";
-import { useTimezone } from "../lib/useTimezone";
-import type { SortDir } from "@tollbooth-dpyc/web";
+import { formatDateTime, localDateFilterBounds, type SortDir } from "@tollbooth-dpyc/web";
 import {
   PageControls,
   QuoteScroller,
   SortHeader,
   TableFilter,
   TableShell,
+  useTimezone,
 } from "@tollbooth-dpyc/web/react";
 import {
   actionsHeaderStyles,

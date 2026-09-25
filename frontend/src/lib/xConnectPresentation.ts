@@ -5,11 +5,8 @@
 // the access token was expired. This module is the single source for the X
 // account card's badge/body so the two surfaces cannot disagree.
 
-import {
-  composeOauthRow,
-  type OauthInput,
-  type StatusLevel,
-} from "./fundingStatus.ts";
+import type { StatusLevel } from "@tollbooth-dpyc/web";
+import { composeOauthRow, type OauthInput } from "./fundingStatus.ts";
 
 export interface XConnectedPresentation {
   level: StatusLevel;
@@ -31,7 +28,7 @@ export function presentXConnectedCard(
     kind: "connected",
     expiresInSec: expiresInSec ?? null,
   };
-  const row = composeOauthRow(oauth, { checkedAt: "" });
+  const row = composeOauthRow(oauth, "");
   const h = normalizeHandle(handle);
 
   if (row.state === "blocked") {
