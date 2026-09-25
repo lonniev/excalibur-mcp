@@ -9,23 +9,20 @@
 // the tools so a warning cannot outlive its cause.
 
 import { useCallback, useEffect, useState } from "react";
+import { getSchedulerStatus, getXConnection } from "../lib/mcp";
 import {
   checkAuthorityBalance,
-  getOperatorOnboardingStatus,
-  getSchedulerStatus,
-  getSessionLifecycle,
-  getXConnection,
-  type WheelBalance,
-  type WheelStatus,
-} from "../lib/mcp";
-import {
   checkBalance,
   checkProofStatus,
+  getOperatorOnboardingStatus,
   getStoredNpub,
   getStoredProof,
   hasSessionNsec,
   serviceStatus,
   sessionNsecNpub,
+  sessionStatus,
+  type CheckBalanceResult,
+  type ServiceStatus,
 } from "@tollbooth-dpyc/web";
 import {
   composeOperatorRows,
@@ -74,7 +71,7 @@ export function PatronFundingStatus() {
       const sessionKey = isSessionKeyLogin(npub);
 
       const [bal, xconn, proof] = await Promise.all([
-        checkBalance().then((b): WheelBalance => b).catch((e: Error): WheelBalance => ({ error: e.message })),
+        checkBalance().catch((e: Error): CheckBalanceResult => ({ error: e.message })),
         getXConnection(),
         sessionKey || !getStoredProof()
           ? Promise.resolve(null)
@@ -147,13 +144,13 @@ export function OperatorFundingStatus() {
       setVisible(true);
 
       const [svc, onb, auth, life] = await Promise.all([
-        serviceStatus().then((s): WheelStatus => s).catch((): WheelStatus => ({})),
+        serviceStatus().catch((): ServiceStatus => ({})),
         getOperatorOnboardingStatus().catch(() => ({})),
         checkAuthorityBalance().catch((e: Error) => ({
           success: false as const,
           error: e.message,
         })),
-        getSessionLifecycle().catch(() => ({})),
+        sessionStatus().catch(() => ({})),
       ]);
 
       setRows(

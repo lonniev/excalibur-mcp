@@ -7,13 +7,13 @@
 @source './**/*.{ts,tsx}';
 @source '../node_modules/@tollbooth-dpyc/web/dist';
 
-/* Replaces v3's `darkMode: "class"`. lib/theme.ts toggles `.dark` on <html>,
+/* Replaces v3's `darkMode: "class"`. The package's theme toggles `.dark` on <html>,
    so the variant must match descendants of `.dark` — `:is()`, not `:where()`,
    because v3.4 emitted `:is(.dark *)` and `:where()` would drop the
    specificity these utilities have always had. */
 @custom-variant dark (&:is(.dark *));
 
-/* color-scheme is set imperatively by lib/theme.ts on <html>. */
+/* color-scheme is set imperatively by the package's theme on <html>. */
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb {
@@ -25,7 +25,7 @@
 }
 
 /* The shared account pieces from @tollbooth-dpyc/web, in eXcalibur's stone /
-   zinc / amber. Dark follows lib/theme.ts's `.dark` class, not the device:
+   zinc / amber. Dark follows the package theme's `.dark` class, not the device:
    the light block also claims `:root:not([data-theme="light"])` so the
    package's prefers-color-scheme block never wins, and `:root.dark` comes
    after it at the same specificity. */

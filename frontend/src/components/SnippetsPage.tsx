@@ -1,15 +1,27 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Star } from "lucide-react";
+import { Search, Star, X } from "lucide-react";
 import {
   deleteSnippet, listSnippets, saveSnippet,
-  type SnippetRow, type SortDir,
+  type SnippetRow,
 } from "../lib/mcp";
 import { formatDateTime, localDateFilterBounds } from "../lib/timezone";
 import { useTimezone } from "../lib/useTimezone";
-import { PageControls, SortHeader, TableShell } from "./PagedTable";
-import TableFilter from "./TableFilter";
-import { QuoteScroller } from "@tollbooth-dpyc/web/react";
+import type { SortDir } from "@tollbooth-dpyc/web";
+import {
+  PageControls,
+  QuoteScroller,
+  SortHeader,
+  TableFilter,
+  TableShell,
+} from "@tollbooth-dpyc/web/react";
+import {
+  actionsHeaderStyles,
+  pageControlsStyles,
+  sortHeaderStyles,
+  tableFilterStyles,
+  tableShellStyles,
+} from "../lib/packageStyles";
 import { QUOTES } from "../lib/quotes";
 import { quoteStyles } from "../lib/quoteStyles";
 
@@ -105,16 +117,25 @@ export default function SnippetsPage() {
       </p>
 
       <TableFilter
-        search={search}
-        onSearch={(t) => { setSearch(t); setPage(0); }}
-        dateField={dateField}
-        dateFieldOptions={DATE_FIELDS}
-        onDateField={(v) => { setDateField(v); setPage(0); }}
-        dateFrom={dateFrom}
-        dateTo={dateTo}
-        onDateFrom={(v) => { setDateFrom(v); setPage(0); }}
-        onDateTo={(v) => { setDateTo(v); setPage(0); }}
+        search={{
+          value: search,
+          onSearch: (t) => { setSearch(t); setPage(0); },
+          placeholder: "Search content (regex)…",
+          title: "Case-insensitive regular expression matched against the content",
+        }}
+        dates={{
+          from: dateFrom,
+          to: dateTo,
+          onFrom: (v) => { setDateFrom(v); setPage(0); },
+          onTo: (v) => { setDateTo(v); setPage(0); },
+          field: dateField,
+          fields: DATE_FIELDS,
+          onField: (v) => { setDateField(v); setPage(0); },
+        }}
         onClear={() => { setSearch(""); setDateFrom(""); setDateTo(""); setDateField("created"); setPage(0); }}
+        searchIcon={<Search className="h-3.5 w-3.5" />}
+        clearLabel={<><X className="h-3.5 w-3.5" /> Clear</>}
+        classNames={tableFilterStyles}
       />
 
       {error && (
@@ -142,14 +163,14 @@ export default function SnippetsPage() {
         )
       ) : (
         <>
-          <TableShell>
+          <TableShell classNames={tableShellStyles}>
             <thead className="border-b border-stone-200 dark:border-zinc-800">
               <tr>
-                <SortHeader label="★" col="favorite" activeCol={sortCol} dir={sortDir} onSort={onSort} />
-                <SortHeader label="Name" col="name" activeCol={sortCol} dir={sortDir} onSort={onSort} />
-                <SortHeader label="Content" activeCol={sortCol} dir={sortDir} onSort={onSort} />
-                <SortHeader label="Edited" col="updated" activeCol={sortCol} dir={sortDir} onSort={onSort} />
-                <SortHeader label="" activeCol={sortCol} dir={sortDir} onSort={onSort} className="text-right" />
+                <SortHeader label="★" col="favorite" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
+                <SortHeader label="Name" col="name" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
+                <SortHeader label="Content" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
+                <SortHeader label="Edited" col="updated" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
+                <SortHeader label="" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={actionsHeaderStyles} />
               </tr>
             </thead>
             <tbody>
@@ -191,7 +212,7 @@ export default function SnippetsPage() {
               ))}
             </tbody>
           </TableShell>
-          <PageControls page={page} pageSize={PAGE_SIZE} total={total} onPage={setPage} />
+          <PageControls page={page} pageSize={PAGE_SIZE} total={total} onPage={setPage} classNames={pageControlsStyles} />
         </>
       )}
     </div>

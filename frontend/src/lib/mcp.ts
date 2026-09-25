@@ -10,142 +10,19 @@
  *   - posts, snippets, the writing Voice, metrics and performance;
  *   - the X OAuth dance and the X-connection reading;
  *   - dynamic blocks (the claim-check resolve) and region refinement;
- *   - the scheduler: its status, log, pending request and operator controls;
- *   - the operator's readiness probes and patron coupons, which the package
- *     does not wrap yet;
- *   - the wider readings of service_status and check_balance this site shows.
+ *   - the scheduler: its status, log, pending request and operator controls.
+ *
+ * The standard tools (service_status, check_balance, session_status, the
+ * operator readiness probes, coupons) and their types come from the package.
  */
 
 import {
   callTool,
   getStoredNpub,
-  type CheckBalanceResult,
-  type ServiceStatus,
+  sessionStatus,
+  type SortDir,
+  type UpstreamOAuth,
 } from "@tollbooth-dpyc/web";
-
-// ─── Wider readings of standard tools ────────────────────────────────────
-// The package types the fields every site reads. The wheel answers with more,
-// and eXcalibur shows it: the build footer, the operator's health panel and
-// the wallet's tranche count. Same calls, read wider.
-
-/// service_status as the build footer and the operator panel read it.
-export interface WheelStatus extends ServiceStatus {
-  process_id?: number;
-  vault_configured?: boolean;
-  courier_has_vault?: boolean;
-  // Durable long-runner diagnostics (operator only; present when op_npub resolves).
-  durable_jobs?: {
-    key_id?: string;
-    closure_key_block?: string;
-    deployment?: string;
-    detached_executor_active?: boolean;
-    detached_executor_resolved?: boolean;
-    detached_executor_error?: string | null;
-  };
-  // FastMCP Docket backend — durable_across_recycles is the real signal.
-  async_jobs?: {
-    docket_url_set?: boolean;
-    backend?: string;
-    durable_across_recycles?: boolean;
-  };
-  build_info?: {
-    fastmcp_cloud_url?: string;
-    fastmcp_cloud_git_commit_sha?: string;
-    fastmcp_cloud_git_repo?: string;
-  };
-}
-
-export interface CreditTranche {
-  id: string;
-  amount_sats: number;
-  remaining_sats: number;
-  expires_at: string | null;
-  created_at: string | null;
-}
-
-/// check_balance as the wallet and the account-health panel read it.
-export interface WheelBalance extends CheckBalanceResult {
-  active_tranches?: number;
-  tranches?: CreditTranche[];
-  vault_unavailable?: boolean;
-  warning?: string;
-}
-
-// ─── Operator readiness probes (free, no proof envelope) ─────────────────
-// Operator rows use service_status + get_operator_onboarding_status +
-// check_authority_balance + session_status, shown only when the signed-in npub
-// is scheduler_status.operator_npub (see FundingStatusPanels).
-
-export interface OnboardingField {
-  field: string;
-  category?: string;
-  status?: string;
-  lifecycle?: string;
-  how?: string;
-}
-
-export interface OperatorOnboardingResult {
-  ready?: boolean;
-  configured?: OnboardingField[];
-  missing?: OnboardingField[];
-  optional_missing?: OnboardingField[];
-  summary?: string;
-  bootstrap_error?: string;
-  vault_ok?: boolean;
-  credential_service?: string;
-  operator_name?: string;
-  error?: string;
-}
-
-/// Operator credential readiness (BTCPay / X app / llm_api_key present-or-not).
-/// A non-operator still gets the structural answer; the FE hides the panel
-/// unless the viewer is the operator npub.
-export async function getOperatorOnboardingStatus(): Promise<OperatorOnboardingResult> {
-  return callTool<OperatorOnboardingResult>(
-    "get_operator_onboarding_status",
-    {},
-    { bestEffort: true },
-  );
-}
-
-export interface AuthorityBalanceResult {
-  success?: boolean;
-  balance_api_sats?: number;
-  balance_sats?: number;
-  error?: string;
-  message?: string;
-}
-
-/// This operator's tax balance at the Authority (sats available to certify
-/// patron purchases). Best-effort — a failure is itself a status signal.
-export async function checkAuthorityBalance(): Promise<AuthorityBalanceResult> {
-  return callTool<AuthorityBalanceResult>(
-    "check_authority_balance",
-    {},
-    { bestEffort: true },
-  );
-}
-
-export interface SessionLifecycleResult {
-  success?: boolean;
-  lifecycle?: string;
-  message?: string;
-  detail?: string;
-  operator_npub?: string;
-  upstream_oauth?: UpstreamOauth;
-}
-
-/// Operator lifecycle (ready / warming_up / misconfigured / quota_exceeded / …).
-/// Optional patron_npub also yields upstream_oauth (used by getXConnection).
-export async function getSessionLifecycle(
-  patronNpub?: string,
-): Promise<SessionLifecycleResult> {
-  return callTool<SessionLifecycleResult>(
-    "session_status",
-    patronNpub ? { patron_npub: patronNpub } : {},
-    { bestEffort: true },
-  );
-}
 
 // ─── Posts CRUD (paid) ───────────────────────────────────────────────────
 
@@ -184,8 +61,6 @@ export interface PostSummary {
   // wording. One reason per block; empty on a clean send.
   fell_back?: { reason?: string | null; budget_s?: number | null }[];
 }
-
-export type SortDir = "asc" | "desc";
 
 export interface ListPostsResult {
   posts?: PostSummary[];
@@ -547,18 +422,6 @@ export async function checkOauthStatus(): Promise<OauthStatusResult> {
   return callTool<OauthStatusResult>("check_oauth_status", {});
 }
 
-export interface UpstreamOauth {
-  has_access_token?: boolean;
-  has_refresh_token?: boolean;
-  access_token_expires_at?: number;
-  access_token_expires_in_seconds?: number;
-}
-
-interface SessionStatusResult {
-  lifecycle?: string;
-  upstream_oauth?: UpstreamOauth;
-}
-
 /// The X-connection reading, as a discriminated state so the UI can tell
 /// "definitely not connected" from "couldn't read it right now". The wheel
 /// OMITS `upstream_oauth` when there's no token, so the absence of the block is
@@ -566,15 +429,13 @@ interface SessionStatusResult {
 /// reading authoritative. A cold/warming MCP (or a transient error) is
 /// `indeterminate`, never `disconnected`.
 export type XConnectionState =
-  | { kind: "connected"; oauth: UpstreamOauth }
+  | { kind: "connected"; oauth: UpstreamOAuth }
   | { kind: "disconnected" }
   | { kind: "indeterminate"; reason: string };
 
 export async function getXConnection(): Promise<XConnectionState> {
   try {
-    const r = await callTool<SessionStatusResult>("session_status", {
-      patron_npub: getStoredNpub(),
-    });
+    const r = await sessionStatus(getStoredNpub());
     if (r.upstream_oauth?.has_access_token) {
       return { kind: "connected", oauth: r.upstream_oauth };
     }
@@ -966,58 +827,6 @@ export interface XProfile {
 /// Returns `{connected:false,...}` / an oauth situation when X isn't linked.
 export async function getXProfile(): Promise<XProfile> {
   return callTool<XProfile>("get_x_profile", {}, { bestEffort: true });
-}
-
-// ─── Coupons (wheel 0.41.0+) ─────────────────────────────────────────────
-
-export interface PatronCoupon {
-  coupon_id: string;
-  name: string;
-  discount_percent: number;
-  valid_from: string;
-  valid_until: string;
-  uses_per_patron: number | null;
-  use_count: number;
-  uses_remaining: number | null;
-  total_uses: number | null;
-  total_remaining: number | null;
-  status: string; // active | window_closed | window_not_started | patron_limit | total_limit
-}
-
-export interface ListMyCouponsResult {
-  success: boolean;
-  count: number;
-  coupons: PatronCoupon[];
-  error?: string;
-}
-
-export interface RedeemCouponResult {
-  success: boolean;
-  coupon_id?: string;
-  name?: string;
-  discount_percent?: number;
-  valid_until?: string;
-  uses_remaining?: number | null;
-  uses_per_patron?: number | null;
-  error?: string;
-}
-
-export interface ForgetCouponResult {
-  success: boolean;
-  coupon_id?: string;
-  error?: string;
-}
-
-export async function listMyCoupons(): Promise<ListMyCouponsResult> {
-  return callTool<ListMyCouponsResult>("list_my_coupons", {});
-}
-
-export async function redeemCoupon(code: string): Promise<RedeemCouponResult> {
-  return callTool<RedeemCouponResult>("redeem_coupon", { code });
-}
-
-export async function forgetCoupon(couponId: string): Promise<ForgetCouponResult> {
-  return callTool<ForgetCouponResult>("forget_coupon", { coupon_id: couponId });
 }
 
 // ─── Post metrics / performance ──────────────────────────────────────────

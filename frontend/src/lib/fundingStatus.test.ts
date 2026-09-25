@@ -134,7 +134,6 @@ describe("composeOperatorRows", () => {
           durable_jobs: {
             detached_executor_active: true,
             detached_executor_resolved: true,
-            key_id: "abc",
           },
           async_jobs: { durable_across_recycles: true, backend: "redis" },
         },

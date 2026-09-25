@@ -70,7 +70,6 @@ export interface ServiceStatusInput {
     detached_executor_active?: boolean;
     detached_executor_resolved?: boolean;
     detached_executor_error?: string | null;
-    key_id?: string;
   };
   async_jobs?: {
     durable_across_recycles?: boolean;
@@ -524,7 +523,7 @@ export function composeDurableJobsRow(svc: ServiceStatusInput, opts: ComposeOpts
       id: "durable-jobs",
       dependency: "Durable job dispatch",
       state: "ok",
-      detail: `Detached executor active${dj?.key_id ? ` (key ${dj.key_id})` : ""}${
+      detail: `Detached executor active${
         aj?.backend ? ` · docket ${aj.backend}` : ""
       }.`,
       checked_at,

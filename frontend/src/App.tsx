@@ -7,9 +7,9 @@ import {
   logOut as mcpLogOut,
   onProofExpired,
   serviceStatus,
+  type ServiceStatus,
 } from "@tollbooth-dpyc/web";
 import { DebugPanel, NpubGate } from "@tollbooth-dpyc/web/react";
-import type { WheelStatus } from "./lib/mcp";
 import Nav from "./components/Nav";
 import Hero from "./components/Hero";
 import SchedulerLogSection from "./components/SchedulerLogSection";
@@ -23,7 +23,7 @@ import PerformancePage from "./components/PerformancePage";
 
 interface SessionCtx {
   npub: string;
-  status: WheelStatus | null;
+  status: ServiceStatus | null;
   logOut: () => void;
 }
 
@@ -38,7 +38,7 @@ export function useSession(): SessionCtx {
 export default function App() {
   const [loggedIn, setLoggedIn] = useState(isLoggedIn());
   const [npub, setNpub] = useState(getStoredNpub());
-  const [status, setStatus] = useState<WheelStatus | null>(null);
+  const [status, setStatus] = useState<ServiceStatus | null>(null);
   // Set when a paid call bounced for an expired proof and we re-presented the
   // gate. Rendered as a reassuring "this is routine" note above sign-in, not an
   // error — the user just needs to re-sign.
@@ -145,7 +145,7 @@ function TopBar() {
   );
 }
 
-function Footer({ status }: { status: WheelStatus | null }) {
+function Footer({ status }: { status: ServiceStatus | null }) {
   return (
     <footer className="border-t border-stone-100 px-4 py-3 text-center text-xs text-stone-400 dark:border-zinc-900 dark:text-zinc-600 space-y-0.5">
       <div>
