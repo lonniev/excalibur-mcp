@@ -9,7 +9,8 @@ import { formatDateTime, localDateFilterBounds } from "../lib/timezone";
 import { useTimezone } from "../lib/useTimezone";
 import { PageControls, SortHeader, TableShell } from "./PagedTable";
 import TableFilter from "./TableFilter";
-import QuoteScroller from "./QuoteScroller";
+import { QuoteScroller } from "@tollbooth-dpyc/web/react";
+import { QUOTES } from "../lib/quotes";
 
 const DATE_FIELDS = [
   { value: "created", label: "Created" },
@@ -122,7 +123,7 @@ export default function SnippetsPage() {
       )}
 
       {loading && snippets.length === 0 ? (
-        <QuoteScroller heading="Loading your snippets…" className="py-16" />
+        <QuoteScroller quotes={QUOTES} spinner heading="Loading your snippets…" className="py-16" />
       ) : snippets.length === 0 ? (
         (search || dateFrom || dateTo) ? (
           <div className="text-center py-12">

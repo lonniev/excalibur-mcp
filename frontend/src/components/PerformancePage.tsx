@@ -37,7 +37,8 @@ import {
   timeOfDayCohortInZone,
 } from "../lib/timezone";
 import { useTimezone } from "../lib/useTimezone";
-import QuoteScroller from "./QuoteScroller";
+import { QuoteScroller } from "@tollbooth-dpyc/web/react";
+import { QUOTES } from "../lib/quotes";
 import RefreshButton from "./RefreshButton";
 
 const card = "rounded-xl border border-stone-200 dark:border-zinc-800 bg-white dark:bg-zinc-900";
@@ -543,7 +544,7 @@ export default function PerformancePage() {
       )}
 
       {initialLoading ? (
-        <QuoteScroller heading="Loading performance…" className="py-16" />
+        <QuoteScroller quotes={QUOTES} spinner heading="Loading performance…" className="py-16" />
       ) : (
         <>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -645,7 +646,7 @@ export default function PerformancePage() {
         {posts.length === 0 ? (
           <div className="px-4 py-10 text-center text-sm text-stone-500 dark:text-zinc-400">
             {loading ? (
-              <QuoteScroller heading="Loading performance…" className="py-6" />
+              <QuoteScroller quotes={QUOTES} spinner heading="Loading performance…" className="py-6" />
             ) : (
               <>
                 No harvested metrics yet. After a post is sent, snapshots land at t+15m, +1h, +6h,
