@@ -2,16 +2,21 @@
 // brings the mechanics — the calls, the states, the words, the paging and
 // filtering arithmetic, the theme plumbing — and adds no colour or type of its
 // own; these classNames are the stone / zinc / amber look eXcalibur's own
-// Wallet, Coupons, table and theme picker always had, light and dark.
+// Wallet, Coupons, table, theme and time-zone pickers, usage, health and
+// build panels always had, light and dark.
 
 import type {
+  BuildInfoPanelClassNames,
   CouponsPanelClassNames,
   ErrorBoundaryClassNames,
+  FundingStatusClassNames,
   PageControlsClassNames,
   SortHeaderClassNames,
   TableFilterClassNames,
   TableShellClassNames,
   ThemeToggleClassNames,
+  TimezonePickerClassNames,
+  UsageSummaryClassNames,
   WalletPageClassNames,
 } from "@tollbooth-dpyc/web/react";
 
@@ -133,4 +138,59 @@ export const errorBoundaryStyles: ErrorBoundaryClassNames = {
     "w-full max-h-48 overflow-auto rounded-md bg-stone-100 p-3 text-left font-mono text-[11px] whitespace-pre-wrap text-stone-600 dark:bg-zinc-900 dark:text-zinc-400",
   actions: "flex flex-wrap justify-center gap-2",
   chip: "rounded-md bg-amber-400 px-4 py-2 text-sm font-medium text-zinc-950 transition-colors hover:bg-amber-300",
+};
+
+// A panel's quiet Refresh, pushed to the end of its heading row.
+const refresh =
+  "ml-auto text-xs text-stone-500 hover:text-amber-600 dark:text-zinc-400 dark:hover:text-amber-400 disabled:opacity-40 transition-colors";
+
+// Rows are drawn by FundingStatusPanels (dot, word, detail, stamp); the state
+// chips carry their own colour, so ok / warning / blocked add nothing here.
+export const fundingStyles: FundingStatusClassNames = {
+  root: `${card} p-5`,
+  header: "mb-1 flex flex-wrap items-center gap-2",
+  heading: "text-sm font-medium",
+  chip: refresh,
+  intro: "mb-3 text-xs leading-relaxed text-stone-500 dark:text-zinc-400",
+  loading: "text-xs text-stone-400 dark:text-zinc-500",
+  error: `mb-3 ${errorBox}`,
+  list: "divide-y divide-stone-100 dark:divide-zinc-800",
+  row: "flex items-start gap-3 py-2.5 first:pt-0 last:pb-0",
+};
+
+export const timezonePickerStyles: TimezonePickerClassNames = {
+  label: "block text-xs text-stone-500 dark:text-zinc-400 mb-1.5",
+  select:
+    "w-full rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm focus:outline-hidden focus:border-amber-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200",
+};
+
+export const usageStyles: UsageSummaryClassNames = {
+  root: `${card} p-5`,
+  header: "mb-3 flex items-center gap-2",
+  heading: "text-sm font-medium",
+  chip: refresh,
+  figures: "grid grid-cols-3 gap-3 text-center",
+  value: "text-lg font-semibold tabular-nums",
+  label: "text-xs text-stone-400 dark:text-zinc-500",
+  subheading: "mt-4 mb-1 text-xs uppercase tracking-wider text-stone-400 dark:text-zinc-500",
+  list: "divide-y divide-stone-100 dark:divide-zinc-800",
+  row: "flex items-baseline gap-3 py-1.5 text-xs",
+  tool: "flex-1 min-w-0 truncate font-mono text-stone-700 dark:text-zinc-300",
+  calls: "text-stone-400 dark:text-zinc-500 tabular-nums",
+  sats: "w-24 text-right text-stone-700 dark:text-zinc-300 tabular-nums",
+  loading: "text-xs text-stone-400 dark:text-zinc-500",
+  error: "text-xs text-stone-400 dark:text-zinc-500",
+  empty: "text-xs text-stone-400 dark:text-zinc-500",
+};
+
+// The row carries the value colour so a link's amber never fights it.
+export const buildInfoStyles: BuildInfoPanelClassNames = {
+  root: `${card} p-5`,
+  heading: "text-sm font-medium mb-1",
+  intro: "text-xs text-stone-500 dark:text-zinc-400 mb-4 leading-relaxed",
+  section: "text-xs uppercase tracking-wider text-stone-400 dark:text-zinc-500 mt-4 mb-1",
+  row: "flex gap-3 py-1.5 border-b border-stone-100 dark:border-zinc-800 text-xs text-stone-700 dark:text-zinc-300",
+  label: "w-28 shrink-0 text-stone-400 dark:text-zinc-500",
+  value: "flex-1 min-w-0 font-mono break-all",
+  link: "text-amber-600 dark:text-amber-400 hover:underline",
 };

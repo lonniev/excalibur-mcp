@@ -9,9 +9,8 @@
 // keeps the Neon compute awake in the background.
 
 import { useEffect, useState } from "react";
-import { debugEntries, debugPush, onDebug } from "@tollbooth-dpyc/web";
+import { debugEntries, debugPush, displayTimeZone, formatTime, onDebug } from "@tollbooth-dpyc/web";
 import { getSchedulerLog, type SchedulerOutcome, type SchedulerRun } from "../lib/mcp";
-import { formatTime, resolveTimeZone, readStoredTimezonePref } from "../lib/timezone";
 
 // Module-level, not component state: the panel unmounts this section when it
 // closes, and neither the rendered ticks nor the auto choice should reset then.
@@ -40,7 +39,7 @@ const outcome = (e: SchedulerOutcome, verb: string) =>
 // and the header last — the header lands above its details.
 function pushRun(run: SchedulerRun): void {
   const s = run.summary ?? {};
-  const tz = resolveTimeZone(readStoredTimezonePref());
+  const tz = displayTimeZone();
   const when = formatTime(run.run_at, tz) || run.run_at;
 
   if (s.kind === "publication") {
@@ -135,7 +134,7 @@ export default function SchedulerLogSection() {
           // Ticks exist; this refresh just found nothing newer. Tell the human
           // it's current and when the scheduler last ran, so the empty result
           // reads as "up to date", not "broken".
-          const tz = resolveTimeZone(readStoredTimezonePref());
+          const tz = displayTimeZone();
           const lastWhen = formatTime(runs[0].run_at, tz) || runs[0].run_at;
           debugPush(
             "info",

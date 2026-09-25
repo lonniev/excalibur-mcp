@@ -1,18 +1,26 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { useSession } from "../App";
-import { TIMEZONE_OPTIONS } from "../lib/timezone";
-import { useTimezone } from "../lib/useTimezone";
-import { getAccountStatement, type AccountStatementResult, type Theme } from "@tollbooth-dpyc/web";
+import type { Theme } from "@tollbooth-dpyc/web";
 import {
+  BuildInfoPanel,
   CouponsPanel,
   NostrProfilePanel,
   SessionKeyClaim,
   ThemeToggle,
+  TimezonePicker,
+  UsageSummary,
+  useTimezone,
 } from "@tollbooth-dpyc/web/react";
-import { card, couponStyles, themeToggleStyles } from "../lib/packageStyles";
+import {
+  buildInfoStyles,
+  card,
+  couponStyles,
+  themeToggleStyles,
+  timezonePickerStyles,
+  usageStyles,
+} from "../lib/packageStyles";
 import XConnectPanel from "./XConnectPanel";
 import { PatronFundingStatus, OperatorFundingStatus } from "./FundingStatusPanels";
-import BuildLicensePanel from "./BuildLicensePanel";
 
 const THEME_HINTS: Record<Theme, string> = { dark: "Default", light: "", system: "Match OS" };
 const THEME_LABELS: Record<Theme, ReactNode> = {
@@ -23,13 +31,8 @@ const THEME_LABELS: Record<Theme, ReactNode> = {
 
 export default function ProfilePage() {
   const { npub, status, logOut } = useSession();
-  const [tzPref, tzResolved, setTzPref] = useTimezone();
-  const [stmt, setStmt] = useState<AccountStatementResult | null>(null);
+  const [tzPref, tzResolved] = useTimezone();
   const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    getAccountStatement(30).then(setStmt).catch(() => setStmt(null));
-  }, []);
 
   function copyNpub() {
     navigator.clipboard?.writeText(npub).then(
@@ -77,22 +80,13 @@ export default function ProfilePage() {
           All times on Posts, Performance, Scheduler, and Wallet use this zone. Storage stays UTC;
           only display and filter edges convert. Saved on this device.
         </p>
-        <label className="block text-xs text-stone-500 dark:text-zinc-400 mb-1.5" htmlFor="tz-select">
-          Zone
-        </label>
-        <select
+        <TimezonePicker
+          label="Zone"
           id="tz-select"
-          value={tzPref}
-          onChange={(e) => setTzPref(e.target.value)}
-          className="w-full rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm focus:outline-hidden focus:border-amber-400 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200"
-        >
-          <option value="auto">Auto (browser) — {tzResolved}</option>
-          {TIMEZONE_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label} — {o.value}
-            </option>
-          ))}
-        </select>
+          autoLabel={(zone) => `Auto (browser) — ${zone}`}
+          optionLabel={(o) => `${o.label} — ${o.value}`}
+          classNames={timezonePickerStyles}
+        />
         <p className="mt-2 text-[11px] text-stone-400 dark:text-zinc-500">
           {tzPref === "auto"
             ? `Currently resolving to ${tzResolved}.`
@@ -117,18 +111,7 @@ export default function ProfilePage() {
       </div>
 
       {/* Usage */}
-      <div className={`${card} p-5`}>
-        <div className="text-sm font-medium mb-3">Last 30 days</div>
-        {stmt ? (
-          <div className="grid grid-cols-3 gap-3 text-center">
-            <Stat label="Balance" value={stmt.account_summary?.balance_api_sats} />
-            <Stat label="Deposited" value={stmt.account_summary?.total_deposited_api_sats} />
-            <Stat label="Consumed" value={stmt.account_summary?.total_consumed_api_sats} />
-          </div>
-        ) : (
-          <p className="text-xs text-stone-400 dark:text-zinc-500">No statement available.</p>
-        )}
-      </div>
+      <UsageSummary classNames={usageStyles} />
 
       {/* Coupons */}
       <CouponsPanel
@@ -141,7 +124,24 @@ export default function ProfilePage() {
       />
 
       {/* Build & license */}
-      <BuildLicensePanel status={status} />
+      <BuildInfoPanel
+        status={status}
+        frontend={{
+          version: __APP_VERSION__,
+          commit: __BUILD_COMMIT__,
+          builtAt: __BUILD_TIME__,
+          source: "https://github.com/lonniev/excalibur-mcp",
+        }}
+        intro={
+          <>
+            eXcalibur and Tollbooth-DPYC<sup>™</sup> ship as open source under the Apache License 2.0 —
+            anyone can read the code, fork it, run their own operator. The <i>services</i> on top are
+            private commerce: each operator sets their own tolls; patrons pre-fund a Lightning balance
+            and pay per call. The protocol is shared; the businesses on it are not.
+          </>
+        }
+        classNames={buildInfoStyles}
+      />
 
       <div className="flex justify-end">
         <button
@@ -151,15 +151,6 @@ export default function ProfilePage() {
           Log out
         </button>
       </div>
-    </div>
-  );
-}
-
-function Stat({ label, value }: { label: string; value?: number }) {
-  return (
-    <div>
-      <div className="text-lg font-semibold tabular-nums">{value?.toLocaleString() ?? "—"}</div>
-      <div className="text-xs text-stone-400 dark:text-zinc-500">{label}</div>
     </div>
   );
 }
