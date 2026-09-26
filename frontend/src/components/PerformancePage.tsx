@@ -35,7 +35,8 @@ import { formatPostedShort, postsHrefForLocalHour, timeOfDayCohortInZone } from 
 import { QuoteScroller, useTimezone } from "@tollbooth-dpyc/web/react";
 import { QUOTES } from "../lib/quotes";
 import { quoteStyles } from "../lib/quoteStyles";
-import RefreshButton from "./RefreshButton";
+import { RefreshButton } from "@tollbooth-dpyc/web/react";
+import { refreshStyles } from "../lib/packageStyles";
 
 const card = "rounded-xl border border-stone-200 dark:border-zinc-800 bg-white dark:bg-zinc-900";
 
@@ -529,7 +530,7 @@ export default function PerformancePage() {
           </p>
         </div>
         <div className="shrink-0 ml-auto">
-          <RefreshButton onClick={() => void refresh()} busy={loading} title="Refresh performance" size="sm" />
+          <RefreshButton onRefresh={refresh} busy={loading} label="Refresh performance" classNames={refreshStyles.header} />
         </div>
       </div>
 

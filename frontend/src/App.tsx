@@ -1,15 +1,6 @@
-import { createContext, useContext, useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from "react-router-dom";
-import {
-  getStoredNpub,
-  hydrateAvatarFromNostr,
-  isLoggedIn,
-  logOut as mcpLogOut,
-  onProofExpired,
-  serviceStatus,
-  type ServiceStatus,
-} from "@tollbooth-dpyc/web";
-import { DebugPanel, NpubGate } from "@tollbooth-dpyc/web/react";
+import type { ServiceStatus } from "@tollbooth-dpyc/web";
+import { AppShell } from "@tollbooth-dpyc/web/react";
 import Nav from "./components/Nav";
 import Hero from "./components/Hero";
 import SchedulerLogSection from "./components/SchedulerLogSection";
@@ -21,116 +12,56 @@ import ProfilePage from "./components/ProfilePage";
 import SchedulerPage from "./components/SchedulerPage";
 import PerformancePage from "./components/PerformancePage";
 
-interface SessionCtx {
-  npub: string;
-  status: ServiceStatus | null;
-  logOut: () => void;
-}
-
-const Ctx = createContext<SessionCtx | null>(null);
-
-export function useSession(): SessionCtx {
-  const v = useContext(Ctx);
-  if (!v) throw new Error("useSession must be used within <App>");
-  return v;
-}
-
+// The session, the sign-in gate, the theme, the avatar and the debug log are
+// the package's AppShell; eXcalibur brings its routes, its hero and its footer,
+// and the scheduler controls it keeps in the debug log.
 export default function App() {
-  const [loggedIn, setLoggedIn] = useState(isLoggedIn());
-  const [npub, setNpub] = useState(getStoredNpub());
-  const [status, setStatus] = useState<ServiceStatus | null>(null);
-  // Set when a paid call bounced for an expired proof and we re-presented the
-  // gate. Rendered as a reassuring "this is routine" note above sign-in, not an
-  // error — the user just needs to re-sign.
-  const [reauthNotice, setReauthNotice] = useState("");
-
-  useEffect(() => {
-    serviceStatus().then(setStatus).catch(() => setStatus(null));
-  }, []);
-
-  // A paid call anywhere (Posts, editor, wallet) can bounce for a lapsed proof.
-  // The mcp layer clears the stale token and fires this; drop back to sign-in so
-  // the user isn't stranded on a page whose data silently won't load. Only bounce
-  // when they can no longer prove ownership — an nsec session re-signs inline, so
-  // isLoggedIn() stays true and we leave it alone.
-  useEffect(() => {
-    return onProofExpired(() => {
-      if (isLoggedIn()) return;
-      setReauthNotice(
-        "Your sign-in expired — that's routine. Sign in again to pick up where you left off.",
-      );
-      setNpub(getStoredNpub());
-      setLoggedIn(false);
-    });
-  }, []);
-
-  // Seed the avatar from the npub's Nostr kind-0 picture (source of truth).
-  useEffect(() => {
-    if (loggedIn && npub) void hydrateAvatarFromNostr(npub);
-  }, [loggedIn, npub]);
-
-  function onLogin() {
-    setReauthNotice("");
-    setNpub(getStoredNpub());
-    setLoggedIn(true);
-  }
-
-  function logOut() {
-    mcpLogOut();
-    setNpub("");
-    setLoggedIn(false);
-  }
-
   return (
-    <div className="min-h-screen flex flex-col bg-stone-50 dark:bg-zinc-950 text-stone-900 dark:text-zinc-100 transition-colors">
-      <Ctx.Provider value={{ npub, status, logOut }}>
-        {loggedIn ? (
-          <BrowserRouter>
-            <Routes>
-              <Route element={<Layout />}>
-                <Route index element={<PostsPage />} />
-                <Route path="new" element={<ContentEditorPage kind="post" />} />
-                <Route path="post/:postId" element={<ContentEditorPage kind="post" />} />
-                <Route path="snippets" element={<SnippetsPage />} />
-                <Route path="snippets/new" element={<ContentEditorPage kind="snippet" />} />
-                <Route path="snippet/:snippetId" element={<ContentEditorPage kind="snippet" />} />
-                <Route path="wallet" element={<WalletPage />} />
-                <Route path="scheduler" element={<SchedulerPage />} />
-                <Route path="performance" element={<PerformancePage />} />
-                <Route path="profile" element={<ProfilePage />} />
-                <Route path="*" element={<Navigate to="/" replace />} />
-              </Route>
-            </Routes>
-          </BrowserRouter>
-        ) : (
-          <>
-            <TopBar />
-            <main className="flex-1">
-              <Hero />
-              <div className="pb-16">
-                <NpubGate onLogin={onLogin} operatorHash={status?.operator_npub_hash} notice={reauthNotice} />
-              </div>
-            </main>
-            <Footer status={status} />
-          </>
-        )}
-        <DebugPanel>
-          <SchedulerLogSection />
-        </DebugPanel>
-      </Ctx.Provider>
-    </div>
+    <AppShell
+      theme="dark"
+      classNames={{ root: "bg-stone-50 dark:bg-zinc-950 text-stone-900 dark:text-zinc-100 transition-colors" }}
+      footer={({ status }) => <Footer status={status} />}
+      debug={{ children: <SchedulerLogSection /> }}
+      signedOut={({ gate }) => (
+        <>
+          <TopBar />
+          <main className="flex-1">
+            <Hero />
+            <div className="pb-16">{gate}</div>
+          </main>
+        </>
+      )}
+    >
+      {() => (
+        <BrowserRouter>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route index element={<PostsPage />} />
+              <Route path="new" element={<ContentEditorPage kind="post" />} />
+              <Route path="post/:postId" element={<ContentEditorPage kind="post" />} />
+              <Route path="snippets" element={<SnippetsPage />} />
+              <Route path="snippets/new" element={<ContentEditorPage kind="snippet" />} />
+              <Route path="snippet/:snippetId" element={<ContentEditorPage kind="snippet" />} />
+              <Route path="wallet" element={<WalletPage />} />
+              <Route path="scheduler" element={<SchedulerPage />} />
+              <Route path="performance" element={<PerformancePage />} />
+              <Route path="profile" element={<ProfilePage />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Route>
+          </Routes>
+        </BrowserRouter>
+      )}
+    </AppShell>
   );
 }
 
 function Layout() {
-  const { status } = useSession();
   return (
     <>
       <Nav />
       <main className="flex-1">
         <Outlet />
       </main>
-      <Footer status={status} />
     </>
   );
 }
