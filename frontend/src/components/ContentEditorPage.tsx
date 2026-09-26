@@ -9,8 +9,7 @@ import {
   CopyPlus, X,
 } from "lucide-react";
 import { getResolveBudgets } from "../lib/mcp";
-import { useSession } from "../App";
-import { Avatar, useTimezone } from "@tollbooth-dpyc/web/react";
+import { Avatar, useAppShell, useTimezone } from "@tollbooth-dpyc/web/react";
 import { avatarFor, datetimeLocalValueToIso, debugPush, isoToDatetimeLocalValue } from "@tollbooth-dpyc/web";
 import { cachedXProfile, ensureXProfile } from "../lib/xProfile";
 import type { XProfile } from "../lib/mcp";
@@ -86,7 +85,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   const isNew = !id;
   const listPath = isSnippet ? "/snippets" : "/";
   const nav = useNavigate();
-  const { npub } = useSession();
+  const { npub } = useAppShell().session;
   const [, timeZone] = useTimezone();
   // When the Profile zone changes, re-express wall datetime-local values so the
   // underlying UTC instant stays put (acceptance: live update, no reload).

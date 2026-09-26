@@ -1,6 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { bootstrapTheme, configureTollbooth } from "@tollbooth-dpyc/web";
+import { configureTollbooth } from "@tollbooth-dpyc/web";
 import { ErrorBoundary } from "@tollbooth-dpyc/web/react";
 import App from "./App";
 import "./index.css";
@@ -19,10 +19,6 @@ configureTollbooth({
   // call would only bury what the patron did.
   quietTools: ["get_scheduler_log", "get_x_profile"],
 });
-
-// Apply the saved theme (dark by default) before first paint — no flash. The
-// pick is kept under "excalibur:theme", where it always was.
-bootstrapTheme("dark");
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

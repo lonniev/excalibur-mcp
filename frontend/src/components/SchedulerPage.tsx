@@ -9,7 +9,8 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { getSchedulerStatus, getSchedulerLog, type SchedulerStatus, type SchedulerRun } from "../lib/mcp";
 import SchedulerPendingCard from "./SchedulerPendingCard";
-import RefreshButton from "./RefreshButton";
+import { RefreshButton } from "@tollbooth-dpyc/web/react";
+import { refreshStyles } from "../lib/packageStyles";
 import SchedulerStatusLine from "./SchedulerStatusLine";
 import { deriveSchedulerState, schedulerStatusTitle } from "../lib/schedulerState";
 import { attemptLabel } from "../lib/attemptLabel";
@@ -266,7 +267,7 @@ export default function SchedulerPage() {
           <SchedulerStatusLine state={schedState} />
         </span>
         <span className="ml-auto">
-          <RefreshButton onClick={() => void refresh()} busy={loading} size="sm" title="Refresh scheduler status" />
+          <RefreshButton onRefresh={refresh} busy={loading} label="Refresh scheduler status" classNames={refreshStyles.header} />
         </span>
       </div>
 

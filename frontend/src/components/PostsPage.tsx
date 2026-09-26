@@ -30,12 +30,13 @@ import {
   sortHeaderStyles,
   tableFilterStyles,
   tableShellStyles,
+  refreshStyles,
 } from "../lib/packageStyles";
 import { QUOTES } from "../lib/quotes";
 import { quoteStyles } from "../lib/quoteStyles";
 import SchedulerHealth from "./SchedulerHealth";
 import SchedulerPendingCard from "./SchedulerPendingCard";
-import RefreshButton from "./RefreshButton";
+import { RefreshButton } from "@tollbooth-dpyc/web/react";
 
 // The status toggle-chiclets. Each is an independent include filter: toggled ON
 // means "show posts with this status", OFF means "exclude them" — together they
@@ -511,7 +512,7 @@ export default function PostsPage() {
           );
         })}
         <span className="ml-auto">
-          <RefreshButton onClick={refresh} busy={loading} title="Refresh posts" />
+          <RefreshButton onRefresh={refresh} busy={loading} label="Refresh posts" iconSize={24} classNames={refreshStyles.toolbar} />
         </span>
       </div>
 
