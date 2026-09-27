@@ -12,6 +12,9 @@ import ProfilePage from "./components/ProfilePage";
 import SchedulerPage from "./components/SchedulerPage";
 import PerformancePage from "./components/PerformancePage";
 
+/** The site's own words above the sign-in card. */
+const WELCOME = "An AI-assisted content management system for your X posts. Drafts, schedule and snippets live with your key, not a login.";
+
 // The session, the sign-in gate, the theme, the avatar and the debug log are
 // the package's AppShell; eXcalibur brings its routes, its hero and its footer,
 // and the scheduler controls it keeps in the debug log.
@@ -19,6 +22,7 @@ export default function App() {
   return (
     <AppShell
       theme="dark"
+      gateOptions={{ welcome: WELCOME }}
       classNames={{ root: "bg-stone-50 dark:bg-zinc-950 text-stone-900 dark:text-zinc-100 transition-colors" }}
       footer={({ status }) => <Footer status={status} />}
       debug={{ children: <SchedulerLogSection /> }}
