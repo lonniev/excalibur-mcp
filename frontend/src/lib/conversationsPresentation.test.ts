@@ -101,3 +101,14 @@ describe("replyCharsLeft", () => {
     assert.equal(replyCharsLeft("x".repeat(281)), -1);
   });
 });
+
+import { replyIntentUrl } from "./conversationsPresentation.ts";
+
+describe("replyIntentUrl", () => {
+  it("prefills in_reply_to and the text, URL-encoded", () => {
+    const u = new URL(replyIntentUrl("123", "hi there & thanks"));
+    assert.equal(u.origin + u.pathname, "https://x.com/intent/post");
+    assert.equal(u.searchParams.get("in_reply_to"), "123");
+    assert.equal(u.searchParams.get("text"), "hi there & thanks");
+  });
+});

@@ -18,6 +18,15 @@ export function replyCharsLeft(text: string): number {
   return REPLY_MAX - Array.from(text.trim()).length;
 }
 
+/// X's web composer, prefilled as a reply. The patron presses Post inside X —
+/// the only route X leaves open for a reply into a stranger's thread on a
+/// self-serve API tier (since 2026-02-23 the API allows a reply only where the
+/// author already mentioned or quoted you).
+export function replyIntentUrl(tweetId: string, text: string): string {
+  const q = new URLSearchParams({ in_reply_to: tweetId, text });
+  return `https://x.com/intent/post?${q.toString()}`;
+}
+
 export const STATUSES: readonly ConversationStatus[] = ["new", "seen", "engaged", "dismissed"];
 
 export type ScoreTone = "hot" | "warm" | "cool";

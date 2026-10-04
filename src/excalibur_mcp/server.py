@@ -391,6 +391,18 @@ async def _prepare_x_client(
     return (client, "")
 
 
+_X_POLICY_REFUSALS = (
+    "only reply to or quote posts where you are mentioned",
+    "not permitted to reply",
+)
+
+
+def _is_x_policy_refusal(detail: str) -> bool:
+    """A 403 that is X refusing the act, not the token."""
+    d = detail.lower()
+    return any(phrase in d for phrase in _X_POLICY_REFUSALS)
+
+
 async def _x_api_error_to_response(exc: Any, npub: str = "") -> dict[str, Any]:
     """Map an X API error to a structured response.
 
@@ -422,6 +434,21 @@ async def _x_api_error_to_response(exc: Any, npub: str = "") -> dict[str, Any]:
         "detail": getattr(exc, "detail", None),
     }
     status = getattr(exc, "status_code", 0)
+    detail = str(getattr(exc, "detail", "") or "")
+    if status == 403 and _is_x_policy_refusal(detail):
+        # X accepted the token and refused the ACT. Since 2026-02-23 a
+        # self-serve app may only reply where the author already mentioned or
+        # quoted the account; calling that a dead token sent the owner
+        # re-authorising a working link. X's sentence is the message.
+        base.update({
+            "error_code": "x_reply_not_permitted",
+            "message": detail,
+            "next_steps": [
+                "Reply by hand on X — the API allows a reply only where the author "
+                "has mentioned or quoted you.",
+            ],
+        })
+        return base
     if status in (401, 403):
         if npub:
             await runtime.invalidate_oauth_access_token(npub)

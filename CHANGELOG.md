@@ -5,6 +5,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.42.1] — 2026-10-04
+
+### Fixed — a reply X refuses on policy no longer blames the token
+
+The first real reply from the Leads tab came back "the upstream provider
+rejected the access token", and the owner reasonably asked whether the POST
+had forgotten its bearer. It hadn't: X's actual words were "You can only
+reply to or quote posts where you are mentioned or are the author." Since
+2026-02-23 a self-serve API tier may reply only where the author already
+mentioned or quoted the account — Enterprise is exempt — which is the whole
+lead case. The mapper treated every 403 as a dead token and the message
+dropped X's sentence.
+
+A 403 that is X refusing the act now answers `x_reply_not_permitted` with X's
+words and leaves the token alone. The reply box hands the same text to X's own
+composer (`x.com/intent/post`, prefilled as a reply) in a new tab; the patron
+presses Post there and confirms here, which marks the lead engaged. The API
+path still runs first, because it works the moment the author has mentioned
+you — the second exchange, not the first.
+
 ## [0.42.0] — 2026-10-04
 
 ### Added — reply to a lead from the Leads tab, and it marks itself engaged
