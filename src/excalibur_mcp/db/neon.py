@@ -37,6 +37,8 @@ _DOMAIN_TABLES: tuple[str, ...] = (
         "voice",
         "post_metrics_snapshot",
         "metrics_harvest_job",
+        "conversation_queries",
+        "conversations",
     )
 
 
@@ -287,6 +289,67 @@ async def _ensure_domain_schema(vault: Any) -> None:
 
         f"CREATE INDEX IF NOT EXISTS metrics_harvest_owner_idx "
         f"ON {t('metrics_harvest_job')} (npub, status)",
+
+        # Conversation leads — X posts whose authors are asking something the
+        # patron could answer. A saved query is the patron's own selector (no
+        # domain vocabulary lives in the server); `weights` holds only what
+        # they overrode; `since_id` lets a re-run read (and the operator pay
+        # for) new posts only.
+        f"CREATE TABLE IF NOT EXISTS {t('conversation_queries')} ("
+        "id UUID PRIMARY KEY DEFAULT gen_random_uuid(), "
+        "npub TEXT NOT NULL, "
+        "name TEXT NOT NULL, "
+        "query TEXT NOT NULL, "
+        "weights JSONB NOT NULL DEFAULT '{}', "
+        "safe_defaults BOOLEAN NOT NULL DEFAULT TRUE, "
+        "since_id TEXT, "
+        "last_run_at TIMESTAMPTZ, "
+        "last_run_posts_read INT, "
+        "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), "
+        "updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
+
+        f"CREATE INDEX IF NOT EXISTS conversation_queries_owner_idx "
+        f"ON {t('conversation_queries')} (npub, updated_at DESC)",
+
+        f"CREATE UNIQUE INDEX IF NOT EXISTS conversation_queries_name_uniq "
+        f"ON {t('conversation_queries')} (npub, lower(name))",
+
+        # One row per (patron, X conversation). What is kept of a third party's
+        # post is public and only what opens the thread and scores it: text,
+        # ids, handle, counts, and the profile location string as X publishes
+        # it. `status` is the patron's and is never touched by a re-run.
+        f"CREATE TABLE IF NOT EXISTS {t('conversations')} ("
+        "id UUID PRIMARY KEY DEFAULT gen_random_uuid(), "
+        "npub TEXT NOT NULL, "
+        "query_id UUID, "                   # NULL once ad hoc or its query is deleted
+        "query_text TEXT NOT NULL, "
+        "conversation_id TEXT NOT NULL, "
+        "tweet_id TEXT NOT NULL, "
+        "author_id TEXT NOT NULL, "
+        "author_username TEXT NOT NULL, "
+        "author_followers INT, "
+        "author_location TEXT, "
+        "text TEXT NOT NULL, "
+        "posted_at TIMESTAMPTZ, "
+        "reply_count INT NOT NULL DEFAULT 0, "
+        "like_count INT NOT NULL DEFAULT 0, "
+        "is_reply BOOLEAN NOT NULL DEFAULT FALSE, "
+        "has_media BOOLEAN NOT NULL DEFAULT FALSE, "
+        "score SMALLINT NOT NULL DEFAULT 0, "
+        "signals JSONB NOT NULL DEFAULT '[]', "
+        "status TEXT NOT NULL DEFAULT 'new', "  # new|seen|engaged|dismissed
+        "found_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), "
+        "last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), "
+        "status_at TIMESTAMPTZ)",
+
+        f"CREATE UNIQUE INDEX IF NOT EXISTS conversations_owner_conv_uniq "
+        f"ON {t('conversations')} (npub, conversation_id)",
+
+        f"CREATE INDEX IF NOT EXISTS conversations_owner_score_idx "
+        f"ON {t('conversations')} (npub, status, score DESC)",
+
+        f"CREATE INDEX IF NOT EXISTS conversations_owner_query_idx "
+        f"ON {t('conversations')} (npub, query_id)",
     ]
     for stmt in stmts:
         try:

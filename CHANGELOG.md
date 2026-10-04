@@ -5,6 +5,40 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.41.0] — 2026-10-04
+
+### Added — find the questions worth answering: X conversation leads with a saved query catalog
+
+`find_conversations` searches X's last seven days for people asking something
+a patron could answer, scores each thread 0..100 on named signals (a question
+phrase, a live thread, a reachable author; penalties for shill markers and for
+being a reply; positive signals fade over 72 hours), and stores one row per
+conversation under the patron's npub. `list_conversations` pages that stored
+set server-side with sort, status, score and regex filters, so X is read once
+per run and paging is free. `set_conversation_status` keeps new / seen /
+engaged / dismissed, and a re-run never overwrites what the patron decided.
+Saved queries (`save_conversation_query` and friends) carry a `since_id`
+watermark so a re-run reads — and the operator pays for — only new posts.
+
+Nothing domain-specific lives in the server. The patron's own nouns are the
+selector; the safe defaults (`-is:retweet -has:links -has:cashtags lang:en`,
+own posts excluded) came out of a live discovery spike, where a photo turned
+out not to count as a link and bare `blight` turned out to mean video games.
+What backs the reply is the patron's own business, in their own client, and the
+reply is posted by hand: this tool is read-only on X.
+
+The search is priced because every post X returns is billed to the operator's
+X project (pay-per-use, $0.005 a post); the seed fare is a placeholder for
+Pricing Studio. The catalog, paging and status tools are free and proof-gated.
+A first-page failure refunds exactly once; a run cut short by X's rate limit
+keeps what it read and does not refund, since X already charged for it. X 429s
+now answer `upstream_rate_limited` instead of a bare failure.
+
+The Leads tab in the web app runs a saved or ad-hoc query, shows the score,
+the post, the author and a link to the thread on X, and marks status with
+three icon buttons. The patron's token already carried `tweet.read
+users.read`, so no re-authorisation is needed.
+
 ## [0.40.2] — 2026-08-29
 
 ### Fixed — an unreadable vault no longer accuses the operator of having no key
