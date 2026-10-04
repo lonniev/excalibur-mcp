@@ -137,6 +137,25 @@ _DOMAIN_TOOLS = [
                  category="free", intent="Create or update a saved post snippet"),
     ToolIdentity(tool_id=capability_uuid("delete_snippet"), capability="delete_snippet",
                  category="free", intent="Delete a saved post snippet"),
+    # Conversation leads — find X questioners the patron could answer with a
+    # marketing reply. The search is `heavy` because every post X returns is
+    # billed to the OPERATOR's X project ($0.005/post, pay-per-use); the seed
+    # fare is a placeholder the operator tunes in Pricing Studio. Paging the
+    # stored result, setting a lead's status and keeping the saved-query catalog
+    # are free: proof-gated and npub-scoped like Snippets. Read-only on X.
+    ToolIdentity(tool_id=capability_uuid("find_conversations"), capability="find_conversations",
+                 category="heavy", intent="Search X for questioners you could answer; score and store them",
+                 pricing_hint_type="flat", pricing_hint_value=25),
+    ToolIdentity(tool_id=capability_uuid("list_conversations"), capability="list_conversations",
+                 category="free", intent="Page through this patron's stored conversation leads"),
+    ToolIdentity(tool_id=capability_uuid("set_conversation_status"), capability="set_conversation_status",
+                 category="free", intent="Mark a conversation lead new, seen, engaged or dismissed"),
+    ToolIdentity(tool_id=capability_uuid("list_conversation_queries"), capability="list_conversation_queries",
+                 category="free", intent="List this patron's saved conversation queries"),
+    ToolIdentity(tool_id=capability_uuid("save_conversation_query"), capability="save_conversation_query",
+                 category="free", intent="Create or update a saved conversation query"),
+    ToolIdentity(tool_id=capability_uuid("delete_conversation_query"), capability="delete_conversation_query",
+                 category="free", intent="Delete a saved conversation query (its leads are kept)"),
     # Writing Voice — the patron's per-npub voice profile + "banned construction"
     # chips the editor feeds to refine_post_region. A singleton per npub (one
     # Voice, upserted). Priceable (read/write), proof-gated, owner-scoped — they
@@ -413,6 +432,14 @@ async def _x_api_error_to_response(exc: Any, npub: str = "") -> dict[str, Any]:
                 detail=getattr(exc, "detail", None),
             )
         )
+    elif status == 429:
+        # X's per-user window (15 min) is exhausted. Not an auth or billing
+        # matter — the same token works again when the window resets.
+        base.update({
+            "error_code": "upstream_rate_limited",
+            "message": "X is rate-limiting this account for now.",
+            "next_steps": ["Wait for the 15-minute window to reset, then retry."],
+        })
     return base
 
 
@@ -837,6 +864,159 @@ async def delete_snippet(
     from excalibur_mcp.tools import snippets as snippets_tools
 
     return await snippets_tools.delete(npub, snippet_id=snippet_id)
+
+
+# ---------------------------------------------------------------------------
+# Conversation leads — find X questioners you could answer. Read-only on X.
+# ---------------------------------------------------------------------------
+
+
+@tool
+@runtime.paid_tool(capability_uuid("find_conversations"), catch_errors=True)
+async def find_conversations(
+    query_id: str = "",
+    query: str = "",
+    max_posts: int = 100,
+    weights: dict | None = None,
+    safe_defaults: bool = True,
+    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "",
+    dpop_token: str = "",
+) -> dict:
+    """Search X's last 7 days for people asking something you could answer,
+    score each thread 0..100, and store the result under your npub for
+    ``list_conversations`` to page through.
+
+    Pass exactly one of ``query_id`` (a saved query from
+    ``save_conversation_query``) or ``query`` (an ad-hoc X search clause — your
+    domain nouns are the selector; X has no ``?`` operator). ``safe_defaults``
+    appends ``-is:retweet -has:links -has:cashtags lang:en`` (a photo is not a
+    link); your own posts are always excluded. ``max_posts`` caps the read
+    (10..300) — every post X returns is billed to the operator, which is what
+    this tool's fare covers. A saved query re-run reads only posts newer than
+    its last run. ``weights`` overrides the scoring for this call (keys:
+    need, replies, band, spam, reply, replies_min, followers_min,
+    followers_max, decay_hours).
+
+    Returns ``{posts_read, pages, new, refreshed, skipped_own, skipped_dupe,
+    truncated_reason, top:[…]}``. Nothing is posted, liked or replied to —
+    the reply is yours to write and send by hand."""
+    from excalibur_mcp.tools import conversations as conversations_tools
+
+    return await conversations_tools.find(
+        npub,
+        runtime=runtime,
+        tool_id=capability_uuid("find_conversations"),
+        prepare_client=_prepare_x_client,
+        x_error_to_response=_x_api_error_to_response,
+        query_id=query_id, query=query, max_posts=max_posts, weights=weights,
+        safe_defaults=safe_defaults,
+    )
+
+
+@tool
+@runtime.paid_tool(capability_uuid("list_conversations"), catch_errors=True)
+async def list_conversations(
+    query_id: str = "",
+    status: str = "",
+    min_score: int = 0,
+    sort_col: str = "score",
+    sort_dir: str = "desc",
+    page: int = 0,
+    page_size: int = 25,
+    search: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    date_field: str = "found",
+    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
+    dpop_token: str = "",
+) -> dict:
+    """Page through your stored conversation leads, server-side sorted and
+    filtered. ``query_id`` narrows to one saved query (``"adhoc"`` for leads from
+    ad-hoc searches); ``status`` is a comma list of ``new|seen|engaged|dismissed``;
+    ``min_score`` is 0..100. ``sort_col`` is one of
+    ``score|found|seen|posted|replies|followers``; ``sort_dir`` is ``asc|desc``.
+    ``search`` is a case-insensitive regex over the post text or author handle.
+    ``date_from``/``date_to`` bound ``date_field`` (``found|posted``). ``page``
+    is 0-indexed; ``page_size`` is 1..100. Free, owner-scoped. Each row carries
+    ``url`` — the thread on X — so you can open it without calling X yourself.
+    Returns ``{conversations:[…], total, page, page_size}``."""
+    from excalibur_mcp.tools import conversations as conversations_tools
+
+    return await conversations_tools.list_(
+        npub, query_id=query_id, status=status, min_score=min_score,
+        sort_col=sort_col, sort_dir=sort_dir, page=page, page_size=page_size,
+        search=search, date_from=date_from, date_to=date_to, date_field=date_field,
+    )
+
+
+@tool
+@runtime.paid_tool(capability_uuid("set_conversation_status"), catch_errors=True)
+async def set_conversation_status(
+    conversation_id: str,
+    status: str,
+    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
+    dpop_token: str = "",
+) -> dict:
+    """Mark one of your leads ``new|seen|engaged|dismissed`` by its row id (the
+    ``id`` from ``list_conversations``, not X's conversation id). A re-run of
+    the search never changes a status you set. Free and owner-scoped."""
+    from excalibur_mcp.tools import conversations as conversations_tools
+
+    return await conversations_tools.set_status(
+        npub, conversation_id=conversation_id, status=status,
+    )
+
+
+@tool
+@runtime.paid_tool(capability_uuid("list_conversation_queries"), catch_errors=True)
+async def list_conversation_queries(
+    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
+    dpop_token: str = "",
+) -> dict:
+    """List your saved conversation queries with their last-run watermarks.
+    Free and owner-scoped. Returns ``{queries:[…]}``."""
+    from excalibur_mcp.tools import conversations as conversations_tools
+
+    return await conversations_tools.list_queries(npub)
+
+
+@tool
+@runtime.paid_tool(capability_uuid("save_conversation_query"), catch_errors=True)
+async def save_conversation_query(
+    name: str = "",
+    query: str = "",
+    query_id: str = "",
+    weights: dict | None = None,
+    safe_defaults: bool | None = None,
+    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
+    dpop_token: str = "",
+) -> dict:
+    """Save a named X search clause to run with ``find_conversations``. Omit
+    ``query_id`` to create; pass it to update in place — only the fields you pass
+    change, and a changed ``query`` resets the last-run watermark. ``weights``
+    holds only the scoring values you override. At most 50 saved queries per
+    npub; names are unique per npub. Free and owner-scoped. Returns
+    ``{"success": true, "query": …}``."""
+    from excalibur_mcp.tools import conversations as conversations_tools
+
+    return await conversations_tools.save_query(
+        npub, query_id=query_id, name=name, query=query, weights=weights,
+        safe_defaults=safe_defaults,
+    )
+
+
+@tool
+@runtime.paid_tool(capability_uuid("delete_conversation_query"), catch_errors=True)
+async def delete_conversation_query(
+    query_id: str,
+    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
+    dpop_token: str = "",
+) -> dict:
+    """Delete one of your saved conversation queries. The leads it found are
+    kept (they become ad-hoc leads). Free and owner-scoped."""
+    from excalibur_mcp.tools import conversations as conversations_tools
+
+    return await conversations_tools.delete_query(npub, query_id=query_id)
 
 
 # ---------------------------------------------------------------------------

@@ -105,3 +105,61 @@ CREATE UNIQUE INDEX IF NOT EXISTS metrics_harvest_post_cadence_uniq
 CREATE INDEX IF NOT EXISTS metrics_harvest_due_idx
     ON metrics_harvest_job (due_at)
     WHERE status IN ('pending', 'harvesting');
+
+-- Conversation leads: a patron's saved X search selectors (no domain vocabulary
+-- lives server-side) and the scored questioners each run found.
+CREATE TABLE IF NOT EXISTS conversation_queries (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    npub                TEXT NOT NULL,
+    name                TEXT NOT NULL,
+    query               TEXT NOT NULL,
+    weights             JSONB NOT NULL DEFAULT '{}',
+    safe_defaults       BOOLEAN NOT NULL DEFAULT TRUE,
+    since_id            TEXT,
+    last_run_at         TIMESTAMPTZ,
+    last_run_posts_read INT,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS conversation_queries_owner_idx
+    ON conversation_queries (npub, updated_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS conversation_queries_name_uniq
+    ON conversation_queries (npub, lower(name));
+
+-- One row per (patron, X conversation). `status` is the patron's and a re-run
+-- never touches it.
+CREATE TABLE IF NOT EXISTS conversations (
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    npub             TEXT NOT NULL,
+    query_id         UUID,
+    query_text       TEXT NOT NULL,
+    conversation_id  TEXT NOT NULL,
+    tweet_id         TEXT NOT NULL,
+    author_id        TEXT NOT NULL,
+    author_username  TEXT NOT NULL,
+    author_followers INT,
+    author_location  TEXT,
+    text             TEXT NOT NULL,
+    posted_at        TIMESTAMPTZ,
+    reply_count      INT NOT NULL DEFAULT 0,
+    like_count       INT NOT NULL DEFAULT 0,
+    is_reply         BOOLEAN NOT NULL DEFAULT FALSE,
+    has_media        BOOLEAN NOT NULL DEFAULT FALSE,
+    score            SMALLINT NOT NULL DEFAULT 0,
+    signals          JSONB NOT NULL DEFAULT '[]',
+    status           TEXT NOT NULL DEFAULT 'new',
+    found_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_seen_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    status_at        TIMESTAMPTZ
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS conversations_owner_conv_uniq
+    ON conversations (npub, conversation_id);
+
+CREATE INDEX IF NOT EXISTS conversations_owner_score_idx
+    ON conversations (npub, status, score DESC);
+
+CREATE INDEX IF NOT EXISTS conversations_owner_query_idx
+    ON conversations (npub, query_id);

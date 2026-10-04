@@ -440,3 +440,89 @@ class XClient:
             "user_profile_clicks": _pick(organic, non_public, key="user_profile_clicks"),
             "raw": raw if isinstance(raw, dict) else {"data": data},
         }
+
+    async def search_recent(
+        self,
+        query: str,
+        *,
+        max_results: int = 100,
+        next_token: str | None = None,
+        since_id: str | None = None,
+    ) -> dict:
+        """One page of ``GET /2/tweets/search/recent`` (the 7-day window).
+
+        Returns ``{tweets, users, next_token, result_count, newest_id}`` where
+        ``users`` is the ``author_id`` expansion keyed by id. The field set is
+        fixed — it is what the lead scorer reads and nothing more — and the raw
+        body is not kept: every post returned is billed to the operator's X
+        project, so what we hold of it is only what the caller will use.
+
+        A 400 is X rejecting the query itself (an operator the plan doesn't
+        carry, a stray ``?``); its own message is raised so the patron sees
+        why, not a generic failure.
+        """
+        q = str(query or "").strip()
+        if not q:
+            raise XAPIError(0, "Empty search query")
+        params: dict[str, Any] = {
+            "query": q,
+            "max_results": max(10, min(100, int(max_results))),
+            "tweet.fields": (
+                "conversation_id,created_at,public_metrics,author_id,"
+                "entities,attachments,in_reply_to_user_id"
+            ),
+            "expansions": "author_id",
+            "user.fields": "public_metrics,location,username",
+        }
+        if next_token:
+            params["next_token"] = next_token
+        if since_id:
+            params["since_id"] = since_id
+
+        async with httpx.AsyncClient(timeout=X_API_TIMEOUT) as client:
+            response = await client.get(
+                f"{X_API_BASE}/tweets/search/recent",
+                params=params,
+                headers={"Authorization": self._auth_header()},
+            )
+
+        if response.status_code == 400:
+            body = _safe_json(response)
+            raise XAPIError(400, _x_says(body, "Invalid search query"), body)
+        if response.status_code == 429:
+            body = _safe_json(response)
+            raise XAPIError(429, _x_says(body, "Rate limited — try again later"), body)
+        if response.status_code in (401, 403):
+            body = _safe_json(response)
+            raise XAPIError(
+                response.status_code, _x_says(body, "Authentication failed"), body,
+            )
+        if response.status_code != 200:
+            body = _safe_json(response)
+            raise XAPIError(
+                response.status_code,
+                _x_says(body, f"Unexpected response: {response.status_code}"),
+                body,
+            )
+
+        raw = response.json()
+        tweets = raw.get("data") or []
+        if not isinstance(tweets, list):
+            tweets = []
+        includes = raw.get("includes") or {}
+        users_list = includes.get("users") if isinstance(includes, dict) else None
+        users = {
+            str(u.get("id")): u
+            for u in (users_list or [])
+            if isinstance(u, dict) and u.get("id")
+        }
+        meta = raw.get("meta") or {}
+        if not isinstance(meta, dict):
+            meta = {}
+        return {
+            "tweets": [t for t in tweets if isinstance(t, dict)],
+            "users": users,
+            "next_token": meta.get("next_token"),
+            "result_count": int(meta.get("result_count") or len(tweets)),
+            "newest_id": meta.get("newest_id"),
+        }
