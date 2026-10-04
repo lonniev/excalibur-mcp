@@ -5,6 +5,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.41.1] — 2026-10-04
+
+### Added — the Leads tab grows a catalog, a scoring editor and a detail view
+
+The saved-query catalog is now its own panel: every query with its clause, its
+safe-defaults flag, when it last ran and how many posts that read, and Run,
+Edit and Delete on the row. Selecting a row filters the leads beneath it to
+that query. The editor gained a Scoring section that exposes the nine weights
+with their defaults, sends back only what the patron changed, and refuses an
+out-of-range value or an inverted follower band before the round trip. A
+lead row expands to the full post, the signals that fired, the author's
+location, when it was found and last seen, and which query found it.
+
+### Fixed — Postgres timestamps rendered as raw text
+
+Neon hands back `2026-10-04 19:21:02+00`, which `Date.parse` refuses on two
+counts (the space, the two-digit offset). The Leads page normalises before
+formatting; the "last run" column was the first place it showed.
+
 ## [0.41.0] — 2026-10-04
 
 ### Added — find the questions worth answering: X conversation leads with a saved query catalog

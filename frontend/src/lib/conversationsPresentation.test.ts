@@ -46,3 +46,47 @@ describe("runSummary", () => {
     assert.equal(runSummary({}), "0 read · 0 new · 0 refreshed");
   });
 });
+
+import {
+  DEFAULT_WEIGHTS, lastRunLabel, mergedWeights, weightOverrides, weightsProblem, WEIGHT_FIELDS,
+} from "./conversationsPresentation.ts";
+
+describe("weights", () => {
+  it("every editor field has a default and vice versa", () => {
+    assert.deepEqual(WEIGHT_FIELDS.map((f) => f.key).sort(), Object.keys(DEFAULT_WEIGHTS).sort());
+  });
+  it("merges overrides over defaults and sends back only the diff", () => {
+    const shown = mergedWeights({ need: 10 });
+    assert.equal(shown.need, 10);
+    assert.equal(shown.band, 15);
+    assert.deepEqual(weightOverrides(shown), { need: 10 });
+    assert.deepEqual(weightOverrides(mergedWeights(null)), {});
+  });
+  it("refuses out-of-bounds, non-integers and an inverted band", () => {
+    assert.equal(weightsProblem(mergedWeights(null)), null);
+    assert.match(weightsProblem(mergedWeights({ need: 101 })) ?? "", /between/);
+    assert.match(weightsProblem({ ...mergedWeights(null), need: 1.5 }) ?? "", /whole number/);
+    assert.match(weightsProblem(mergedWeights({ followers_min: 30000 })) ?? "", /Band from/);
+  });
+});
+
+describe("lastRunLabel", () => {
+  it("names never, relative time, and posts read", () => {
+    const now = Date.parse("2026-10-04T12:00:00Z");
+    assert.equal(lastRunLabel(null, null, now), "never");
+    assert.equal(lastRunLabel("2026-10-04T11:58:30Z", 54, now), "2 min ago · 54 read");
+    assert.equal(lastRunLabel("2026-10-04 09:00:00+00", null, now), "3 h ago");
+    assert.equal(lastRunLabel("2026-10-01T12:00:00Z", 0, now), "3 d ago · 0 read");
+  });
+});
+
+import { normalizePgTimestamp } from "./conversationsPresentation.ts";
+
+describe("normalizePgTimestamp", () => {
+  it("turns Neon's Postgres text into something Date.parse accepts", () => {
+    assert.equal(normalizePgTimestamp("2026-10-04 19:21:02.344888+00"), "2026-10-04T19:21:02.344888+00:00");
+    assert.equal(normalizePgTimestamp("2026-10-04T19:21:02Z"), "2026-10-04T19:21:02Z");
+    assert.equal(normalizePgTimestamp("2026-10-04T19:21:02+05:30"), "2026-10-04T19:21:02+05:30");
+    assert.ok(!Number.isNaN(Date.parse(normalizePgTimestamp("2026-10-04 19:21:02.344888+00"))));
+  });
+});

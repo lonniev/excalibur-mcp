@@ -730,12 +730,15 @@ export async function saveConversationQuery(opts: {
   name?: string;
   query?: string;
   safeDefaults?: boolean;
+  /** Scoring overrides only (the server stores what differs from its defaults). */
+  weights?: Record<string, number>;
 }): Promise<ConversationQueriesResult> {
   const args: Record<string, unknown> = {};
   if (opts.id) args.query_id = opts.id;
   if (opts.name !== undefined) args.name = opts.name;
   if (opts.query !== undefined) args.query = opts.query;
   if (opts.safeDefaults !== undefined) args.safe_defaults = opts.safeDefaults;
+  if (opts.weights !== undefined) args.weights = opts.weights;
   return callTool<ConversationQueriesResult>("save_conversation_query", args);
 }
 
