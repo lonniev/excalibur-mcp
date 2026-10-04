@@ -372,3 +372,13 @@ async def test_x_api_error_429_maps_to_upstream_rate_limited():
 
     out = await srv._x_api_error_to_response(XAPIError(429, "Too Many Requests"), "")
     assert out["error_code"] == "upstream_rate_limited" and out["success"] is False
+
+
+@pytest.mark.asyncio
+async def test_find_accepts_a_clause_up_to_x_budget_and_refuses_beyond():
+    from excalibur_mcp import conversation_scoring as sc
+    client = FakeClient([_page([])])
+    out, _, _ = await _find(client, query="x" * sc.MAX_CLAUSE)
+    assert out["success"] and len(client.calls[0]["query"]) <= 512
+    with pytest.raises(ValueError, match="512"):
+        await _find(FakeClient(), query="x" * (sc.MAX_CLAUSE + 1))

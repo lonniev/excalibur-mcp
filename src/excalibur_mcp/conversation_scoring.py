@@ -63,7 +63,12 @@ _SPAM_RE = re.compile(
 # X's "safe defaults": drop reposts, posts carrying an external link (a photo is
 # not a link), posts with cashtags, and non-English — unless the patron opts out.
 SAFE_DEFAULTS = "-is:retweet -has:links -has:cashtags lang:en"
+# X's own ceiling on a recent-search query. The patron's clause gets whatever
+# is left after the parentheses, the safe defaults and ``-from:<own id>`` (X
+# user ids run to 20 digits) — no tighter than the endpoint itself.
 MAX_EFFECTIVE_QUERY = 512
+_RESERVED = len("()") + 1 + len(SAFE_DEFAULTS) + 1 + len("-from:") + 20
+MAX_CLAUSE = MAX_EFFECTIVE_QUERY - _RESERVED
 
 
 def is_bold_unicode(text: str) -> bool:

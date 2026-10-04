@@ -5,6 +5,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.41.3] — 2026-10-04
+
+### Changed — a query clause may be as long as X allows
+
+The clause limit was 256 characters, a number of our own; X's ceiling is 512
+on the composed query. The budget is now derived: 512 less the parentheses,
+the safe defaults and `-from:<own id>` (X ids run to 20 digits), which comes
+to 438. The owner hit the old limit twice while writing one grower query. No
+tighter than the endpoint, and the same constant drives the server check and
+the editor's input.
+
 ## [0.41.2] — 2026-10-04
 
 ### Fixed — a new saved query runs when it is saved
