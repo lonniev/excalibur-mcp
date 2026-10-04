@@ -576,6 +576,174 @@ export async function deleteSnippet(id: string): Promise<boolean> {
   return r.deleted === true;
 }
 
+// ─── Conversation leads (Neon-backed, npub-scoped; the search is priced) ─────
+
+export type ConversationStatus = "new" | "seen" | "engaged" | "dismissed";
+
+/// One X conversation worth a look. `url` is built server-side — the browser
+/// never calls X. `signals` names every scoring weight that fired.
+export interface ConversationRow {
+  id: string;
+  query_id: string | null;
+  query_text: string;
+  conversation_id: string;
+  tweet_id: string;
+  author_id: string;
+  author_username: string;
+  author_followers: number | null;
+  author_location: string | null;
+  text: string;
+  posted_at: string | null;
+  reply_count: number;
+  like_count: number;
+  is_reply: boolean;
+  has_media: boolean;
+  score: number;
+  signals: string[];
+  status: ConversationStatus;
+  found_at: string;
+  last_seen_at: string;
+  status_at: string | null;
+  url: string;
+}
+
+export interface ConversationQueryRow {
+  id: string;
+  name: string;
+  query: string;
+  weights: Record<string, number>;
+  safe_defaults: boolean;
+  since_id: string | null;
+  last_run_at: string | null;
+  last_run_posts_read: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ListConversationsResult {
+  success?: boolean;
+  conversations?: ConversationRow[];
+  total?: number;
+  page?: number;
+  page_size?: number;
+  error?: string;
+  error_code?: string;
+}
+
+export interface FindConversationsResult {
+  success?: boolean;
+  query_id?: string | null;
+  query?: string;
+  effective_query?: string;
+  posts_read?: number;
+  pages?: number;
+  new?: number;
+  refreshed?: number;
+  skipped_own?: number;
+  skipped_dupe?: number;
+  truncated_reason?: string | null;
+  top?: ConversationRow[];
+  error?: string;
+  error_code?: string;
+  message?: string;
+}
+
+interface ConversationQueriesResult {
+  success?: boolean;
+  queries?: ConversationQueryRow[];
+  query?: ConversationQueryRow;
+  deleted?: boolean;
+  error?: string;
+  error_code?: string;
+  message?: string;
+}
+
+interface SetConversationStatusResult {
+  success?: boolean;
+  conversation?: ConversationRow;
+  error?: string;
+  error_code?: string;
+}
+
+/// Run a saved (`queryId`) or ad-hoc (`query`) search on X and store the
+/// scored result. Priced: every post X returns is billed to the operator.
+export async function findConversations(opts: {
+  queryId?: string;
+  query?: string;
+  maxPosts?: number;
+}): Promise<FindConversationsResult> {
+  const args: Record<string, unknown> = {};
+  if (opts.queryId) args.query_id = opts.queryId;
+  else args.query = opts.query ?? "";
+  if (opts.maxPosts) args.max_posts = opts.maxPosts;
+  return callTool<FindConversationsResult>("find_conversations", args);
+}
+
+/// Server-side sorted + offset-paginated lead list (the Snippets model).
+/// `queryId` narrows to one saved query, or `"adhoc"` for ad-hoc leads.
+/// `sortCol` ∈ score|found|seen|posted|replies|followers.
+export async function listConversations(
+  opts: {
+    queryId?: string;
+    statuses?: ConversationStatus[];
+    minScore?: number;
+    sortCol?: string;
+    sortDir?: SortDir;
+    page?: number;
+    pageSize?: number;
+  } & ListFilterOpts = {},
+): Promise<ListConversationsResult> {
+  const args: Record<string, unknown> = {
+    sort_col: opts.sortCol ?? "score",
+    sort_dir: opts.sortDir ?? "desc",
+    page: opts.page ?? 0,
+    page_size: opts.pageSize ?? 25,
+  };
+  if (opts.queryId) args.query_id = opts.queryId;
+  if (opts.statuses?.length) args.status = opts.statuses.join(",");
+  if (opts.minScore) args.min_score = opts.minScore;
+  if (opts.search) args.search = opts.search;
+  if (opts.dateFrom) args.date_from = opts.dateFrom;
+  if (opts.dateTo) args.date_to = opts.dateTo;
+  if (opts.dateField) args.date_field = opts.dateField;
+  return callTool<ListConversationsResult>("list_conversations", args);
+}
+
+export async function setConversationStatus(
+  id: string, status: ConversationStatus,
+): Promise<ConversationRow | null> {
+  const r = await callTool<SetConversationStatusResult>(
+    "set_conversation_status", { conversation_id: id, status },
+  );
+  return r.conversation ?? null;
+}
+
+export async function listConversationQueries(): Promise<ConversationQueryRow[]> {
+  const r = await callTool<ConversationQueriesResult>("list_conversation_queries", {});
+  return r.queries ?? [];
+}
+
+/// Create (omit id) or update (pass id) a saved query; returns the stored row
+/// or the error the server named (name taken, limit reached, bad query).
+export async function saveConversationQuery(opts: {
+  id?: string;
+  name?: string;
+  query?: string;
+  safeDefaults?: boolean;
+}): Promise<ConversationQueriesResult> {
+  const args: Record<string, unknown> = {};
+  if (opts.id) args.query_id = opts.id;
+  if (opts.name !== undefined) args.name = opts.name;
+  if (opts.query !== undefined) args.query = opts.query;
+  if (opts.safeDefaults !== undefined) args.safe_defaults = opts.safeDefaults;
+  return callTool<ConversationQueriesResult>("save_conversation_query", args);
+}
+
+export async function deleteConversationQuery(id: string): Promise<boolean> {
+  const r = await callTool<ConversationQueriesResult>("delete_conversation_query", { query_id: id });
+  return r.deleted === true;
+}
+
 // ─── Writing Voice (Neon-backed, npub-scoped singleton, free + proof-gated) ──
 
 /// A ban chip: a construction to avoid, and whether it's an active constraint.

@@ -13,6 +13,7 @@ const PAGES: readonly SiteNavItem[] = [
   { href: "/snippets", label: "Snippets" },
   { href: "/new", label: "Compose" },
   { href: "/performance", label: "Performance" },
+  { href: "/conversations", label: "Leads" },
   { href: "/scheduler", label: "Scheduler" },
   { href: "/wallet", label: "Wallet" },
 ];

@@ -6,6 +6,7 @@ import Hero from "./components/Hero";
 import SchedulerLogSection from "./components/SchedulerLogSection";
 import PostsPage from "./components/PostsPage";
 import SnippetsPage from "./components/SnippetsPage";
+import ConversationsPage from "./components/ConversationsPage";
 import ContentEditorPage from "./components/ContentEditorPage";
 import WalletPage from "./components/WalletPage";
 import ProfilePage from "./components/ProfilePage";
@@ -49,6 +50,7 @@ export default function App() {
               <Route path="wallet" element={<WalletPage />} />
               <Route path="scheduler" element={<SchedulerPage />} />
               <Route path="performance" element={<PerformancePage />} />
+              <Route path="conversations" element={<ConversationsPage />} />
               <Route path="profile" element={<ProfilePage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Route>
