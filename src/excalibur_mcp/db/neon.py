@@ -342,6 +342,11 @@ async def _ensure_domain_schema(vault: Any) -> None:
         "last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), "
         "status_at TIMESTAMPTZ)",
 
+        # The patron's own reply, once posted through eXcalibur: X's id for it
+        # and when. Set together with status='engaged'; never by a search run.
+        f"ALTER TABLE {t('conversations')} ADD COLUMN IF NOT EXISTS reply_tweet_id TEXT",
+        f"ALTER TABLE {t('conversations')} ADD COLUMN IF NOT EXISTS replied_at TIMESTAMPTZ",
+
         f"CREATE UNIQUE INDEX IF NOT EXISTS conversations_owner_conv_uniq "
         f"ON {t('conversations')} (npub, conversation_id)",
 

@@ -90,3 +90,14 @@ describe("normalizePgTimestamp", () => {
     assert.ok(!Number.isNaN(Date.parse(normalizePgTimestamp("2026-10-04 19:21:02.344888+00"))));
   });
 });
+
+import { replyCharsLeft, REPLY_MAX } from "./conversationsPresentation.ts";
+
+describe("replyCharsLeft", () => {
+  it("counts code points, trims, and goes negative past the limit", () => {
+    assert.equal(replyCharsLeft(""), REPLY_MAX);
+    assert.equal(replyCharsLeft("  hi  "), REPLY_MAX - 2);
+    assert.equal(replyCharsLeft("\u{1F41D}\u{1F41D}"), REPLY_MAX - 2);
+    assert.equal(replyCharsLeft("x".repeat(281)), -1);
+  });
+});

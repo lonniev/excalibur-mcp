@@ -5,6 +5,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.42.0] — 2026-10-04
+
+### Added — reply to a lead from the Leads tab, and it marks itself engaged
+
+`reply_to_conversation` posts the patron's reply into a lead's thread on X
+with the patron's own token (``POST /2/tweets`` with ``reply.in_reply_to_tweet_id``)
+and, on X's confirmation and not before, marks the lead engaged and remembers
+the reply's id. A refused post changes nothing and refunds the fare. The
+patron wrote the words and pressed Post; eXcalibur only carries them — the
+"replies by hand" doctrine was about who decides, not which keyboard.
+
+On the Leads tab a Reply icon on the row opens an inline box under the lead
+(280-character counter, ⌘↵ to post); the detail view then shows "Replied …"
+with a link to the reply. A write, seed-priced like post_tweet; the operator
+sets the fare in Pricing Studio.
+
 ## [0.41.3] — 2026-10-04
 
 ### Changed — a query clause may be as long as X allows

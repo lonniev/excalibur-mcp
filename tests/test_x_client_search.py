@@ -107,3 +107,26 @@ async def test_search_recent_rejects_empty_query_without_a_request():
     client = XClient(XCredentials(bearer_token="tok"))
     with pytest.raises(XAPIError):
         await client.search_recent("   ")
+
+
+@pytest.mark.asyncio
+async def test_post_tweet_in_reply_to_sets_reply_payload():
+    client = XClient(XCredentials(bearer_token="tok"))
+    resp = _resp(201, {"data": {"id": "999", "text": "hi"}})
+    with patch.object(client, "_post_retrying_connect", new=AsyncMock(return_value=resp)) as post:
+        out = await client.post_tweet("hi", in_reply_to="123")
+    payload = post.await_args.args[1]
+    assert payload == {"text": "hi", "reply": {"in_reply_to_tweet_id": "123"}}
+    assert out["tweet_id"] == "999" and out["in_reply_to"] == "123"
+    assert out["tweet_url"] == "https://x.com/i/status/999"
+
+
+@pytest.mark.asyncio
+async def test_post_tweet_without_reply_keeps_old_payload_and_rejects_bad_id():
+    client = XClient(XCredentials(bearer_token="tok"))
+    resp = _resp(201, {"data": {"id": "1", "text": "hi"}})
+    with patch.object(client, "_post_retrying_connect", new=AsyncMock(return_value=resp)) as post:
+        out = await client.post_tweet("hi")
+    assert post.await_args.args[1] == {"text": "hi"} and "in_reply_to" not in out
+    with pytest.raises(XAPIError):
+        await client.post_tweet("hi", in_reply_to="not-an-id")

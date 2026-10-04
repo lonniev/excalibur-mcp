@@ -10,6 +10,14 @@ import type { ConversationStatus } from "./mcp";
 /// what the clause budget leaves out. Mirrors conversation_scoring.MAX_CLAUSE.
 export const MAX_CLAUSE = 512 - (2 + 1 + "-is:retweet -has:links -has:cashtags lang:en".length + 1 + "-from:".length + 20);
 
+/// X's length for a plain post. Weighted characters (URLs count 23, some
+/// scripts count double) are X's business; the server enforces 280 too.
+export const REPLY_MAX = 280;
+
+export function replyCharsLeft(text: string): number {
+  return REPLY_MAX - Array.from(text.trim()).length;
+}
+
 export const STATUSES: readonly ConversationStatus[] = ["new", "seen", "engaged", "dismissed"];
 
 export type ScoreTone = "hot" | "warm" | "cool";
