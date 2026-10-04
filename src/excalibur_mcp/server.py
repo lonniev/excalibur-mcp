@@ -146,6 +146,12 @@ _DOMAIN_TOOLS = [
     ToolIdentity(tool_id=capability_uuid("find_conversations"), capability="find_conversations",
                  category="heavy", intent="Search X for questioners you could answer; score and store them",
                  pricing_hint_type="flat", pricing_hint_value=25),
+    # The patron's own reply into a lead's thread — they wrote it, they pressed
+    # Post; eXcalibur carries it with their token and flips the lead to engaged
+    # on X's confirmation. A write, seed-priced like post_tweet.
+    ToolIdentity(tool_id=capability_uuid("reply_to_conversation"), capability="reply_to_conversation",
+                 category="write", intent="Post your reply into a lead's thread on X and mark it engaged",
+                 pricing_hint_type="flat", pricing_hint_value=3),
     ToolIdentity(tool_id=capability_uuid("list_conversations"), capability="list_conversations",
                  category="free", intent="Page through this patron's stored conversation leads"),
     ToolIdentity(tool_id=capability_uuid("set_conversation_status"), capability="set_conversation_status",
@@ -910,6 +916,33 @@ async def find_conversations(
         x_error_to_response=_x_api_error_to_response,
         query_id=query_id, query=query, max_posts=max_posts, weights=weights,
         safe_defaults=safe_defaults,
+    )
+
+
+@tool
+@runtime.paid_tool(capability_uuid("reply_to_conversation"), catch_errors=True)
+async def reply_to_conversation(
+    conversation_id: str,
+    text: str,
+    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "",
+    dpop_token: str = "",
+) -> dict:
+    """Post your reply into one of your leads' threads on X (``conversation_id``
+    is the row id from ``list_conversations``). ``text`` is up to 280 characters;
+    markdown inline formatting is converted the same way ``post_tweet`` does it.
+    Posted with your own X token as a reply to the lead's post; on X's
+    confirmation the lead is marked ``engaged`` and remembers the reply. A
+    refused post changes nothing and refunds the fare. Returns
+    ``{reply:{tweet_id,url}, conversation}``."""
+    from excalibur_mcp.tools import conversations as conversations_tools
+
+    return await conversations_tools.reply(
+        npub,
+        runtime=runtime,
+        tool_id=capability_uuid("reply_to_conversation"),
+        prepare_client=_prepare_x_client,
+        x_error_to_response=_x_api_error_to_response,
+        conversation_id=conversation_id, text=text,
     )
 
 

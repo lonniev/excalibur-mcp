@@ -250,14 +250,20 @@ class XClient:
         raise last  # type: ignore[misc]
 
     async def post_tweet(
-        self, text: str, *, media_ids: list[str] | None = None
+        self, text: str, *, media_ids: list[str] | None = None,
+        in_reply_to: str | None = None,
     ) -> dict:
-        """Post a tweet to X."""
+        """Post a tweet to X. With ``in_reply_to`` it is a reply in that thread."""
         url = f"{X_API_BASE}/tweets"
 
         payload: dict = {"text": text}
         if media_ids:
             payload["media"] = {"media_ids": media_ids}
+        if in_reply_to:
+            rid = str(in_reply_to).strip()
+            if not rid.isdigit():
+                raise XAPIError(0, f"Invalid in_reply_to id: {in_reply_to!r}")
+            payload["reply"] = {"in_reply_to_tweet_id": rid}
 
         response = await self._post_retrying_connect(url, payload)
 
@@ -298,11 +304,14 @@ class XClient:
         data = response.json()["data"]
         tweet_id = data["id"]
 
-        return {
+        out = {
             "tweet_id": tweet_id,
             "tweet_url": f"https://x.com/i/status/{tweet_id}",
             "text_posted": text,
         }
+        if in_reply_to:
+            out["in_reply_to"] = str(in_reply_to).strip()
+        return out
 
     async def post_tweet_with_image(self, text: str, image_url: str) -> dict:
         """Download image, upload to X, and post tweet with media attached."""

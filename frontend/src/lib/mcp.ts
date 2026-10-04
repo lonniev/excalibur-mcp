@@ -604,7 +604,10 @@ export interface ConversationRow {
   found_at: string;
   last_seen_at: string;
   status_at: string | null;
+  reply_tweet_id: string | null;
+  replied_at: string | null;
   url: string;
+  reply_url: string | null;
 }
 
 export interface ConversationQueryRow {
@@ -716,6 +719,21 @@ export async function setConversationStatus(
     "set_conversation_status", { conversation_id: id, status },
   );
   return r.conversation ?? null;
+}
+
+export interface ReplyToConversationResult {
+  success?: boolean;
+  reply?: { tweet_id: string; url: string };
+  conversation?: ConversationRow;
+  error?: string;
+  error_code?: string;
+  message?: string;
+}
+
+/// Post the patron's reply into a lead's thread with their own X token; the
+/// server marks the lead engaged on X's confirmation. Priced (a write to X).
+export async function replyToConversation(id: string, text: string): Promise<ReplyToConversationResult> {
+  return callTool<ReplyToConversationResult>("reply_to_conversation", { conversation_id: id, text });
 }
 
 export async function listConversationQueries(): Promise<ConversationQueryRow[]> {

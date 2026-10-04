@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   ChevronDown, ChevronRight, Eye, ExternalLink, Image, Loader2, MapPin, MessageCircle,
-  MessageSquare, Radar, Search, Users, X,
+  MessageSquare, Radar, Reply, Search, Users, X,
 } from "lucide-react";
 import {
   deleteConversationQuery, findConversations, listConversationQueries, listConversations,
@@ -32,6 +32,7 @@ import {
 } from "../lib/conversationsPresentation";
 import ConversationQueriesPanel from "./ConversationQueriesPanel";
 import ConversationQueryEditor, { emptyQuery } from "./ConversationQueryEditor";
+import ConversationReplyEditor from "./ConversationReplyEditor";
 
 const DATE_FIELDS = [
   { value: "found", label: "Found" },
@@ -75,6 +76,7 @@ export default function ConversationsPage() {
   const [needsXConnect, setNeedsXConnect] = useState(false);
   const [editing, setEditing] = useState<ConversationQueryRow | null>(null);
   const [open, setOpen] = useState<string | null>(null);
+  const [replying, setReplying] = useState<string | null>(null);
   const [, timeZone] = useTimezone();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -352,10 +354,15 @@ export default function ConversationsPage() {
                     key={r.id}
                     row={r}
                     expanded={expanded}
+                    replying={replying === r.id}
                     timeZone={timeZone}
                     queryName={queryName(r.query_id)}
                     onToggle={() => setOpen(expanded ? null : r.id)}
                     onMark={mark}
+                    onReply={(e) => { e.stopPropagation(); setReplying(replying === r.id ? null : r.id); setOpen(r.id); }}
+                    onReplyClose={() => setReplying(null)}
+                    onReplied={async () => { setReplying(null); await refresh(); }}
+                    onNeedsXConnect={() => setNeedsXConnect(true)}
                   />
                 );
               })}
@@ -368,13 +375,20 @@ export default function ConversationsPage() {
   );
 }
 
-function LeadRow({ row: r, expanded, timeZone, queryName, onToggle, onMark }: {
+function LeadRow({
+  row: r, expanded, replying, timeZone, queryName, onToggle, onMark, onReply, onReplyClose, onReplied, onNeedsXConnect,
+}: {
   row: ConversationRow;
   expanded: boolean;
+  replying: boolean;
   timeZone: string;
   queryName: string;
   onToggle: () => void;
   onMark: (e: React.MouseEvent, row: ConversationRow, status: ConversationStatus) => void;
+  onReply: (e: React.MouseEvent) => void;
+  onReplyClose: () => void;
+  onReplied: () => void;
+  onNeedsXConnect: () => void;
 }) {
   const dim = r.status === "dismissed" ? "opacity-50" : "";
   return (
@@ -422,6 +436,13 @@ function LeadRow({ row: r, expanded, timeZone, queryName, onToggle, onMark }: {
         </td>
         <td className="px-3 py-2.5 align-top text-right whitespace-nowrap">
           <span className="inline-flex gap-2">
+            <button
+              onClick={onReply}
+              title={r.reply_tweet_id ? "Reply again" : "Reply — posts to X as you, marks engaged"}
+              className={replying ? "text-amber-500" : "text-stone-300 hover:text-amber-500 dark:text-zinc-600"}
+            >
+              <Reply className="h-4 w-4" />
+            </button>
             {STATUS_ACTIONS.map(({ status, Icon, title }) => (
               <button
                 key={status}
@@ -453,6 +474,17 @@ function LeadRow({ row: r, expanded, timeZone, queryName, onToggle, onMark }: {
               <div>♥ {r.like_count} · {r.is_reply ? "a reply in the thread" : "top of the thread"}</div>
               <div>Found {when(r.found_at, timeZone)} · last seen {when(r.last_seen_at, timeZone)}</div>
               <div>From <span className="text-stone-700 dark:text-zinc-300">{queryName}</span>{r.status_at && <> · {r.status} {when(r.status_at, timeZone)}</>}</div>
+              {r.reply_url && (
+                <a
+                  href={r.reply_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  className="inline-flex items-center gap-1 text-amber-600 hover:underline dark:text-amber-400"
+                >
+                  <Reply className="h-3 w-3" /> Replied {when(r.replied_at, timeZone)}
+                </a>
+              )}
               <a
                 href={r.url}
                 target="_blank"
@@ -463,6 +495,14 @@ function LeadRow({ row: r, expanded, timeZone, queryName, onToggle, onMark }: {
                 Open on X <ExternalLink className="h-3 w-3" />
               </a>
             </div>
+            {replying && (
+              <ConversationReplyEditor
+                row={r}
+                onClose={onReplyClose}
+                onPosted={onReplied}
+                onNeedsXConnect={onNeedsXConnect}
+              />
+            )}
           </td>
         </tr>
       )}

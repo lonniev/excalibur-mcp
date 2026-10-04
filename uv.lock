@@ -668,7 +668,7 @@ wheels = [
 
 [[package]]
 name = "excalibur-mcp"
-version = "0.41.3"
+version = "0.42.0"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },

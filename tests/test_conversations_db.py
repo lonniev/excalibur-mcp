@@ -184,3 +184,15 @@ async def test_query_crud_scoped_and_query_change_resets_since_id():
     detach_q, delete_q = cap.calls[7][0], cap.calls[8][0]
     assert detach_q.startswith("UPDATE conversations SET query_id = NULL")
     assert delete_q.startswith("DELETE FROM conversation_queries")
+
+
+@pytest.mark.asyncio
+async def test_record_reply_sets_engaged_and_reply_in_one_statement():
+    cap = Capture(row={"id": RID, "status": "engaged"})
+    p1, p2, p3 = _patched(cap)
+    with p1, p2, p3:
+        await db.record_reply(NPUB, RID, "999")
+    q, args = cap.calls[0]
+    assert q.startswith("UPDATE conversations SET reply_tweet_id = $3, replied_at = NOW(), status = 'engaged'")
+    assert "WHERE npub = $1 AND id = $2::uuid" in q
+    assert args == (NPUB, RID, "999")

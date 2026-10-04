@@ -382,3 +382,98 @@ async def test_find_accepts_a_clause_up_to_x_budget_and_refuses_beyond():
     assert out["success"] and len(client.calls[0]["query"]) <= 512
     with pytest.raises(ValueError, match="512"):
         await _find(FakeClient(), query="x" * (sc.MAX_CLAUSE + 1))
+
+
+# -- reply ------------------------------------------------------------------
+
+class ReplyClient:
+    def __init__(self, error=None):
+        self.error = error
+        self.calls: list[dict] = []
+
+    async def post_tweet(self, text, **kw):
+        self.calls.append({"text": text, **kw})
+        if self.error:
+            raise self.error
+        return {"tweet_id": "999", "tweet_url": "https://x.com/i/status/999", "text_posted": text}
+
+
+async def _reply(client, *, row, **kw):
+    runtime = SimpleNamespace(rollback_debit=AsyncMock())
+
+    async def prepare(tool_id, npub):
+        if isinstance(client, dict):
+            await runtime.rollback_debit(tool_id, npub)
+            return client
+        return (client, "")
+
+    async def x_err(exc, npub):
+        return {"success": False, "error_code": f"x_{exc.status_code}"}
+
+    dbm = SimpleNamespace(
+        get_conversation=AsyncMock(return_value=row),
+        record_reply=AsyncMock(return_value={**(row or {}), "status": "engaged", "reply_tweet_id": "999"}),
+        STATUSES=tools.db.STATUSES,
+    )
+    with patch.object(tools, "db", dbm):
+        out = await tools.reply(NPUB, runtime=runtime, tool_id=TOOL, prepare_client=prepare,
+                                x_error_to_response=x_err, **kw)
+    return out, runtime, dbm
+
+
+LEAD = {"id": RID, "tweet_id": "123", "author_username": "ann", "status": "new"}
+
+
+@pytest.mark.asyncio
+async def test_reply_posts_in_thread_and_marks_engaged():
+    client = ReplyClient()
+    out, runtime, dbm = await _reply(client, row=LEAD, conversation_id=RID, text="  Thanks — try this  ")
+    assert client.calls == [{"text": "Thanks — try this", "in_reply_to": "123"}]
+    dbm.record_reply.assert_awaited_once_with(NPUB, RID, "999")
+    assert out["success"] and out["reply"] == {"tweet_id": "999", "url": "https://x.com/i/status/999"}
+    assert out["conversation"]["status"] == "engaged"
+    assert out["conversation"]["reply_url"] == "https://x.com/i/status/999"
+    runtime.rollback_debit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reply_validates_text_before_anything():
+    with pytest.raises(ValueError):
+        await _reply(ReplyClient(), row=LEAD, conversation_id=RID, text="   ")
+    with pytest.raises(ValueError, match="280"):
+        await _reply(ReplyClient(), row=LEAD, conversation_id=RID, text="x" * 281)
+
+
+@pytest.mark.asyncio
+async def test_reply_unknown_lead_refunds():
+    out, runtime, dbm = await _reply(ReplyClient(), row=None, conversation_id=RID, text="hi")
+    assert out["error_code"] == "conversation_not_found"
+    runtime.rollback_debit.assert_awaited_once_with(TOOL, NPUB)
+    dbm.record_reply.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reply_x_failure_refunds_and_leaves_status_alone():
+    out, runtime, dbm = await _reply(ReplyClient(error=XAPIError(403, "nope")), row=LEAD,
+                                     conversation_id=RID, text="hi")
+    assert out["error_code"] == "x_403"
+    runtime.rollback_debit.assert_awaited_once_with(TOOL, NPUB)
+    dbm.record_reply.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reply_oauth_situation_passes_through():
+    situation = {"success": False, "error_code": "oauth_no_credentials"}
+    out, runtime, _ = await _reply(situation, row=LEAD, conversation_id=RID, text="hi")
+    assert out is situation and runtime.rollback_debit.await_count == 1
+
+
+def test_reply_tool_is_registered_as_a_write():
+    from tollbooth.tool_identity import capability_uuid
+
+    from excalibur_mcp.server import _DOMAIN_TOOLS, TOOL_REGISTRY
+
+    uid = capability_uuid("reply_to_conversation")
+    assert uid in TOOL_REGISTRY
+    ti = next(t for t in _DOMAIN_TOOLS if t.capability == "reply_to_conversation")
+    assert ti.category == "write" and ti.pricing_hint_value > 0

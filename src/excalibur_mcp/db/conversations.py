@@ -34,7 +34,7 @@ _LEAD_COLS = (
     "id::text AS id, query_id::text AS query_id, query_text, conversation_id, tweet_id, "
     "author_id, author_username, author_followers, author_location, text, posted_at, "
     "reply_count, like_count, is_reply, has_media, score, signals, status, found_at, "
-    "last_seen_at, status_at"
+    "last_seen_at, status_at, reply_tweet_id, replied_at"
 )
 
 # Whitelisted sort keys → column expressions (caller input selects a key only).
@@ -304,6 +304,17 @@ async def set_status(npub: str, row_id: str, status: str) -> dict[str, Any] | No
         f"UPDATE conversations SET status = $3, status_at = NOW() "
         f"WHERE npub = $1 AND id = $2::uuid RETURNING {_LEAD_COLS}",
         npub, row_id, status,
+    )
+
+
+async def record_reply(npub: str, row_id: str, reply_tweet_id: str) -> dict[str, Any] | None:
+    """The patron replied through eXcalibur: remember X's id for the reply and
+    mark the lead engaged in the same statement."""
+    return await fetchrow(
+        f"UPDATE conversations SET reply_tweet_id = $3, replied_at = NOW(), "
+        f"status = 'engaged', status_at = NOW() "
+        f"WHERE npub = $1 AND id = $2::uuid RETURNING {_LEAD_COLS}",
+        npub, row_id, reply_tweet_id,
     )
 
 

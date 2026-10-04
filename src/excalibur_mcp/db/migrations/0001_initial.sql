@@ -152,7 +152,9 @@ CREATE TABLE IF NOT EXISTS conversations (
     status           TEXT NOT NULL DEFAULT 'new',
     found_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_seen_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    status_at        TIMESTAMPTZ
+    status_at        TIMESTAMPTZ,
+    reply_tweet_id   TEXT,
+    replied_at       TIMESTAMPTZ
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS conversations_owner_conv_uniq

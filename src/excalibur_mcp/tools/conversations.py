@@ -90,12 +90,27 @@ def _clamp_int(value: Any, lo: int, hi: int, what: str) -> int:
     return max(lo, min(hi, n))
 
 
+_REPLY_MAX = 280
+
+
 def _url_for(row: dict[str, Any]) -> str:
     return f"https://x.com/{row.get('author_username')}/status/{row.get('tweet_id')}"
 
 
 def _with_url(row: dict[str, Any]) -> dict[str, Any]:
-    return {**row, "url": _url_for(row)}
+    out = {**row, "url": _url_for(row)}
+    rid = row.get("reply_tweet_id")
+    out["reply_url"] = f"https://x.com/i/status/{rid}" if rid else None
+    return out
+
+
+def _clean_reply(text: str) -> str:
+    t = (text or "").strip()
+    if not t:
+        raise ValueError("reply text is required")
+    if len(t) > _REPLY_MAX:
+        raise ValueError(f"reply exceeds {_REPLY_MAX} characters")
+    return t
 
 
 # ---------------------------------------------------------------------------
@@ -401,4 +416,57 @@ async def find(
         "newest_id": newest_id,
         "truncated_reason": truncated,
         "top": [_with_url(r) for r in kept[:TOP_N]],
+    }
+
+
+# ---------------------------------------------------------------------------
+# reply (priced — a write to X)
+# ---------------------------------------------------------------------------
+
+
+async def reply(
+    npub: str,
+    *,
+    runtime: Any,
+    tool_id: str,
+    prepare_client: Callable[[str, str], Awaitable[Any]],
+    x_error_to_response: Callable[[Any, str], Awaitable[dict[str, Any]]],
+    conversation_id: str,
+    text: str,
+) -> dict[str, Any]:
+    """Post the patron's reply into a lead's thread, then mark it engaged.
+
+    The patron wrote the words and pressed the button — eXcalibur only carries
+    them. The row flips to ``engaged`` on X's confirmation and not before, so a
+    refused post leaves the lead exactly as it was; the fare is refunded when
+    nothing was posted.
+    """
+    from excalibur_mcp.formatter import markdown_to_unicode
+    from excalibur_mcp.x_client import XAPIError
+
+    rid = _require_uuid(conversation_id, "conversation_id")
+    body = _clean_reply(text)
+    row = await db.get_conversation(npub, rid)
+    if row is None:
+        await runtime.rollback_debit(tool_id, npub)
+        return {"success": False, "error_code": "conversation_not_found",
+                "message": "No lead with that id for this npub."}
+
+    client_or_err = await prepare_client(tool_id, npub)
+    if isinstance(client_or_err, dict):
+        return client_or_err
+    client, _ = client_or_err
+
+    try:
+        posted = await client.post_tweet(markdown_to_unicode(body), in_reply_to=row["tweet_id"])
+    except XAPIError as exc:
+        await runtime.rollback_debit(tool_id, npub)
+        return await x_error_to_response(exc, npub)
+
+    updated = await db.record_reply(npub, rid, str(posted["tweet_id"]))
+    logger.info("reply_to_conversation: posted reply for lead %s", rid)
+    return {
+        "success": True,
+        "reply": {"tweet_id": posted["tweet_id"], "url": posted["tweet_url"]},
+        "conversation": _with_url(updated or row),
     }
