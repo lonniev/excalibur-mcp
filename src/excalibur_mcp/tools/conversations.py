@@ -28,7 +28,6 @@ from excalibur_mcp.tools._filters import validate_search
 logger = logging.getLogger(__name__)
 
 _NAME_MAX = 120
-_QUERY_MAX = 256
 _TEXT_MAX = 1000
 _LOCATION_MAX = 64
 MAX_POSTS_FLOOR = 10
@@ -58,8 +57,11 @@ def _clean_query(query: str) -> str:
     q = (query or "").strip()
     if not q:
         raise ValueError("query is required")
-    if len(q) > _QUERY_MAX:
-        raise ValueError(f"query exceeds {_QUERY_MAX} characters")
+    if len(q) > scoring.MAX_CLAUSE:
+        raise ValueError(
+            f"query exceeds {scoring.MAX_CLAUSE} characters — X allows {scoring.MAX_EFFECTIVE_QUERY} "
+            "and the safe defaults plus your own-account exclusion use the rest"
+        )
     if _CONTROL_RE.search(q):
         raise ValueError("query must not contain control characters")
     if "?" in q:

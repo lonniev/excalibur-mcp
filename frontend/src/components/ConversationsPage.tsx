@@ -28,7 +28,7 @@ import {
 import { QUOTES } from "../lib/quotes";
 import { quoteStyles } from "../lib/quoteStyles";
 import {
-  compactCount, normalizePgTimestamp, runSummary, scoreTone, SIGNAL_TITLES, STATUSES,
+  compactCount, MAX_CLAUSE, normalizePgTimestamp, runSummary, scoreTone, SIGNAL_TITLES, STATUSES,
 } from "../lib/conversationsPresentation";
 import ConversationQueriesPanel from "./ConversationQueriesPanel";
 import ConversationQueryEditor, { emptyQuery } from "./ConversationQueryEditor";
@@ -246,7 +246,7 @@ export default function ConversationsPage() {
           onChange={(e) => setAdhoc(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && !running && adhoc.trim()) runAdhoc(); }}
           placeholder='One-off search, e.g. ("MCP server" OR "MCP tool") (monetize OR billing)'
-          maxLength={256}
+          maxLength={MAX_CLAUSE}
           className="min-w-72 flex-1 rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
         />
         <button

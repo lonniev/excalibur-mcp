@@ -129,3 +129,10 @@ def test_compose_query_length_guard():
 def test_is_bold_unicode_needs_a_run():
     assert not sc.is_bold_unicode("one \U0001d401 glyph")
     assert sc.is_bold_unicode("\U0001d401\U0001d402\U0001d403")
+
+
+def test_clause_budget_is_x_limit_minus_what_we_append():
+    # A clause exactly at the budget composes to ≤ 512 even with a 20-digit own id.
+    clause = "x" * sc.MAX_CLAUSE
+    assert len(sc.compose_query(clause, "9" * 20)) <= sc.MAX_EFFECTIVE_QUERY
+    assert sc.MAX_CLAUSE == 438

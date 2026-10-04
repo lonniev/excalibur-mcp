@@ -2,7 +2,7 @@ import { useState } from "react";
 import { ChevronDown, ChevronRight, RotateCcw, Save, Trash2, X } from "lucide-react";
 import { saveConversationQuery, type ConversationQueryRow } from "../lib/mcp";
 import {
-  DEFAULT_WEIGHTS, mergedWeights, weightOverrides, weightsProblem, WEIGHT_FIELDS,
+  DEFAULT_WEIGHTS, MAX_CLAUSE, mergedWeights, weightOverrides, weightsProblem, WEIGHT_FIELDS,
 } from "../lib/conversationsPresentation";
 
 /// A blank row for "New saved query".
@@ -68,7 +68,7 @@ export default function ConversationQueryEditor({ row, onClose, onSaved, onDelet
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder='X search clause — your own nouns, e.g. ("sound money" OR mises) (recommend OR "what should I read")'
-          maxLength={256}
+          maxLength={MAX_CLAUSE}
           className={`min-w-72 flex-1 ${INPUT}`}
         />
         <label
