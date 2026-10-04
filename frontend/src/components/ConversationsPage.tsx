@@ -216,7 +216,15 @@ export default function ConversationsPage() {
         <ConversationQueryEditor
           row={editing}
           onClose={() => setEditing(null)}
-          onSaved={async (saved) => { setEditing(null); await refreshQueries(); setSelectedQuery(saved.id); }}
+          onSaved={async (saved) => {
+            const isNew = !editing.id;
+            setEditing(null);
+            await refreshQueries();
+            setSelectedQuery(saved.id);
+            // A query the patron just wrote is a question they want answered now;
+            // saving without running left them staring at "no leads match".
+            if (isNew) await runSaved(saved);
+          }}
           onDelete={editing.id ? () => removeQuery(editing) : undefined}
         />
       )}
@@ -316,9 +324,11 @@ export default function ConversationsPage() {
       ) : rows.length === 0 ? (
         <div className="text-center py-12">
           <p className="text-sm text-stone-400 dark:text-zinc-500">
-            {total === 0 && !search && !dateFrom && !dateTo && !selectedQuery && statuses.length === STATUSES.length
-              ? "No leads yet — run a search."
-              : "No leads match this filter."}
+            {selectedQuery && selectedQuery !== "adhoc" && !queries.find((q) => q.id === selectedQuery)?.last_run_at
+              ? "This query hasn't run yet."
+              : total === 0 && !search && !dateFrom && !dateTo && !selectedQuery && statuses.length === STATUSES.length
+                ? "No leads yet — run a search."
+                : "No leads match this filter."}
           </p>
         </div>
       ) : (

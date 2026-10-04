@@ -5,6 +5,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.41.2] — 2026-10-04
+
+### Fixed — a new saved query runs when it is saved
+
+Saving a query selected it and filtered the leads to it, which read as "no
+leads match this filter" — nothing had run. The owner wrote "Bee Conservation",
+saw no matches, and concluded the search wasn't firing; the server showed it
+had never been asked. A query the patron just wrote is a question they want
+answered now, so a new one runs on save, and a query that has never run says
+so instead of claiming nothing matched.
+
 ## [0.41.1] — 2026-10-04
 
 ### Added — the Leads tab grows a catalog, a scoring editor and a detail view
