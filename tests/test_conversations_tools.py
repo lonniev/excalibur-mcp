@@ -477,3 +477,23 @@ def test_reply_tool_is_registered_as_a_write():
     assert uid in TOOL_REGISTRY
     ti = next(t for t in _DOMAIN_TOOLS if t.capability == "reply_to_conversation")
     assert ti.category == "write" and ti.pricing_hint_value > 0
+
+
+@pytest.mark.asyncio
+async def test_x_403_standing_rule_is_policy_not_token():
+    """2026-10-04 field report: X refused a reply with 'You can only reply to or
+    quote posts where you are mentioned or are the author' and the owner was
+    told to renew a token that worked. X's words are the message now."""
+    from excalibur_mcp import server as srv
+
+    exc = XAPIError(403, "You can only reply to or quote posts where you are mentioned or are the author.")
+    with patch.object(srv.runtime, "invalidate_oauth_access_token", new=AsyncMock()) as inv:
+        out = await srv._x_api_error_to_response(exc, NPUB)
+    assert out["error_code"] == "x_reply_not_permitted"
+    assert "mentioned" in out["message"]
+    inv.assert_not_awaited()
+
+    with patch.object(srv.runtime, "invalidate_oauth_access_token", new=AsyncMock()) as inv:
+        out = await srv._x_api_error_to_response(XAPIError(403, "Authentication failed"), NPUB)
+    assert out["error_code"] != "x_reply_not_permitted"
+    inv.assert_awaited_once()
