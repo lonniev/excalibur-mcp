@@ -50,6 +50,8 @@ import {
 import {
   clearDraft, draftIsUnsaved, readDraft, saveError, writeDraft, type LocalDraft,
 } from "../lib/postDraft";
+import ReadinessBadge from "./ReadinessBadge";
+import { nextSweepSlot, type Flip } from "../lib/readiness";
 
 type Kind = "post" | "snippet";
 type Freq = "none" | "daily" | "weekdays" | "weekly" | "monthly";
@@ -140,12 +142,15 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   const [freq, setFreq] = useState<Freq>("none");
   const [interval, setIntervalN] = useState(1);
   const [ceaseAt, setCeaseAt] = useState("");
-  // The post's currently-persisted status. Drives "Save draft": on an already
-  // scheduled post it preserves the queue entry (keeps status='scheduled' +
-  // re-sends the timing) instead of silently downgrading it to a plain draft,
-  // which would drop it from the scheduler's due query. Kept in sync on every
-  // confirmed save so successive saves in one session stay correct.
+  // The post's currently-persisted status — what the badge shows until it is
+  // flipped. Kept in sync on every confirmed save so successive saves in one
+  // session stay correct.
   const [loadedStatus, setLoadedStatus] = useState<string>("draft");
+  // The badge flipped but not yet saved: the wire status the next Save will
+  // persist. Null means untouched, and Save then leaves the status alone — a
+  // content edit to a scheduled (or paused, or resolving) post never changes
+  // its state as a side effect.
+  const [wanted, setWanted] = useState<Flip | null>(null);
   // Set when the opened post is a published snapshot → the recurring template it
   // fired from. Drives the "edit the template instead" banner.
   const [templateId, setTemplateId] = useState<string | null>(null);
@@ -209,6 +214,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     setTitle(ttl);
     setTweetUrl(row.tweet_url ?? null);
     setLoadedStatus(row.status ?? "draft");
+    setWanted(null);
     setTemplateId(row.template_id ?? null);
     baseline.current = sigOf(loaded, pub, fq, iv, cz, ttl);
   }, [sigOf, timeZone]);
@@ -402,8 +408,8 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   // Has the live document diverged from what we loaded? (Drives the swipe guard.)
   const dirty = useMemo(
     () => baseline.current !== null
-      && sigOf(blocks, publishAt, freq, interval, ceaseAt, title) !== baseline.current,
-    [blocks, publishAt, freq, interval, ceaseAt, title, sigOf],
+      && (wanted !== null || sigOf(blocks, publishAt, freq, interval, ceaseAt, title) !== baseline.current),
+    [blocks, publishAt, freq, interval, ceaseAt, title, wanted, sigOf],
   );
 
   // Mirror the working post to device-local storage as the author edits — but
@@ -854,33 +860,42 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   }, [id]);
 
   // ── persistence ───────────────────────────────────────────────────────────
-  async function persist(scheduled: boolean) {
+  // Flip the badge. Ready with no publish time takes the next sweep slot, so
+  // the author sees WHEN before saving; Draft keeps its time so the flip back
+  // costs nothing. Nothing persists until Save.
+  function flipReadiness(next: Flip) {
+    if (next === "scheduled" && !publishAt) {
+      setPublishAt(isoToDatetimeLocalValue(nextSweepSlot().toISOString(), timeZone));
+    }
+    setWanted(next);
+  }
+  // What the badge shows: the flip the author made, else the stored status.
+  const shownStatus = wanted ?? loadedStatus;
+  // The post is in (or heading into) the queue, so its timing must travel.
+  const inQueue = shownStatus === "scheduled" || shownStatus === "resolving" || shownStatus === "resolved";
+
+  async function persist() {
     if (!composed.trim()) { setError("Write something first."); return; }
-    if (scheduled && !publishAt) { setError("Set a publish time to schedule."); setTab("schedule"); return; }
-    // "Save draft" on an already-scheduled post keeps it in the queue: preserve
-    // status='scheduled' and re-send its timing while persisting the edited
-    // content, instead of downgrading to 'draft' (which the scheduler ignores).
-    const keepScheduled = !scheduled && loadedStatus === "scheduled" && !!publishAt;
-    const willSchedule = scheduled || keepScheduled;
+    if (inQueue && !publishAt) { setError("Set a publish time."); setTab("schedule"); return; }
     setSaving(true);
     setError(null);
-    const status = willSchedule ? "scheduled" : "draft";
     const docPayload = serializeBlocks(blocks);
     // #367 — datetime-local wall values are in the patron zone; convert to UTC ISO.
-    const publishIso =
-      willSchedule && publishAt
-        ? datetimeLocalValueToIso(publishAt, timeZone) ?? undefined
-        : undefined;
+    const publishIso = publishAt ? datetimeLocalValueToIso(publishAt, timeZone) ?? undefined : undefined;
     const recurrence: Recurrence | undefined =
-      willSchedule && freq !== "none" ? { freq, interval: Math.max(1, Number(interval) || 1) } : undefined;
+      freq !== "none" ? { freq, interval: Math.max(1, Number(interval) || 1) } : undefined;
     const ceaseIso = ceaseAt
       ? datetimeLocalValueToIso(ceaseAt, timeZone) ?? undefined
       : undefined;
     // A schedule time already in the past won't miss — it fires on the next
     // scheduler tick. Say so, so the post isn't perceived as "not scheduled".
-    const pastTime = !!publishIso && new Date(publishIso).getTime() < Date.now();
+    const pastTime = inQueue && !!publishIso && new Date(publishIso).getTime() < Date.now();
+    const savedHint = inQueue
+      ? (pastTime ? "Saved — Ready; its time has passed, so it posts on the next scheduler run." : "Saved — Ready.")
+      : "Saved.";
     try {
       if (isNew) {
+        const status: Flip = wanted ?? "draft";
         const r = await createPost({
           doc: docPayload, textCache: composed, status,
           publishAt: publishIso, recurrence, ceaseAt: ceaseIso, clientReqId: createReqId.current,
@@ -894,8 +909,11 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
         clearDraft("new");
         if (r.post_id) nav(`/post/${r.post_id}`, { replace: true });
       } else {
-        // Always send title (even blank) so clearing it persists as NULL.
-        const patch: Record<string, unknown> = { doc: docPayload, status, title: title.trim() };
+        // Always send title (even blank) so clearing it persists as NULL. Status
+        // travels only when the badge was flipped; timing always does, so an
+        // edited publish time on a Ready post lands without touching its state.
+        const patch: Record<string, unknown> = { doc: docPayload, title: title.trim() };
+        if (wanted) patch.status = wanted;
         if (publishIso) patch.publish_at = publishIso;
         if (recurrence) patch.recurrence = recurrence;
         if (ceaseIso) patch.cease_at = ceaseIso;
@@ -904,57 +922,13 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
         // On a blocked/unconfirmed save, DON'T clear the dirty baseline or the
         // cache — the edit stays put, swipe-guarded and retryable, never lost.
         if (fail) { setError(fail); return; }
-        setHint(
-          scheduled
-            ? (pastTime ? "Scheduled — its time has passed, so it posts on the next scheduler run." : "Scheduled.")
-            : keepScheduled
-              ? (pastTime ? "Saved — still scheduled; its time has passed, so it posts on the next scheduler run." : "Saved — still scheduled.")
-              : "Saved.",
-        );
-        setLoadedStatus(status);
+        setHint(savedHint);
+        if (wanted) setLoadedStatus(wanted);
+        setWanted(null);
         baseline.current = sigOf(blocks, publishAt, freq, interval, ceaseAt, title);
         clearDraft(id!);
         postCache.current.delete(id!); // saved content differs from any cached row
       }
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  // Cancel a scheduled posting: clear the schedule (publish_at / recurrence /
-  // cease_at → NULL) and drop the post back to a plain draft, while persisting
-  // the current content so no edits are lost. The scheduler's due query only
-  // fires status='scheduled' rows, so this reliably takes the post out of the
-  // queue; the author can reschedule anytime from the Schedule tab.
-  async function handleUnschedule() {
-    if (isNew || loadedStatus !== "scheduled") return;
-    setSaving(true);
-    setError(null);
-    try {
-      const patch: Record<string, unknown> = {
-        doc: serializeBlocks(blocks),
-        status: "draft",
-        title: title.trim(),
-        publish_at: null,
-        recurrence: null,
-        cease_at: null,
-      };
-      const r = await updatePost({ postId: id!, patch, textCache: composed, clientReqId: uid() });
-      const fail = saveError(r);
-      if (fail) { setError(fail); return; }
-      // Mirror the now-unscheduled row locally so the editor and dirty-baseline
-      // match what the server holds.
-      setPublishAt("");
-      setFreq("none");
-      setIntervalN(1);
-      setCeaseAt("");
-      setLoadedStatus("draft");
-      setHint("Unscheduled — saved as a draft. It won't post until you reschedule it.");
-      baseline.current = sigOf(blocks, "", "none", 1, "", title);
-      clearDraft(id!);
-      postCache.current.delete(id!);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -1114,8 +1088,9 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
           return;
         }
         debugPush("info", `Deferred to scheduler (budget ${maxBudget}s) — due ~now+10s`);
-        setHint("Scheduled — its blocks resolve in the background and it posts shortly.");
+        setHint("Ready — its blocks resolve in the background and it posts shortly.");
         setLoadedStatus("scheduled");
+        setWanted(null);
         baseline.current = sigOf(blocks, publishAt, freq, interval, ceaseAt, title);
         clearDraft(id ?? "new");
         if (isNew && saved.post_id) nav(`/post/${saved.post_id}`, { replace: true });
@@ -1286,7 +1261,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
               {isSnippet ? "eXcalibur Snippet" : "eXcalibur Posts Manager"}
             </div>
             <div className="font-mono text-[11px] uppercase tracking-widest text-zinc-500">
-              {isSnippet ? "reusable content" : "draft → refine → schedule"}
+              {isSnippet ? "reusable content" : "draft → refine → ready"}
             </div>
           </div>
           {!isSnippet && curIndex >= 0 && neighbors.length > 1 && (
@@ -1328,15 +1303,14 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
             </button>
           ) : (
             <>
+              <ReadinessBadge status={shownStatus} onFlip={flipReadiness} busy={saving} />
               <button
-                onClick={() => persist(false)}
+                onClick={() => void persist()}
                 disabled={saving}
-                title={loadedStatus === "scheduled"
-                  ? "Save your edits and keep this post scheduled"
-                  : "Save your edits as a draft"}
+                title="Save your edits and the badge"
                 className="flex items-center gap-1.5 rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:border-zinc-500 hover:text-zinc-100 disabled:opacity-40 transition-colors"
               >
-                <Save className="h-4 w-4" /> {saving ? "Saving…" : loadedStatus === "scheduled" ? "Save changes" : "Save draft"}
+                <Save className="h-4 w-4" /> {saving ? "Saving…" : "Save"}
               </button>
               <button
                 onClick={() => void handlePostNow()}
@@ -1665,10 +1639,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
                   interval={interval} setInterval={setIntervalN}
                   ceaseAt={ceaseAt} setCeaseAt={setCeaseAt}
                   timeZone={timeZone}
-                  onSchedule={() => persist(true)} saving={saving}
                   onDiscard={handleDiscard} isNew={isNew}
-                  isScheduled={loadedStatus === "scheduled"}
-                  onUnschedule={() => void handleUnschedule()}
                 />
               )}
             </div>
@@ -2301,18 +2272,16 @@ function VoiceTab({
 function ScheduleTab({
   publishAt, setPublishAt, freq, setFreq, interval, setInterval, ceaseAt, setCeaseAt,
   timeZone,
-  onSchedule, saving, onDiscard, isNew, isScheduled, onUnschedule,
+  onDiscard, isNew,
 }: {
   publishAt: string; setPublishAt: (v: string) => void;
   freq: Freq; setFreq: (v: Freq) => void;
   interval: number; setInterval: (v: number) => void;
   ceaseAt: string; setCeaseAt: (v: string) => void;
   timeZone: string;
-  onSchedule: () => void; saving: boolean; onDiscard: () => void; isNew: boolean;
-  isScheduled: boolean; onUnschedule: () => void;
+  onDiscard: () => void; isNew: boolean;
 }) {
   const field = "w-full rounded-md border border-zinc-700 bg-zinc-900 p-2 text-sm text-zinc-200 outline-hidden focus:border-amber-400";
-  const canSchedule = !!publishAt;
   return (
     <div className="space-y-5">
       <div>
@@ -2320,8 +2289,9 @@ function ScheduleTab({
         <input type="datetime-local" value={publishAt} onChange={(e) => setPublishAt(e.target.value)} className={field} />
         <p className="mt-1.5 text-xs text-zinc-500">
           Times are in <span className="text-zinc-300">{timeZone}</span>. The scheduler sweeps on the hour and
-          the half hour, so a post goes out at the next :00 or :30 after its publish time. Need it out
-          this instant? Use <span className="text-amber-400">Post now</span>.
+          the half hour, so a post goes out at the next :00 or :30 after its publish time — once
+          its badge says <span className="text-amber-400">Ready</span>. Need it out this instant?
+          Use <span className="text-amber-400">Post now</span>.
         </p>
       </div>
       <div>
@@ -2350,20 +2320,6 @@ function ScheduleTab({
 
       <CalendarPreview publishAt={publishAt} freq={freq} interval={interval} ceaseAt={ceaseAt} />
 
-      <button onClick={onSchedule} disabled={!canSchedule || saving}
-        className="flex w-full items-center justify-center gap-2 rounded-md bg-amber-400 px-4 py-2.5 text-sm font-semibold text-zinc-950 hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-40 transition-colors">
-        <Swords className="h-4 w-4" /> {saving ? "Scheduling…" : isScheduled ? "Update schedule" : "Schedule with Excalibur"}
-      </button>
-      <p className="text-center text-xs text-zinc-500">
-        {!canSchedule ? "Set a publish time to schedule." : "Persists to Excalibur; the scheduler runs check_price → post_tweet per occurrence."}
-      </p>
-      {isScheduled && (
-        <button onClick={onUnschedule} disabled={saving}
-          title="Take this post out of the schedule and keep it as a draft"
-          className="flex w-full items-center justify-center gap-2 rounded-md border border-zinc-700 px-4 py-2 text-sm text-zinc-300 hover:border-rose-500 hover:text-rose-400 disabled:opacity-40 transition-colors">
-          <Octagon className="h-4 w-4" /> {saving ? "Unscheduling…" : "Unschedule (keep as draft)"}
-        </button>
-      )}
       <button onClick={onDiscard} className="w-full text-center text-xs text-zinc-600 hover:text-rose-400 transition-colors">
         {isNew ? "Discard draft" : "Archive post"}
       </button>
