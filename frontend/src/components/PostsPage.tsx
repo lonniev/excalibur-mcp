@@ -10,6 +10,8 @@ import { uid } from "../lib/editorDoc";
 import { attemptLabel } from "../lib/attemptLabel";
 import { parseLocalHourParam } from "../lib/timezone";
 import TweetPreviewModal from "./TweetPreviewModal";
+import ReadinessBadge from "./ReadinessBadge";
+import { BADGE_LABEL, nextSweepSlot, type Flip } from "../lib/readiness";
 import {
   formatDateTime,
   formatHourLabel,
@@ -55,26 +57,6 @@ const DATE_FIELDS = [
 ];
 const PAGE_SIZE = 25;
 
-const statusStyle: Record<string, string> = {
-  draft: "bg-stone-100 text-stone-600 dark:bg-zinc-800 dark:text-zinc-300",
-  scheduled: "bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-400",
-  // Building the body: a worker is resolving this post's dynamic blocks. The
-  // slow phase — minutes, not milliseconds — so it pulses.
-  resolving: "bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-400 animate-pulse",
-  // Built and waiting for its moment. Nothing is running; the text is final and
-  // the next tick will send it.
-  resolved: "bg-teal-100 text-teal-700 dark:bg-teal-500/15 dark:text-teal-400",
-  // Transient: the scheduler has claimed this finished body and is posting it
-  // right now. Milliseconds, so this is rarely seen.
-  sending: "bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-400 animate-pulse",
-  // A "needs attention" stop-state: the scheduler paused this post after a
-  // non-transient failure (e.g. a lapsed X subscription). Distinct from the
-  // grey draft fallback so it reads as actionable, not idle.
-  paused: "bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-400",
-  sent: "bg-green-100 text-green-700 dark:bg-green-500/15 dark:text-green-400",
-  archived: "bg-stone-100 text-stone-400 dark:bg-zinc-800 dark:text-zinc-500",
-};
-
 // Pauses where the post MAY already be live on X. Resuming one of these is the
 // one click in this UI that can publish a duplicate, so it gets the opposite
 // advice from every other pause: check the timeline before acting, don't fix
@@ -86,10 +68,6 @@ const UNCONFIRMED_SEND = ["x_post_outcome_unknown", "sending_orphaned_pre_split"
 const ICONS = {
   // content_copy
   duplicate: "M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z",
-  // play_arrow
-  resume: "M8 5v14l11-7z",
-  // event_busy (calendar with ✕ — "remove from schedule")
-  toDraft: "M9.31 17l2.44-2.44L14.19 17l1.06-1.06-2.44-2.44 2.44-2.44L14.19 10l-2.44 2.44L9.31 10l-1.06 1.06 2.44 2.44-2.44 2.44L9.31 17zM19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11z",
   // repeat
   repost: "M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z",
   // archive
@@ -182,8 +160,7 @@ export default function PostsPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [reposting, setReposting] = useState<string | null>(null);
-  const [resuming, setResuming] = useState<string | null>(null);
-  const [returningToDraft, setReturningToDraft] = useState<string | null>(null);
+  const [flipping, setFlipping] = useState<string | null>(null);
   const [duplicating, setDuplicating] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ url: string; text: string } | null>(null);
   // Whether X is connected RIGHT NOW. `last_attempt_reason` is a record of the
@@ -309,51 +286,25 @@ export default function PostsPage() {
     }
   }
 
-  // Resume a paused post: flip it back to `scheduled` so the next scheduler
-  // tick picks it up. Its publish_at is in the past, so it fires on the very
-  // next tick (and recurrence resumes from there). Use once the cause of the
-  // pause (e.g. a lapsed X subscription) is fixed at the provider.
-  async function handleResume(e: React.MouseEvent, id: string) {
-    e.stopPropagation();
-    e.preventDefault();
+  // Flip the badge: Draft ↔ Ready, Paused → Ready, a stuck Sending → Draft.
+  // Ready is `scheduled` on the wire. A post made Ready with no publish time
+  // gets the next sweep slot, so the flip never means "post this instant" —
+  // the time shows on the row and can be changed in the editor. Draft keeps
+  // its time, so the flip back is free.
+  async function handleFlip(id: string, next: Flip, publishAt: string | null) {
     setError(null);
     setNotice(null);
-    setResuming(id);
+    setFlipping(id);
     try {
-      const r = await updatePost({ postId: id, patch: { status: "scheduled" }, clientReqId: uid() });
+      const patch: Record<string, unknown> = { status: next };
+      if (next === "scheduled" && !publishAt) patch.publish_at = nextSweepSlot().toISOString();
+      const r = await updatePost({ postId: id, patch, clientReqId: uid() });
       if (r.error) setError(r.error);
-      else {
-        setNotice("Resumed — rescheduled. The next scheduler tick will post it.");
-        await refresh();
-      }
+      else await refresh();
     } catch (err) {
       setError((err as Error).message);
     } finally {
-      setResuming(null);
-    }
-  }
-
-  // Return a post to Draft — the universal rescue for a post that left the table's
-  // active views: a scheduled/paused one you want to pull back, or one the
-  // scheduler claimed (`sending`) and couldn't finish. Draft is excluded from the
-  // scheduler's due set, so this cleanly unschedules it for editing.
-  async function handleReturnToDraft(e: React.MouseEvent, id: string) {
-    e.stopPropagation();
-    e.preventDefault();
-    setError(null);
-    setNotice(null);
-    setReturningToDraft(id);
-    try {
-      const r = await updatePost({ postId: id, patch: { status: "draft" }, clientReqId: uid() });
-      if (r.error) setError(r.error);
-      else {
-        setNotice("Returned to Draft — it won't post until you schedule it again.");
-        await refresh();
-      }
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setReturningToDraft(null);
+      setFlipping(null);
     }
   }
 
@@ -493,21 +444,22 @@ export default function PostsPage() {
         </button>
         {POST_STATUSES.map((s) => {
           const on = selected.has(s);
+          const label = BADGE_LABEL[s];
           return (
             <button
               key={s}
               onClick={() => toggleStatus(s)}
               disabled={loading}
               aria-pressed={on}
-              title={on ? `Showing ${s} posts — click to hide` : `Hiding ${s} posts — click to show`}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg capitalize border transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+              title={on ? `Showing ${label} posts — click to hide` : `Hiding ${label} posts — click to show`}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                 on
                   ? "bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-500/15 dark:text-amber-400 dark:border-amber-500/30"
                   : "text-stone-400 border-dashed border-stone-300 hover:bg-stone-100 dark:text-zinc-500 dark:border-zinc-700 dark:hover:bg-zinc-800"
               }`}
             >
               <ChicletBox on={on} />
-              {s}
+              {label}
             </button>
           );
         })}
@@ -610,9 +562,14 @@ export default function PostsPage() {
                   className="border-b border-stone-100 last:border-0 dark:border-zinc-900 hover:bg-stone-50 dark:hover:bg-zinc-900/60 cursor-pointer"
                 >
                   <td className="px-3 py-2.5 align-top">
-                    <span className={`text-xs px-2 py-0.5 rounded-full capitalize ${statusStyle[p.status] ?? statusStyle.draft}`}>
-                      {p.status}
-                    </span>
+                    <ReadinessBadge
+                      status={p.status}
+                      onFlip={(next) => void handleFlip(p.post_id, next, p.publish_at)}
+                      busy={flipping === p.post_id}
+                      caution={p.status === "paused" && p.last_attempt_reason && UNCONFIRMED_SEND.includes(p.last_attempt_reason)
+                        ? "The publisher never confirmed, so this post MAY already be live on X. Check your timeline first — a post that did go out would publish twice."
+                        : undefined}
+                    />
                     {/* A degraded send is still a send, so `status` reads "Sent"
                         in green and is RIGHT to. What it cannot say is that the
                         words that went out were the author's fallback rather
@@ -656,7 +613,7 @@ export default function PostsPage() {
                     {p.status === "paused" && p.last_attempt_reason && (
                       <span
                         className="mt-1 flex items-center gap-1 text-[11px] text-rose-600 dark:text-rose-400"
-                        title={`Scheduler paused this post${p.last_attempt_at ? ` at ${fmt(p.last_attempt_at, timeZone)}` : ""}: ${p.last_attempt_reason}.${p.last_attempt_detail ? `\n\n${p.last_attempt_detail}` : ""}\n\n${UNCONFIRMED_SEND.includes(p.last_attempt_reason) ? "The publisher never confirmed, so this post MAY already be live on X. Check your timeline first — resuming a post that did go out publishes it twice." : "Fix the cause at the provider, then Resume to reschedule it."}`}
+                        title={`Scheduler paused this post${p.last_attempt_at ? ` at ${fmt(p.last_attempt_at, timeZone)}` : ""}: ${p.last_attempt_reason}.${p.last_attempt_detail ? `\n\n${p.last_attempt_detail}` : ""}\n\n${UNCONFIRMED_SEND.includes(p.last_attempt_reason) ? "The publisher never confirmed, so this post MAY already be live on X. Check your timeline first — a post that did go out would publish twice." : "Fix the cause at the provider, then mark it Ready."}`}
                       >
                         ⏸ {attemptLabel(p.last_attempt_reason)}
                       </span>
@@ -698,7 +655,7 @@ export default function PostsPage() {
                     {p.status === "sending" && (
                       <span
                         className="mt-1 flex items-center gap-1 text-[11px] text-sky-600 dark:text-sky-400"
-                        title={`The scheduler claimed this post${p.last_attempt_at ? ` at ${fmt(p.last_attempt_at, timeZone)}` : ""} and is posting it. If it lingers here, use "to draft" to rescue it.`}
+                        title={`The scheduler claimed this post${p.last_attempt_at ? ` at ${fmt(p.last_attempt_at, timeZone)}` : ""} and is posting it. If it lingers here, return it to Draft to rescue it.`}
                       >
                         ⟳ working…
                       </span>
@@ -781,24 +738,6 @@ export default function PostsPage() {
                         busy={duplicating === p.post_id}
                         hover="hover:text-amber-600 dark:hover:text-amber-400"
                       />
-                      {p.status === "paused" && (
-                        <ActionIcon
-                          path={ICONS.resume}
-                          title="Resume — reschedule this post so the next scheduler tick posts it"
-                          onClick={(e) => handleResume(e, p.post_id)}
-                          busy={resuming === p.post_id}
-                          hover="hover:text-amber-600 dark:hover:text-amber-400"
-                        />
-                      )}
-                      {(p.status === "sending" || p.status === "scheduled" || p.status === "paused") && (
-                        <ActionIcon
-                          path={ICONS.toDraft}
-                          title="Return to Draft — unschedule this post so you can edit it (rescues a post stuck mid-send)"
-                          onClick={(e) => handleReturnToDraft(e, p.post_id)}
-                          busy={returningToDraft === p.post_id}
-                          hover="hover:text-amber-600 dark:hover:text-amber-400"
-                        />
-                      )}
                       {p.status === "sent" && (
                         <ActionIcon
                           path={ICONS.repost}
