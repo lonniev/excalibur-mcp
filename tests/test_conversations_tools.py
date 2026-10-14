@@ -111,6 +111,24 @@ async def test_find_rejects_question_mark_and_control_chars():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("q", [
+    'microconf and "small business"',
+    "microconf AND monetization",
+])
+async def test_find_rejects_bare_and_before_touching_x(q):
+    client = FakeClient()
+    with pytest.raises(ValueError, match="'and'"):
+        await _find(client, query=q)
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_find_allows_and_inside_a_phrase_or_a_word():
+    out, _, _ = await _find(FakeClient(), query='"rock and roll" android brand')
+    assert out["success"] is True
+
+
+@pytest.mark.asyncio
 async def test_find_rejects_bad_weights_before_touching_x():
     client = FakeClient()
     with pytest.raises(ValueError):

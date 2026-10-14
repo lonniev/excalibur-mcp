@@ -112,10 +112,8 @@ def _x_says(body: Any, fallback: str) -> str:
     """
     if not isinstance(body, dict):
         return fallback
-    for key in ("detail", "title"):
-        value = str(body.get(key) or "").strip()
-        if value:
-            return value
+    # ``errors`` first: on a 400 X's ``detail`` is the generic "One or more
+    # parameters to your request was invalid." and the list names the fault.
     errors = body.get("errors")
     if isinstance(errors, list):
         joined = "; ".join(
@@ -125,6 +123,10 @@ def _x_says(body: Any, fallback: str) -> str:
         )
         if joined:
             return joined
+    for key in ("detail", "title"):
+        value = str(body.get(key) or "").strip()
+        if value:
+            return value
     raw = str(body.get("raw") or "").strip()
     return raw or fallback
 
