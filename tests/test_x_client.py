@@ -331,6 +331,29 @@ class TestPostTweet:
             assert "not permitted to create a Post" in exc_info.value.detail
 
     @pytest.mark.asyncio
+    async def test_errors_list_beats_the_generic_400_detail(self, client):
+        """X's 400 carries a generic ``detail`` beside the ``errors`` entry
+        that names the fault; the specific one is what reaches the patron."""
+        mock_resp = _mock_response(400, {
+            "title": "Invalid Request",
+            "detail": "One or more parameters to your request was invalid.",
+            "errors": [{"message": "There were errors processing your request: "
+                                   "Ambiguous use of and as a keyword. (at position 10)"}],
+        })
+
+        with patch("excalibur_mcp.x_client.httpx.AsyncClient") as MockClient:
+            mock_instance = AsyncMock()
+            mock_instance.get.return_value = mock_resp
+            mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
+            mock_instance.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value = mock_instance
+
+            with pytest.raises(XAPIError) as exc_info:
+                await client.search_recent("microconf and x")
+            assert exc_info.value.status_code == 400
+            assert "Ambiguous use of and" in exc_info.value.detail
+
+    @pytest.mark.asyncio
     async def test_unexpected_status(self, client):
         mock_resp = _mock_response(500, {"error": "Internal Server Error"})
 

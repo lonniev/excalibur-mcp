@@ -1,0 +1,2 @@
+- `find_conversations` refuses a bare `and` in a query (free, before X is called) — X joins terms with a space and rejects the word as an operator.
+- An X 400 now reports X's specific reason (`errors[].message`) in place of its generic "One or more parameters to your request was invalid."

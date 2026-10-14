@@ -35,6 +35,8 @@ MAX_POSTS_CAP = 300
 TOP_N = 10
 _SINCE_ID_WINDOW = timedelta(days=7)
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+_QUOTED_RE = re.compile(r'"[^"]*"')
+_BARE_AND_RE = re.compile(r"\band\b", re.IGNORECASE)
 
 
 def _require_uuid(value: str, what: str) -> str:
@@ -66,6 +68,11 @@ def _clean_query(query: str) -> str:
         raise ValueError("query must not contain control characters")
     if "?" in q:
         raise ValueError("X search has no '?' operator — spell the question out as phrases")
+    if _BARE_AND_RE.search(_QUOTED_RE.sub(" ", q)):
+        raise ValueError(
+            "X search has no 'and' operator — a space joins terms; "
+            'quote it ("and") to search for the word itself'
+        )
     return q
 
 
