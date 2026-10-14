@@ -14,6 +14,7 @@ import logging
 from typing import Annotated, Any
 
 from fastmcp import FastMCP
+from mcp.types import Icon
 from pydantic import Field
 from tollbooth import AsyncJobSituation
 from tollbooth.credential_templates import (
@@ -26,8 +27,21 @@ from tollbooth.llm_route import error_message as llm_error_message
 from tollbooth.llm_route import llm_failure_situation
 from tollbooth.oauth_config import OAuthProviderConfig
 from tollbooth.oauth_situation import OAuthSituation
+from tollbooth.params import DpopToken, PatronNpub
 from tollbooth.runtime import OperatorRuntime, register_standard_tools
-from tollbooth.tool_identity import STANDARD_IDENTITIES, ToolIdentity, capability_uuid
+from tollbooth.tool_identity import (
+    CREATES,
+    CREATES_REMOTE,
+    DELETES,
+    READS,
+    READS_REMOTE,
+    REPLACES,
+    STANDARD_IDENTITIES,
+    WRITES_REMOTE,
+    ToolBehavior,
+    ToolIdentity,
+    capability_uuid,
+)
 from tollbooth.upstream_payment import upstream_payment_situation
 
 from excalibur_mcp import __version__
@@ -36,7 +50,10 @@ from excalibur_mcp.config import get_settings
 logger = logging.getLogger(__name__)
 
 mcp = FastMCP(
-    "eXcalibur",
+    "excalibur-mcp",
+    version=__version__,
+    website_url="https://excalibur.tollbooth-dpyc.com",
+    icons=[Icon(src="https://tollbooth-dpyc.com/dpyc-logo.png", mimeType="image/png")],
     instructions=(
         "eXcalibur MCP — AI agent access to X (Twitter) posting, "
         "monetized via DPYC Tollbooth Lightning micropayments.\n\n"
@@ -78,123 +95,139 @@ POST_TWEET_UUID       = "11f169f5-9cd8-5d30-85ab-d4485e6c6965"
 POST_TWEET_IMAGE_UUID = "d10365f0-9a03-5b6c-8c6d-1457c139f31b"
 
 
+# Behaviours no preset names. Each is judged from what the tool body does.
+# Create when no id is given, else overwrite the named row's fields in place.
+SAVES = ToolBehavior(read_only=False, destructive=True, idempotent=False, open_world=False)
+# Reads X search, upserts the leads it scores, purges stale ones, and moves the
+# saved query's watermark so a re-run reads only newer posts.
+SEARCHES_X = ToolBehavior(read_only=False, destructive=True, idempotent=False, open_world=True)
+# The Worker drops its pending proof request and DMs a fresh one on every call.
+REISSUES = ToolBehavior(read_only=False, destructive=True, idempotent=False, open_world=True)
+
 _DOMAIN_TOOLS = [
     # OAuth tools are now standard (from wheel via OAuthProviderConfig)
-    ToolIdentity(tool_id=POST_TWEET_UUID, capability="post_tweet", category="write", intent="Post a text tweet to X/Twitter"),
-    ToolIdentity(tool_id=POST_TWEET_IMAGE_UUID, capability="post_tweet_image", category="heavy", intent="Post a tweet with image to X/Twitter"),
+    ToolIdentity(tool_id=POST_TWEET_UUID, capability="post_tweet",
+                 title="Post a tweet", behavior=CREATES_REMOTE, category="write", intent="Post a text tweet to X/Twitter"),
+    ToolIdentity(tool_id=POST_TWEET_IMAGE_UUID, capability="post_tweet_image",
+                 title="Post a tweet with an image", behavior=CREATES_REMOTE, category="heavy", intent="Post a tweet with image to X/Twitter"),
     # Stored-post CRUD — reads cheap, writes pricier, create highest. These are
     # seed prices; the operator tunes them in the tollbooth-pricing-studio model.
-    ToolIdentity(tool_id=capability_uuid("get_post"), capability="get_post", category="read",
+    ToolIdentity(tool_id=capability_uuid("get_post"), capability="get_post",
+                 title="Read a post", behavior=READS, category="read",
                  intent="Read a stored post by id", pricing_hint_type="flat", pricing_hint_value=1),
-    ToolIdentity(tool_id=capability_uuid("list_posts"), capability="list_posts", category="read",
+    ToolIdentity(tool_id=capability_uuid("list_posts"), capability="list_posts",
+                 title="List posts", behavior=READS, category="read",
                  intent="List this patron's stored posts (paginated)", pricing_hint_type="flat", pricing_hint_value=1),
-    ToolIdentity(tool_id=capability_uuid("update_post"), capability="update_post", category="write",
+    ToolIdentity(tool_id=capability_uuid("update_post"), capability="update_post",
+                 title="Update a post", behavior=REPLACES, category="write",
                  intent="Patch a stored post (doc/schedule)", pricing_hint_type="flat", pricing_hint_value=3),
-    ToolIdentity(tool_id=capability_uuid("delete_post"), capability="delete_post", category="write",
+    ToolIdentity(tool_id=capability_uuid("delete_post"), capability="delete_post",
+                 title="Delete a post", behavior=DELETES, category="write",
                  intent="Archive or delete a stored post", pricing_hint_type="flat", pricing_hint_value=3),
-    ToolIdentity(tool_id=capability_uuid("create_post"), capability="create_post", category="write",
+    ToolIdentity(tool_id=capability_uuid("create_post"), capability="create_post",
+                 title="Create a post", behavior=CREATES, category="write",
                  intent="Store a new draft/scheduled post", pricing_hint_type="flat", pricing_hint_value=5),
     # Server-side refinement: the editor sends a flagged region + context; the
     # MCP calls the operator's model router with their vaulted key (never
     # exposed to the browser) and returns suggestions. Paid — the AI cost is a
     # metered tollbooth fare (refunded on no-key / upstream failure).
-    ToolIdentity(tool_id=capability_uuid("refine_post_region"), capability="refine_post_region",
-                 category="heavy", intent="Refine a flagged post region with an LLM (server-side, metered)",
+    ToolIdentity(tool_id=capability_uuid("refine_post_region"), capability="refine_post_region", category="heavy",
+                 title="Refine a post region", behavior=READS_REMOTE, intent="Refine a flagged post region with an LLM (server-side, metered)",
                  pricing_hint_type="flat", pricing_hint_value=25),
     # Resolve a *dynamic* post block: its text is a runnable prompt the model
     # executes (with web search) at post time / preview, weaving a fresh answer
     # into the surrounding tweet. Same posture as refine — operator's vaulted key,
     # metered as a paid fare, refunded on no-key / upstream failure. The scheduler
     # bills the owner for this per fire when a due post carries dynamic blocks.
-    ToolIdentity(tool_id=capability_uuid("resolve_dynamic_block"), capability="resolve_dynamic_block",
-                 category="heavy", intent="Resolve a dynamic post block's prompt with an LLM (server-side, metered)",
+    ToolIdentity(tool_id=capability_uuid("resolve_dynamic_block"), capability="resolve_dynamic_block", category="heavy",
+                 title="Resolve a dynamic block", behavior=CREATES_REMOTE, intent="Resolve a dynamic post block's prompt with an LLM (server-side, metered)",
                  pricing_hint_type="flat", pricing_hint_value=25),
     # Free companion that redeems a resolve_dynamic_block claim check — polling is
     # free (the fare was charged on the start call).
-    ToolIdentity(tool_id=capability_uuid("fetch_dynamic_block"), capability="fetch_dynamic_block",
-                 category="free", intent="Redeem a resolve_dynamic_block claim check for the resolved fragment"),
+    ToolIdentity(tool_id=capability_uuid("fetch_dynamic_block"), capability="fetch_dynamic_block", category="free",
+                 title="Fetch a dynamic block", behavior=WRITES_REMOTE, intent="Redeem a resolve_dynamic_block claim check for the resolved fragment"),
     # Snippet library — reusable openings/footers/CTAs the patron saves once and
     # drops into the editor (favorites become one-click chiclets). Free: managing
     # your own snippets carries no fare, but every call is proof-gated and
     # npub-scoped, so a patron only ever touches their own.
-    ToolIdentity(tool_id=capability_uuid("list_snippets"), capability="list_snippets",
-                 category="free", intent="List this patron's saved post snippets"),
-    ToolIdentity(tool_id=capability_uuid("get_snippet"), capability="get_snippet",
-                 category="free", intent="Read one of this patron's saved snippets"),
+    ToolIdentity(tool_id=capability_uuid("list_snippets"), capability="list_snippets", category="free",
+                 title="List snippets", behavior=READS, intent="List this patron's saved post snippets"),
+    ToolIdentity(tool_id=capability_uuid("get_snippet"), capability="get_snippet", category="free",
+                 title="Read a snippet", behavior=READS, intent="Read one of this patron's saved snippets"),
     # Reads the connected X account's handle/name for personalization (the editor
     # tweet-card preview). Free + proof-gated to the npub owner.
-    ToolIdentity(tool_id=capability_uuid("get_x_profile"), capability="get_x_profile",
-                 category="free", intent="Read your connected X account handle"),
+    ToolIdentity(tool_id=capability_uuid("get_x_profile"), capability="get_x_profile", category="free",
+                 title="X profile", behavior=READS_REMOTE, intent="Read your connected X account handle"),
     # Publish a public Nostr note (kind 1) authored by the caller's proven npub.
     # eXcalibur can't sign as the patron (it never holds their nsec), so it mints
     # a fresh ephemeral "scribe" key per note, signs with it, and p-tags the
     # proven author — landing the note in the author's own mentions (the
     # repudiation channel). A write: seed-priced flat, tuned in Pricing Studio.
-    ToolIdentity(tool_id=capability_uuid("post_nostr_message"), capability="post_nostr_message",
-                 category="write", intent="Publish a public Nostr note on behalf of your proven npub via an ephemeral scribe key",
+    ToolIdentity(tool_id=capability_uuid("post_nostr_message"), capability="post_nostr_message", category="write",
+                 title="Post a Nostr note", behavior=CREATES_REMOTE, intent="Publish a public Nostr note on behalf of your proven npub via an ephemeral scribe key",
                  pricing_hint_type="flat", pricing_hint_value=5),
-    ToolIdentity(tool_id=capability_uuid("save_snippet"), capability="save_snippet",
-                 category="free", intent="Create or update a saved post snippet"),
-    ToolIdentity(tool_id=capability_uuid("delete_snippet"), capability="delete_snippet",
-                 category="free", intent="Delete a saved post snippet"),
+    ToolIdentity(tool_id=capability_uuid("save_snippet"), capability="save_snippet", category="free",
+                 title="Save a snippet", behavior=SAVES, intent="Create or update a saved post snippet"),
+    ToolIdentity(tool_id=capability_uuid("delete_snippet"), capability="delete_snippet", category="free",
+                 title="Delete a snippet", behavior=DELETES, intent="Delete a saved post snippet"),
     # Conversation leads — find X questioners the patron could answer with a
     # marketing reply. The search is `heavy` because every post X returns is
     # billed to the OPERATOR's X project ($0.005/post, pay-per-use); the seed
     # fare is a placeholder the operator tunes in Pricing Studio. Paging the
     # stored result, setting a lead's status and keeping the saved-query catalog
     # are free: proof-gated and npub-scoped like Snippets. Read-only on X.
-    ToolIdentity(tool_id=capability_uuid("find_conversations"), capability="find_conversations",
-                 category="heavy", intent="Search X for questioners you could answer; score and store them",
+    ToolIdentity(tool_id=capability_uuid("find_conversations"), capability="find_conversations", category="heavy",
+                 title="Find conversations", behavior=SEARCHES_X, intent="Search X for questioners you could answer; score and store them",
                  pricing_hint_type="flat", pricing_hint_value=25),
     # The patron's own reply into a lead's thread — they wrote it, they pressed
     # Post; eXcalibur carries it with their token and flips the lead to engaged
     # on X's confirmation. A write, seed-priced like post_tweet.
-    ToolIdentity(tool_id=capability_uuid("reply_to_conversation"), capability="reply_to_conversation",
-                 category="write", intent="Post your reply into a lead's thread on X and mark it engaged",
+    ToolIdentity(tool_id=capability_uuid("reply_to_conversation"), capability="reply_to_conversation", category="write",
+                 title="Reply to a conversation", behavior=CREATES_REMOTE, intent="Post your reply into a lead's thread on X and mark it engaged",
                  pricing_hint_type="flat", pricing_hint_value=3),
-    ToolIdentity(tool_id=capability_uuid("list_conversations"), capability="list_conversations",
-                 category="free", intent="Page through this patron's stored conversation leads"),
-    ToolIdentity(tool_id=capability_uuid("set_conversation_status"), capability="set_conversation_status",
-                 category="free", intent="Mark a conversation lead new, seen, engaged or dismissed"),
-    ToolIdentity(tool_id=capability_uuid("list_conversation_queries"), capability="list_conversation_queries",
-                 category="free", intent="List this patron's saved conversation queries"),
-    ToolIdentity(tool_id=capability_uuid("save_conversation_query"), capability="save_conversation_query",
-                 category="free", intent="Create or update a saved conversation query"),
-    ToolIdentity(tool_id=capability_uuid("delete_conversation_query"), capability="delete_conversation_query",
-                 category="free", intent="Delete a saved conversation query (its leads are kept)"),
+    ToolIdentity(tool_id=capability_uuid("list_conversations"), capability="list_conversations", category="free",
+                 title="List conversations", behavior=READS, intent="Page through this patron's stored conversation leads"),
+    ToolIdentity(tool_id=capability_uuid("set_conversation_status"), capability="set_conversation_status", category="free",
+                 title="Set a conversation's status", behavior=REPLACES, intent="Mark a conversation lead new, seen, engaged or dismissed"),
+    ToolIdentity(tool_id=capability_uuid("list_conversation_queries"), capability="list_conversation_queries", category="free",
+                 title="List conversation queries", behavior=READS, intent="List this patron's saved conversation queries"),
+    ToolIdentity(tool_id=capability_uuid("save_conversation_query"), capability="save_conversation_query", category="free",
+                 title="Save a conversation query", behavior=SAVES, intent="Create or update a saved conversation query"),
+    ToolIdentity(tool_id=capability_uuid("delete_conversation_query"), capability="delete_conversation_query", category="free",
+                 title="Delete a conversation query", behavior=DELETES, intent="Delete a saved conversation query (its leads are kept)"),
     # Writing Voice — the patron's per-npub voice profile + "banned construction"
     # chips the editor feeds to refine_post_region. A singleton per npub (one
     # Voice, upserted). Priceable (read/write), proof-gated, owner-scoped — they
     # carry no pricing hint, so they begin unpriced (TBD) and the operator sets a
     # price (or 0/free) in Pricing Studio like any new tool.
-    ToolIdentity(tool_id=capability_uuid("get_voice"), capability="get_voice",
-                 category="read", intent="Read this patron's saved writing Voice"),
-    ToolIdentity(tool_id=capability_uuid("save_voice"), capability="save_voice",
-                 category="write", intent="Save this patron's writing Voice (profile + banned constructions)"),
+    ToolIdentity(tool_id=capability_uuid("get_voice"), capability="get_voice", category="read",
+                 title="Read your Voice", behavior=READS, intent="Read this patron's saved writing Voice"),
+    ToolIdentity(tool_id=capability_uuid("save_voice"), capability="save_voice", category="write",
+                 title="Save your Voice", behavior=REPLACES, intent="Save this patron's writing Voice (profile + banned constructions)"),
     # Operator-only cron entrypoint — fires due scheduled posts. `restricted`
     # gates it to the operator npub (verified by proof) and bills nothing for
     # the trigger itself; each fired post bills its own owner for post_tweet.
-    ToolIdentity(tool_id=capability_uuid("process_scheduled_posts"), capability="process_scheduled_posts",
-                 category="restricted", intent="Operator: publish all due scheduled posts"),
+    ToolIdentity(tool_id=capability_uuid("process_scheduled_posts"), capability="process_scheduled_posts", category="restricted",
+                 title="Publish due posts", behavior=CREATES_REMOTE, intent="Operator: publish all due scheduled posts"),
     # Read the scheduler-tick audit ring (powers the FE debug log's view of what
     # the cron Worker is doing). `free` + proof-gated: the OPERATOR sees every
     # tick in full; any other proven patron sees the global heartbeat plus only
     # the per-post outcomes for THEIR OWN posts (owner-scoped server-side).
-    ToolIdentity(tool_id=capability_uuid("get_scheduler_log"), capability="get_scheduler_log",
-                 category="free", intent="Read recent scheduler-tick outcomes for your posts"),
+    ToolIdentity(tool_id=capability_uuid("get_scheduler_log"), capability="get_scheduler_log", category="free",
+                 title="Scheduler log", behavior=READS, intent="Read recent scheduler-tick outcomes for your posts"),
     # What is the cron Worker waiting on? When its authorization lapses the Worker
     # DMs the operator a challenge phrase and parks. `restricted` gates this read
     # to the operator npub (the request is addressed to that npub — only its owner
     # may see it), no bill. The MCP reads the phrase from the Worker AS the
     # operator, so the human never signs anything in the browser.
-    ToolIdentity(tool_id=capability_uuid("scheduler_pending"), capability="scheduler_pending",
-                 category="restricted", intent="Operator: what the scheduler is waiting on"),
+    ToolIdentity(tool_id=capability_uuid("scheduler_pending"), capability="scheduler_pending", category="restricted",
+                 title="Scheduler pending request", behavior=READS_REMOTE, intent="Operator: what the scheduler is waiting on"),
     # The scheduler's configuration + current status (cadence, phase, renewal
     # window). `free` + proof-gated: global config, safe for any proven patron —
     # the pending phrase (operator-only) is scheduler_pending; the per-tick
     # traffic log is get_scheduler_log.
-    ToolIdentity(tool_id=capability_uuid("scheduler_status"), capability="scheduler_status",
-                 category="free", intent="Read the scheduler's configuration and status"),
+    ToolIdentity(tool_id=capability_uuid("scheduler_status"), capability="scheduler_status", category="free",
+                 title="Scheduler status", behavior=READS_REMOTE, intent="Read the scheduler's configuration and status"),
     # Poke the Worker to run one tick now — claims a pending proof reply
     # (completing authorization) and fires due posts. `free` + proof-gated: any
     # proven patron may say "go look now".
@@ -209,30 +242,31 @@ _DOMAIN_TOOLS = [
     # fire posts already due, or re-DM the operator. Nothing a patron gains by
     # asking the Worker to check early. The phrase itself stays operator-only —
     # that's `scheduler_pending`, and it is the anti-impostor gate.
-    ToolIdentity(tool_id=capability_uuid("scheduler_check_now"), capability="scheduler_check_now",
-                 category="free", intent="Ask the scheduler to run a tick now"),
+    ToolIdentity(tool_id=capability_uuid("scheduler_check_now"), capability="scheduler_check_now", category="free",
+                 title="Run the scheduler now", behavior=WRITES_REMOTE, intent="Ask the scheduler to run a tick now"),
     # The operator, who can see the Worker's pending request will never
     # complete, asks it to send a fresh one now. `restricted`: only the npub the
     # request is addressed to may throw it away — unlike check_now, this one
     # acts, and a patron re-issuing the operator's DM would be spam, not help.
-    ToolIdentity(tool_id=capability_uuid("scheduler_reissue"), capability="scheduler_reissue",
-                 category="restricted", intent="Operator: send the scheduler a fresh proof request"),
+    ToolIdentity(tool_id=capability_uuid("scheduler_reissue"), capability="scheduler_reissue", category="restricted",
+                 title="Reissue the scheduler request", behavior=REISSUES, intent="Operator: send the scheduler a fresh proof request"),
     # Post-metrics harvest + derived reach analytics (#321). Handlers were
     # exported via paid_tool but must also seed ToolIdentity rows so the
     # tollbooth dispatch UUID-join succeeds (without these: tool_not_registered).
     # Read tools mirror get_post; harvest mirrors process_scheduled_posts.
-    ToolIdentity(tool_id=capability_uuid("get_post_metrics"), capability="get_post_metrics",
-                 category="read", intent="Read the raw metrics snapshot series for one owned post",
+    ToolIdentity(tool_id=capability_uuid("get_post_metrics"), capability="get_post_metrics", category="read",
+                 title="Post metrics", behavior=READS, intent="Read the raw metrics snapshot series for one owned post",
                  pricing_hint_type="flat", pricing_hint_value=1),
-    ToolIdentity(tool_id=capability_uuid("post_performance"), capability="post_performance",
-                 category="read", intent="Derived reach scores across harvested post metrics",
+    ToolIdentity(tool_id=capability_uuid("post_performance"), capability="post_performance", category="read",
+                 title="Post performance", behavior=READS_REMOTE, intent="Derived reach scores across harvested post metrics",
                  pricing_hint_type="flat", pricing_hint_value=1),
     ToolIdentity(tool_id=capability_uuid("post_performance_infographic"),
-                 capability="post_performance_infographic", category="read",
+                 capability="post_performance_infographic",
+                 title="Post performance infographic", behavior=READS_REMOTE, category="read",
                  intent="SVG infographic of post performance (gold-steel theme)",
                  pricing_hint_type="flat", pricing_hint_value=1),
-    ToolIdentity(tool_id=capability_uuid("harvest_metrics"), capability="harvest_metrics",
-                 category="restricted", intent="Operator: cadence-aware metrics harvest sweep"),
+    ToolIdentity(tool_id=capability_uuid("harvest_metrics"), capability="harvest_metrics", category="restricted",
+                 title="Harvest post metrics", behavior=WRITES_REMOTE, intent="Operator: cadence-aware metrics harvest sweep"),
 ]
 
 TOOL_REGISTRY: dict[str, ToolIdentity] = {ti.tool_id: ti for ti in _DOMAIN_TOOLS}
@@ -487,7 +521,8 @@ async def _x_api_error_to_response(exc: Any, npub: str = "") -> dict[str, Any]:
 @runtime.paid_tool(capability_uuid("post_tweet"), catch_errors=True)
 async def post_tweet(
     text: str,
-    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "", dpop_token: str = "",
+    npub: PatronNpub = "",
+    dpop_token: DpopToken = "",
 ) -> dict:
     """Post a text tweet with markdown formatting converted to Unicode rich text.
 
@@ -501,7 +536,6 @@ async def post_tweet(
 
     Args:
         text: Tweet content with optional markdown formatting.
-        npub: Your DPYC patron Nostr public key (npub1...) for credit attribution.
     """
     from excalibur_mcp.formatter import markdown_to_unicode
     from excalibur_mcp.x_client import XAPIError
@@ -524,8 +558,8 @@ async def post_tweet(
 @tool
 @runtime.paid_tool(capability_uuid("get_x_profile"), catch_errors=True)
 async def get_x_profile(
-    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
-    dpop_token: str = "",
+    npub: PatronNpub = "",
+    dpop_token: DpopToken = "",
 ) -> dict:
     """Fetch the connected X account's handle and name for this patron (free).
 
@@ -549,8 +583,8 @@ async def get_x_profile(
 @runtime.paid_tool(capability_uuid("post_nostr_message"), catch_errors=True)
 async def post_nostr_message(
     message: str,
-    npub: Annotated[str, Field(description="Required. Your PROVEN Nostr public key (npub1...). You are recorded as the note's author.")] = "",
-    dpop_token: str = "",
+    npub: PatronNpub = "",
+    dpop_token: DpopToken = "",
 ) -> dict:
     """Publish a public Nostr note (kind 1) authored by your proven npub.
 
@@ -571,9 +605,8 @@ async def post_nostr_message(
     one-relay publish never reads as a clean broadcast.
 
     Args:
-        message: The note text to publish.
-        npub: Your DPYC patron npub (npub1...) — proven, billed, and recorded as
-            the note's author.
+        message: The note text to publish. You (the proven npub) are recorded
+            as its author.
     """
     tool_id = capability_uuid("post_nostr_message")
     if not message.strip():
@@ -601,7 +634,8 @@ async def post_tweet_image(
     text: str,
     image_url: str = "",
     banner_svg: str = "",
-    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "", dpop_token: str = "",
+    npub: PatronNpub = "",
+    dpop_token: DpopToken = "",
 ) -> dict:
     """Post a tweet with a hero banner image to X/Twitter.
 
@@ -613,7 +647,6 @@ async def post_tweet_image(
         text: Tweet content with optional markdown formatting.
         image_url: URL of an image to attach to the tweet.
         banner_svg: Self-contained SVG markup string, converted to PNG.
-        npub: Your DPYC patron Nostr public key (npub1...) for credit attribution.
     """
     if not image_url and not banner_svg:
         return {"error": "Either image_url or banner_svg is required."}
@@ -671,7 +704,8 @@ async def create_post(
     client_req_id: str = "",
     tweet_url: str = "",
     title: str = "",
-    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "", dpop_token: str = "",
+    npub: PatronNpub = "",
+    dpop_token: DpopToken = "",
 ) -> dict:
     """Store a new post (draft or scheduled). Returns its ``post_id``.
 
@@ -693,14 +727,15 @@ async def create_post(
             ``publish_at``/``recurrence``/``cease_at`` — neither belongs in ``doc``.
         text_cache: Composed text (blocks joined) for scheduler + list excerpts.
         publish_at: ISO-8601 first/next publish time; required when status='scheduled'.
-        recurrence: ``{"freq": "daily|weekly|monthly", "interval": n}`` or null.
+        recurrence: ``{"freq": "daily|weekdays|weekly|monthly", "interval": n}``
+            (``interval`` a positive integer) or null.
         cease_at: ISO-8601 stop time for recurrence; null = open-ended.
-        status: ``draft`` or ``scheduled``.
+        status: ``draft``, ``scheduled`` or ``sent`` (a post already on X).
         client_req_id: Idempotency key — re-sending the same id returns the same
             post without a second charge.
-        title: Optional human label for the post; the list falls back to the
-            first body line when it is blank.
-        npub: Your DPYC patron Nostr public key for credit attribution.
+        title: Optional human label for the post (up to 200 characters); the
+            list falls back to the first body line when it is blank.
+        tweet_url: URL of the tweet on X, for a post created already ``sent``.
     """
     from excalibur_mcp.tools import posts as posts_tools
 
@@ -716,9 +751,14 @@ async def create_post(
 @runtime.paid_tool(capability_uuid("get_post"), catch_errors=True)
 async def get_post(
     post_id: str,
-    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "", dpop_token: str = "",
+    npub: PatronNpub = "",
+    dpop_token: DpopToken = "",
 ) -> dict:
-    """Read one stored post by id (owner-scoped)."""
+    """Read one stored post by id (owner-scoped).
+
+    Args:
+        post_id: The post's UUID, as returned by ``create_post`` or ``list_posts``.
+    """
     from excalibur_mcp.tools import posts as posts_tools
 
     return await posts_tools.get(runtime, capability_uuid("get_post"), post_id=post_id, npub=npub)
@@ -739,7 +779,8 @@ async def list_posts(
     template_id: str = "",
     sent_hour: int | None = None,
     time_zone: str = "",
-    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "", dpop_token: str = "",
+    npub: PatronNpub = "",
+    dpop_token: DpopToken = "",
 ) -> dict:
     """List your stored posts, server-side sorted, filtered, and offset-paginated.
 
@@ -757,7 +798,30 @@ async def list_posts(
     Performance time-of-day chart deep-link. ``page`` is 0-indexed; ``page_size``
     is 1..100. Each row carries ``is_recurring``, ``has_dynamic``, and
     ``template_id`` (set on sent occurrences).
-    Returns ``{posts:[…], total, page, page_size}`` reflecting the filtered set."""
+    Returns ``{posts:[…], total, page, page_size}`` reflecting the filtered set.
+
+    Args:
+        status: One status or a comma-separated set of ``draft``, ``scheduled``,
+            ``sent``, ``archived``; blank lists every status.
+        sort_col: Column to sort by: ``created``, ``updated``, ``status`` or
+            ``scheduled``.
+        sort_dir: ``asc`` or ``desc``.
+        page: 0-indexed page number.
+        page_size: Rows per page, 1..100.
+        search: Case-insensitive regular expression matched against the post
+            text; blank matches all.
+        date_from: Lower bound on ``date_field`` — ``YYYY-MM-DD`` or an ISO-8601
+            instant; blank for none.
+        date_to: Upper bound on ``date_field`` — ``YYYY-MM-DD`` (inclusive) or an
+            ISO-8601 instant (exclusive); blank for none.
+        date_field: The date the bounds apply to: ``created``, ``updated``,
+            ``scheduled`` or ``sent``.
+        template_id: UUID of a recurring post; keeps only the sent occurrences
+            it fired. Blank for no filter.
+        sent_hour: Local wall-clock hour 0..23 of ``last_sent_at`` in
+            ``time_zone``; null for no filter.
+        time_zone: IANA time zone (e.g. ``America/New_York``) for ``sent_hour``.
+    """
     from excalibur_mcp.tools import posts as posts_tools
 
     return await posts_tools.list_(
@@ -777,12 +841,25 @@ async def update_post(
     patch: dict,
     text_cache: str = "",
     client_req_id: str = "",
-    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "", dpop_token: str = "",
+    npub: PatronNpub = "",
+    dpop_token: DpopToken = "",
 ) -> dict:
     """Patch a stored post. ``patch`` may set ``doc, publish_at, recurrence,
     cease_at, status`` (omit a field to leave it unchanged). ``text_cache`` is
     written when supplied (alongside a doc change). ``client_req_id`` dedupes
-    debounced autosave retries — a repeat is a no-op with no second charge."""
+    debounced autosave retries — a repeat is a no-op with no second charge.
+
+    Args:
+        post_id: The post's UUID.
+        patch: Object of the fields to change, any of ``doc``, ``publish_at``,
+            ``recurrence``, ``cease_at``, ``status`` (``draft``, ``scheduled``,
+            ``archived``, ``sent``), ``tweet_url``, ``title``. Each value has
+            the same shape ``create_post`` takes.
+        text_cache: Composed text (blocks joined) to store with a ``doc``
+            change; blank leaves the stored text as it is.
+        client_req_id: Idempotency key for this edit; resending the last applied
+            id changes nothing and charges nothing.
+    """
     from excalibur_mcp.tools import posts as posts_tools
 
     return await posts_tools.update(
@@ -797,10 +874,17 @@ async def update_post(
 async def delete_post(
     post_id: str,
     hard: bool = False,
-    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "", dpop_token: str = "",
+    npub: PatronNpub = "",
+    dpop_token: DpopToken = "",
 ) -> dict:
     """Delete a stored post. Default is a soft delete (``status='archived'``);
-    pass ``hard=True`` to remove the row permanently."""
+    pass ``hard=True`` to remove the row permanently. The tweet on X, if any,
+    stays where it is.
+
+    Args:
+        post_id: The post's UUID.
+        hard: ``true`` removes the row permanently; ``false`` archives it.
+    """
     from excalibur_mcp.tools import posts as posts_tools
 
     return await posts_tools.delete(
@@ -825,8 +909,8 @@ async def list_snippets(
     date_from: str = "",
     date_to: str = "",
     date_field: str = "created",
-    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
-    dpop_token: str = "",
+    npub: PatronNpub = "",
+    dpop_token: DpopToken = "",
 ) -> dict:
     """List your saved post snippets, server-side sorted, filtered, and
     offset-paginated. ``sort_col`` is one of ``favorite|created|updated|name``
@@ -836,7 +920,22 @@ async def list_snippets(
     end-inclusive) or an ISO instant (patron-local midnight from the FE). Bound
     the ``date_field`` column, one of ``created|updated`` (default ``created``).
     ``page`` is 0-indexed; ``page_size`` is 1..200. Free, owner-scoped. Returns
-    ``{snippets:[…], total, page, page_size}`` reflecting the filtered set."""
+    ``{snippets:[…], total, page, page_size}`` reflecting the filtered set.
+
+    Args:
+        sort_col: Column to sort by: ``favorite``, ``created``, ``updated`` or
+            ``name``.
+        sort_dir: ``asc`` or ``desc``.
+        page: 0-indexed page number.
+        page_size: Rows per page, 1..200.
+        search: Case-insensitive regular expression matched against the
+            snippet name or body; blank matches all.
+        date_from: Lower bound on ``date_field`` — ``YYYY-MM-DD`` or an ISO-8601
+            instant; blank for none.
+        date_to: Upper bound on ``date_field`` — ``YYYY-MM-DD`` (inclusive) or an
+            ISO-8601 instant; blank for none.
+        date_field: The date the bounds apply to: ``created`` or ``updated``.
+    """
     from excalibur_mcp.tools import snippets as snippets_tools
 
     return await snippets_tools.list_(
@@ -849,12 +948,16 @@ async def list_snippets(
 @runtime.paid_tool(capability_uuid("get_snippet"), catch_errors=True)
 async def get_snippet(
     snippet_id: str,
-    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
-    dpop_token: str = "",
+    npub: PatronNpub = "",
+    dpop_token: DpopToken = "",
 ) -> dict:
     """Read one of your saved snippets by id (full row incl. ``doc`` block
     document). Free and owner-scoped. Returns ``{"success": true, "snippet": …}``
-    or ``snippet_not_found``."""
+    or ``snippet_not_found``.
+
+    Args:
+        snippet_id: The snippet's UUID.
+    """
     from excalibur_mcp.tools import snippets as snippets_tools
 
     return await snippets_tools.get(npub, snippet_id=snippet_id)
@@ -868,8 +971,8 @@ async def save_snippet(
     snippet_id: str = "",
     favorite: bool | None = None,
     doc: dict | None = None,
-    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
-    dpop_token: str = "",
+    npub: PatronNpub = "",
+    dpop_token: DpopToken = "",
 ) -> dict:
     """Save a reusable post snippet (opening/footer/CTA). Omit ``snippet_id`` to
     create a new one; pass it to update an existing snippet in place (name/text/
@@ -877,7 +980,18 @@ async def save_snippet(
     (leave it null) to keep it as-is, so a doc-only patch (e.g. toggling a snippet
     dynamic) doesn't reset it. ``doc`` is the same block/flag document a post
     carries, so the editor is identical for both. Free and owner-scoped. Returns
-    ``{"success": true, "snippet": …}``."""
+    ``{"success": true, "snippet": …}``.
+
+    Args:
+        name: The snippet's label, up to 120 characters. Required on create;
+            blank on update keeps the current name.
+        text: The snippet body, up to 8000 characters. Required on create;
+            blank on update keeps the current body.
+        snippet_id: UUID of the snippet to update; blank creates a new one.
+        favorite: ``true`` pins it as a one-click chiclet; null keeps the
+            current value on update (and means ``false`` on create).
+        doc: The block/flag document (same shape as a post's ``doc``), or null.
+    """
     from excalibur_mcp.tools import snippets as snippets_tools
 
     return await snippets_tools.save(
@@ -890,10 +1004,14 @@ async def save_snippet(
 @runtime.paid_tool(capability_uuid("delete_snippet"), catch_errors=True)
 async def delete_snippet(
     snippet_id: str,
-    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
-    dpop_token: str = "",
+    npub: PatronNpub = "",
+    dpop_token: DpopToken = "",
 ) -> dict:
-    """Delete one of your saved snippets by id. Free and owner-scoped."""
+    """Delete one of your saved snippets by id. Free and owner-scoped.
+
+    Args:
+        snippet_id: The snippet's UUID.
+    """
     from excalibur_mcp.tools import snippets as snippets_tools
 
     return await snippets_tools.delete(npub, snippet_id=snippet_id)
@@ -912,8 +1030,8 @@ async def find_conversations(
     max_posts: int = 100,
     weights: dict | None = None,
     safe_defaults: bool = True,
-    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "",
-    dpop_token: str = "",
+    npub: PatronNpub = "",
+    dpop_token: DpopToken = "",
 ) -> dict:
     """Search X's last 7 days for people asking something you could answer,
     score each thread 0..100, and store the result under your npub for
@@ -932,7 +1050,21 @@ async def find_conversations(
 
     Returns ``{posts_read, pages, new, refreshed, skipped_own, skipped_dupe,
     truncated_reason, top:[…]}``. Nothing is posted, liked or replied to —
-    the reply is yours to write and send by hand."""
+    the reply is yours to write and send by hand.
+
+    Args:
+        query_id: UUID of a saved query to run. Give this or ``query``.
+        query: An ad-hoc X search clause, up to 438 characters, with no ``?``
+            operator. Give this or ``query_id``.
+        max_posts: Most posts to read from X, 10..300.
+        weights: Scoring overrides for this call, an object whose keys are any
+            of ``need``, ``replies``, ``band``, ``spam``, ``reply``,
+            ``replies_min``, ``followers_min``, ``followers_max``,
+            ``decay_hours`` with integer values, laid over the saved query's
+            weights or the defaults; null adds no overrides.
+        safe_defaults: ``true`` appends ``-is:retweet -has:links -has:cashtags
+            lang:en`` to an ad-hoc ``query``; a saved query uses its own setting.
+    """
     from excalibur_mcp.tools import conversations as conversations_tools
 
     return await conversations_tools.find(
@@ -951,8 +1083,8 @@ async def find_conversations(
 async def reply_to_conversation(
     conversation_id: str,
     text: str,
-    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "",
-    dpop_token: str = "",
+    npub: PatronNpub = "",
+    dpop_token: DpopToken = "",
 ) -> dict:
     """Post your reply into one of your leads' threads on X (``conversation_id``
     is the row id from ``list_conversations``). ``text`` is up to 280 characters;
@@ -960,7 +1092,13 @@ async def reply_to_conversation(
     Posted with your own X token as a reply to the lead's post; on X's
     confirmation the lead is marked ``engaged`` and remembers the reply. A
     refused post changes nothing and refunds the fare. Returns
-    ``{reply:{tweet_id,url}, conversation}``."""
+    ``{reply:{tweet_id,url}, conversation}``.
+
+    Args:
+        conversation_id: The lead's row UUID (``id`` from ``list_conversations``).
+        text: Your reply, 1..280 characters, with optional markdown inline
+            formatting.
+    """
     from excalibur_mcp.tools import conversations as conversations_tools
 
     return await conversations_tools.reply(
@@ -987,8 +1125,8 @@ async def list_conversations(
     date_from: str = "",
     date_to: str = "",
     date_field: str = "found",
-    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
-    dpop_token: str = "",
+    npub: PatronNpub = "",
+    dpop_token: DpopToken = "",
 ) -> dict:
     """Page through your stored conversation leads, server-side sorted and
     filtered. ``query_id`` narrows to one saved query (``"adhoc"`` for leads from
@@ -999,7 +1137,27 @@ async def list_conversations(
     ``date_from``/``date_to`` bound ``date_field`` (``found|posted``). ``page``
     is 0-indexed; ``page_size`` is 1..100. Free, owner-scoped. Each row carries
     ``url`` — the thread on X — so you can open it without calling X yourself.
-    Returns ``{conversations:[…], total, page, page_size}``."""
+    Returns ``{conversations:[…], total, page, page_size}``.
+
+    Args:
+        query_id: UUID of a saved query to narrow to, ``adhoc`` for leads from
+            ad-hoc searches, or blank for all.
+        status: Comma-separated statuses from ``new``, ``seen``, ``engaged``,
+            ``dismissed``; blank for all.
+        min_score: Lowest score to include, 0..100.
+        sort_col: Column to sort by: ``score``, ``found``, ``seen``, ``posted``,
+            ``replies`` or ``followers``.
+        sort_dir: ``asc`` or ``desc``.
+        page: 0-indexed page number.
+        page_size: Rows per page, 1..100.
+        search: Case-insensitive regular expression over the post text or
+            author handle; blank matches all.
+        date_from: Lower bound on ``date_field`` — ``YYYY-MM-DD`` or an ISO-8601
+            instant; blank for none.
+        date_to: Upper bound on ``date_field`` — ``YYYY-MM-DD`` or an ISO-8601
+            instant; blank for none.
+        date_field: The date the bounds apply to: ``found`` or ``posted``.
+    """
     from excalibur_mcp.tools import conversations as conversations_tools
 
     return await conversations_tools.list_(
@@ -1014,12 +1172,17 @@ async def list_conversations(
 async def set_conversation_status(
     conversation_id: str,
     status: str,
-    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
-    dpop_token: str = "",
+    npub: PatronNpub = "",
+    dpop_token: DpopToken = "",
 ) -> dict:
     """Mark one of your leads ``new|seen|engaged|dismissed`` by its row id (the
     ``id`` from ``list_conversations``, not X's conversation id). A re-run of
-    the search never changes a status you set. Free and owner-scoped."""
+    the search never changes a status you set. Free and owner-scoped.
+
+    Args:
+        conversation_id: The lead's row UUID (``id`` from ``list_conversations``).
+        status: One of ``new``, ``seen``, ``engaged``, ``dismissed``.
+    """
     from excalibur_mcp.tools import conversations as conversations_tools
 
     return await conversations_tools.set_status(
@@ -1030,8 +1193,8 @@ async def set_conversation_status(
 @tool
 @runtime.paid_tool(capability_uuid("list_conversation_queries"), catch_errors=True)
 async def list_conversation_queries(
-    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
-    dpop_token: str = "",
+    npub: PatronNpub = "",
+    dpop_token: DpopToken = "",
 ) -> dict:
     """List your saved conversation queries with their last-run watermarks.
     Free and owner-scoped. Returns ``{queries:[…]}``."""
@@ -1048,15 +1211,29 @@ async def save_conversation_query(
     query_id: str = "",
     weights: dict | None = None,
     safe_defaults: bool | None = None,
-    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
-    dpop_token: str = "",
+    npub: PatronNpub = "",
+    dpop_token: DpopToken = "",
 ) -> dict:
     """Save a named X search clause to run with ``find_conversations``. Omit
     ``query_id`` to create; pass it to update in place — only the fields you pass
     change, and a changed ``query`` resets the last-run watermark. ``weights``
     holds only the scoring values you override. At most 50 saved queries per
     npub; names are unique per npub. Free and owner-scoped. Returns
-    ``{"success": true, "query": …}``."""
+    ``{"success": true, "query": …}``.
+
+    Args:
+        name: The query's name, up to 120 characters and unique among your
+            queries. Required on create; blank on update keeps it.
+        query: The X search clause, up to 438 characters, with no ``?``
+            operator. Required on create; blank on update keeps it.
+        query_id: UUID of the query to update; blank creates a new one.
+        weights: Scoring overrides to store, an object whose keys are any of
+            ``need``, ``replies``, ``band``, ``spam``, ``reply``,
+            ``replies_min``, ``followers_min``, ``followers_max``,
+            ``decay_hours`` with integer values; null keeps the current ones.
+        safe_defaults: ``true`` appends X's safe-default filters when the query
+            runs; null keeps the current value (and means ``true`` on create).
+    """
     from excalibur_mcp.tools import conversations as conversations_tools
 
     return await conversations_tools.save_query(
@@ -1069,11 +1246,15 @@ async def save_conversation_query(
 @runtime.paid_tool(capability_uuid("delete_conversation_query"), catch_errors=True)
 async def delete_conversation_query(
     query_id: str,
-    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
-    dpop_token: str = "",
+    npub: PatronNpub = "",
+    dpop_token: DpopToken = "",
 ) -> dict:
     """Delete one of your saved conversation queries. The leads it found are
-    kept (they become ad-hoc leads). Free and owner-scoped."""
+    kept (they become ad-hoc leads). Free and owner-scoped.
+
+    Args:
+        query_id: The saved query's UUID.
+    """
     from excalibur_mcp.tools import conversations as conversations_tools
 
     return await conversations_tools.delete_query(npub, query_id=query_id)
@@ -1087,8 +1268,8 @@ async def delete_conversation_query(
 @tool
 @runtime.paid_tool(capability_uuid("get_voice"), catch_errors=True)
 async def get_voice(
-    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
-    dpop_token: str = "",
+    npub: PatronNpub = "",
+    dpop_token: DpopToken = "",
 ) -> dict:
     """Read your saved writing Voice — a profile blurb plus a list of "banned
     construction" chips (``{text, on}``) the editor passes to
@@ -1106,15 +1287,22 @@ async def get_voice(
 async def save_voice(
     profile: str = "",
     bans: list | None = None,
-    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
-    dpop_token: str = "",
+    npub: PatronNpub = "",
+    dpop_token: DpopToken = "",
 ) -> dict:
     """Save your writing Voice (replaces the previous one — it is a per-npub
     singleton). ``profile`` is free text. ``bans`` is a list of ``{text, on}``
     objects: ``text`` is the construction to avoid, ``on`` whether it is an active
     constraint. Blank/duplicate entries are dropped server-side. Owner-scoped;
     priced by the operator's pricing model (use ``check_price``). Returns
-    ``{"success": true, "voice": {...}}``."""
+    ``{"success": true, "voice": {...}}``.
+
+    Args:
+        profile: Free-text description of your writing voice, up to 4000
+            characters.
+        bans: Up to 200 ``{"text": str, "on": bool}`` objects, each ``text`` up
+            to 200 characters; null saves an empty list.
+    """
     from excalibur_mcp.tools import voices as voices_tools
 
     return await voices_tools.save(npub, profile=profile, bans=bans)
@@ -1133,8 +1321,8 @@ async def refine_post_region(
     instruction: str = "",
     voice: str = "",
     bans: str = "",
-    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "",
-    dpop_token: str = "",
+    npub: PatronNpub = "",
+    dpop_token: DpopToken = "",
 ) -> dict:
     """Refine a flagged region of a post with an LLM — server-side.
 
@@ -1153,7 +1341,6 @@ async def refine_post_region(
         instruction: What the editor wants changed (optional).
         voice: Voice-profile text fed to the model (optional).
         bans: Banned constructions — JSON array or comma-separated (optional).
-        npub: Your DPYC patron npub for credit billing.
     """
     tool_id = capability_uuid("refine_post_region")
     if not region.strip():
@@ -1266,8 +1453,8 @@ async def resolve_dynamic_block(
                     "Bounds how long the job may run AND sets the poll cadence; "
                     "the operator may price it ad valorem.",
     )] = 210,
-    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...) for credit billing.")] = "",
-    dpop_token: str = "",
+    npub: PatronNpub = "",
+    dpop_token: DpopToken = "",
 ) -> dict:
     """Start resolving a dynamic post block with an LLM — returns a CLAIM CHECK.
 
@@ -1300,7 +1487,6 @@ async def resolve_dynamic_block(
             configured block ceiling; see config.resolve_block_budget_max_s). Sets the
             job's runtime ceiling and the poll cadence (first poll ~75% of it),
             and is available to the operator's pricing model for ad-valorem fares.
-        npub: Your DPYC patron npub for credit billing.
     """
     tool_id = capability_uuid("resolve_dynamic_block")
     if not prompt.strip():
@@ -1400,8 +1586,8 @@ async def resolve_dynamic_block(
 @runtime.paid_tool(capability_uuid("fetch_dynamic_block"), catch_errors=True)
 async def fetch_dynamic_block(
     claim_check: str,
-    npub: Annotated[str, Field(description="Required. Your Nostr public key (npub1...).")] = "",
-    dpop_token: str = "",
+    npub: PatronNpub = "",
+    dpop_token: DpopToken = "",
 ) -> dict:
     """Redeem a ``resolve_dynamic_block`` claim check (free, proof-gated).
 
@@ -1411,7 +1597,11 @@ async def fetch_dynamic_block(
     failure ``{"status": "error", ...}`` (the start fare is refunded); an unknown
     or aged-out claim returns ``{"status": "expired", ...}``. Owner-scoped — only
     the npub that started the job can redeem it. Also acts as the watchdog: a
-    stalled job is re-kicked when polled."""
+    stalled job is re-kicked when polled.
+
+    Args:
+        claim_check: The ``claim_check`` string ``resolve_dynamic_block`` returned.
+    """
     return await runtime.fetch_async_job(claim_check, npub)
 
 
@@ -1637,11 +1827,8 @@ runtime.register_job_runner("resolve_post_body", _resolve_post_body_runner)
 @tool
 @runtime.paid_tool(capability_uuid("harvest_metrics"), catch_errors=True)
 async def harvest_metrics(
-    npub: Annotated[
-        str,
-        Field(description="The OPERATOR's npub (npub1...); this tool is operator-only."),
-    ] = "",
-    dpop_token: str = "",
+    npub: PatronNpub = "",
+    dpop_token: DpopToken = "",
     requeue_dead_id: Annotated[
         str,
         Field(description="Optional dead-letter job UUID to requeue before the sweep."),
@@ -1670,8 +1857,8 @@ async def harvest_metrics(
 @runtime.paid_tool(capability_uuid("get_post_metrics"), catch_errors=True)
 async def get_post_metrics(
     post_id: Annotated[str, Field(description="The post UUID whose snapshot series to return.")],
-    npub: Annotated[str, Field(description="Your npub (npub1...).")] = "",
-    dpop_token: str = "",
+    npub: PatronNpub = "",
+    dpop_token: DpopToken = "",
 ) -> dict:
     """Patron: raw metrics snapshot series for one owned post.
 
@@ -1692,8 +1879,8 @@ async def get_post_metrics(
 @tool
 @runtime.paid_tool(capability_uuid("post_performance"), catch_errors=True)
 async def post_performance(
-    npub: Annotated[str, Field(description="Your npub (npub1...).")] = "",
-    dpop_token: str = "",
+    npub: PatronNpub = "",
+    dpop_token: DpopToken = "",
 ) -> dict:
     """Patron: derived reach scores across your harvested post corpus.
 
@@ -1715,8 +1902,8 @@ async def post_performance(
 @tool
 @runtime.paid_tool(capability_uuid("post_performance_infographic"), catch_errors=True)
 async def post_performance_infographic(
-    npub: Annotated[str, Field(description="Your npub (npub1...).")] = "",
-    dpop_token: str = "",
+    npub: PatronNpub = "",
+    dpop_token: DpopToken = "",
 ) -> dict:
     """Patron: SVG infographic of post performance (gold-steel theme).
 
@@ -1735,8 +1922,8 @@ async def post_performance_infographic(
 @tool
 @runtime.paid_tool(capability_uuid("process_scheduled_posts"), catch_errors=True)
 async def process_scheduled_posts(
-    npub: Annotated[str, Field(description="The OPERATOR's npub (npub1...); this tool is operator-only.")] = "",
-    dpop_token: str = "",
+    npub: PatronNpub = "",
+    dpop_token: DpopToken = "",
 ) -> dict:
     """Launch a publisher for every due post (operator-only).
 
@@ -1759,8 +1946,8 @@ async def process_scheduled_posts(
 @tool
 @runtime.paid_tool(capability_uuid("get_scheduler_log"), catch_errors=True)
 async def get_scheduler_log(
-    npub: Annotated[str, Field(description="Your npub (npub1...).")] = "",
-    dpop_token: str = "",
+    npub: PatronNpub = "",
+    dpop_token: DpopToken = "",
     limit: Annotated[int, Field(description="How many recent runs to return (1..100).")] = 25,
 ) -> dict:
     """Read recent scheduler-tick outcomes.
@@ -1787,8 +1974,8 @@ async def get_scheduler_log(
 @tool
 @runtime.paid_tool(capability_uuid("scheduler_pending"), catch_errors=True)
 async def scheduler_pending(
-    npub: Annotated[str, Field(description="The OPERATOR's npub (npub1...); this tool is operator-only.")] = "",
-    dpop_token: str = "",
+    npub: PatronNpub = "",
+    dpop_token: DpopToken = "",
 ) -> dict:
     """What is the scheduled-post cron Worker waiting on? (operator-only).
 
@@ -1826,8 +2013,8 @@ async def scheduler_pending(
 @tool
 @runtime.paid_tool(capability_uuid("scheduler_status"), catch_errors=True)
 async def scheduler_status(
-    npub: Annotated[str, Field(description="Your npub (npub1...).")] = "",
-    dpop_token: str = "",
+    npub: PatronNpub = "",
+    dpop_token: DpopToken = "",
 ) -> dict:
     """The scheduler's configuration and current status (free; any proven patron).
 
@@ -1872,8 +2059,8 @@ async def scheduler_status(
 @tool
 @runtime.paid_tool(capability_uuid("scheduler_check_now"), catch_errors=True)
 async def scheduler_check_now(
-    npub: Annotated[str, Field(description="Your npub (npub1...).")] = "",
-    dpop_token: str = "",
+    npub: PatronNpub = "",
+    dpop_token: DpopToken = "",
 ) -> dict:
     """Ask the scheduler to run one tick now (free; any proven patron).
 
@@ -1907,8 +2094,8 @@ async def scheduler_check_now(
 @tool
 @runtime.paid_tool(capability_uuid("scheduler_reissue"), catch_errors=True)
 async def scheduler_reissue(
-    npub: Annotated[str, Field(description="The OPERATOR's npub (npub1...); this tool is operator-only.")] = "",
-    dpop_token: str = "",
+    npub: PatronNpub = "",
+    dpop_token: DpopToken = "",
 ) -> dict:
     """Send the scheduler's proof request again, now (operator-only).
 
