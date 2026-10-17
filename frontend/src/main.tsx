@@ -14,6 +14,7 @@ configureTollbooth({
   slug: "excalibur",
   appName: "eXcalibur",
   mcpUrl: import.meta.env.VITE_MCP_URL as string,
+  operatorUrl: "https://excalibur-mcp.fastmcp.app",
   // The scheduler-log poll feeds the debug panel its own entries, and the
   // editor's @handle lookup is background personalization: logging either
   // call would only bury what the patron did.
