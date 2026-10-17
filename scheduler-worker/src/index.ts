@@ -442,7 +442,11 @@ function isCutOff(message: string): boolean {
 
 async function withClient<T>(url: string, fn: (call: Call) => Promise<T>): Promise<T> {
   const client = new Client({ name: "excalibur-scheduler", version: "1.0.0" }, { capabilities: {} });
-  const transport = new StreamableHTTPClientTransport(new URL(url));
+  // The MCP refuses a request with no bearer. The scheduler proves itself in
+  // its arguments, so it is an anonymous caller at the connection.
+  const transport = new StreamableHTTPClientTransport(new URL(url), {
+    requestInit: { headers: { Authorization: "Bearer anonymous" } },
+  });
   await client.connect(transport);
   const call: Call = async (name, args = {}) => {
     const res: any = await client.callTool(

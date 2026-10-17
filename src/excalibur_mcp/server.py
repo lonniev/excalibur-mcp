@@ -336,6 +336,9 @@ runtime = OperatorRuntime(
         + [e for e in [validate_required(creds.get("client_id", ""), "client_id")] if e]
         + [e for e in [validate_required(creds.get("client_secret", ""), "client_secret")] if e]
     ),
+    # Connections authenticate as holders: each npub proven through one stays
+    # with it, so tool calls pass only the npub.
+    holder_auth_url="https://excalibur-mcp.fastmcp.app",
 )
 
 # ---------------------------------------------------------------------------
