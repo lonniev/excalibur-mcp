@@ -40,11 +40,17 @@ def test_the_runner_is_the_operator_s_own_registered_runner():
     fork in behaviour here would be invisible locally, because nothing in this repo runs
     the Modal path.
     """
-    import inspect
+    import ast
+    import pathlib
 
-    import modal_app
-
-    body = inspect.getsource(modal_app.run_job.get_raw_f())
+    # Read the source, not the decorated object: Modal 1.6 dropped get_raw_f().
+    path = pathlib.Path(__file__).parent.parent / "modal_app.py"
+    source = path.read_text()
+    run_job = next(
+        n for n in ast.walk(ast.parse(source))
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "run_job"
+    )
+    body = ast.get_source_segment(source, run_job) or ""
     assert "_run_job" in body, "run_job must delegate to the runtime's own dispatch"
     assert "from excalibur_mcp import server" in body, (
         "the server import must stay INSIDE the function; at container import it would "
