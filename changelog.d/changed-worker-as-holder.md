@@ -1,0 +1,1 @@
+- The scheduler worker connects to the MCP as a *holder* (headless OAuth, tokens in KV); the operator npub is proven into the connection by the usual DM and `process_scheduled_posts` carries only the npub. The first tick after deploy asks the operator for one fresh DM approval.

@@ -19,9 +19,11 @@ the operator's nsec and does **not** bake a proof token into a secret — and it
 isn't even provisioned with the operator's npub. The MCP **is** the operator (it
 holds the nsec), so each tick the worker asks it "who are you?" via the free,
 unauthenticated `list_canonical_identities` tool, which returns `operator_npub`.
-It then runs the same Secure Courier dance the FE and the Claude.ai chat use, and
-caches only the short-lived token it gets back (in KV — the role localStorage
-plays for the FE):
+It connects as a *holder* — the OAuth connection Claude.ai uses, run headless:
+register, read the code from `/authorize`'s redirect, exchange it — and keeps
+only that connection's tokens in KV. It then runs the same Secure Courier dance
+the FE and the Claude.ai chat use, which proves the operator npub into the
+connection's wallet; the grant stays with the MCP:
 
 0. **Ask the MCP its npub** → `list_canonical_identities()` → `operator_npub`.
 1. **No/expired token** → `request_npub_proof(operator_npub)` sends a Secure
@@ -29,13 +31,13 @@ plays for the FE):
    without prior auth.)
 2. A **key-holder replies once** — the operator, via Pricing Studio or any
    nsec-holding agent. This reply is the consent.
-3. Next tick → `receive_npub_proof(operator_npub, poison)` returns a proof token
-   (≤30 days). It's **poison-scoped**, so polling only pops the matching reply —
-   it never drains other DMs.
-4. The token is cached in KV and used for `process_scheduled_posts`. Steady-state
-   ticks make no courier calls at all.
+3. Next tick → `receive_npub_proof(operator_npub, poison)` proves the npub into
+   the connection (≤30 days). It's **poison-scoped**, so polling only pops the
+   matching reply — it never drains other DMs.
+4. `process_scheduled_posts(npub)` names only the npub; the connection proves
+   it. Steady-state ticks make no courier calls at all.
 5. At expiry the cycle repeats (~monthly): one DM, one reply, done. A lapsed or
-   rejected token is cleared automatically; scheduled posts are never lost — they
+   rejected proof drops the connection; scheduled posts are never lost — they
    just wait for the next authorized tick.
 
 The only configuration is **public**: the MCP URL. The operator npub is

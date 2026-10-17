@@ -3,9 +3,10 @@
  *
  * A worker that wants to act on an npub's behalf is just another actor: it does
  * NOT store that npub's nsec or a baked proof token. It obtains authorization
- * the same way the FE and the Claude.ai chat do — the Secure Courier npub-proof
- * dance — and caches only the short-lived token it gets back (in KV, the way the
- * FE caches its proof in localStorage).
+ * the same way the FE and the Claude.ai chat do: it connects as a holder (see
+ * holder.ts) and the Secure Courier npub-proof dance proves the npub into that
+ * connection. It keeps only the connection's OAuth tokens, in KV; the grant
+ * stays with the MCP and a call names only the npub.
  *
  * It doesn't even carry the operator's npub. The MCP IS the operator (it holds
  * the operator nsec), so the worker just asks it "who are you?" via the free,
@@ -34,6 +35,8 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { nip19, verifyEvent } from "nostr-tools";
+
+import { forgetHolder, holderBearer } from "./holder";
 
 export interface Env {
   MCP_URL: string; // public streamable-HTTP endpoint
@@ -109,7 +112,9 @@ type ProofState =
   // an older build has no `issuedAt`; it is treated as unusable and re-requested
   // once, after which every state carries one. That is a single extra approval
   // at rollout, not a fallback path to maintain.
-  | { phase: "active"; token: string; expiresAt: number; issuedAt: number };
+  // The operator npub is held by this worker's holder connection until
+  // `expiresAt`; the grant itself stays with the MCP.
+  | { phase: "active"; expiresAt: number; issuedAt: number };
 
 type Call = <R = any>(name: string, args?: Record<string, unknown>) => Promise<R>;
 
@@ -210,7 +215,7 @@ async function pendingView(req: Request, env: Env): Promise<Response> {
   const proofRaw = new URL(req.url).searchParams.get("proof");
   if (!proofRaw) return json({ error: "proof_required" }, 401);
 
-  return withClient(env.MCP_URL, async (call) => {
+  return withClient(env, async (call) => {
     const whoami = await call("list_canonical_identities");
     const operatorNpub = String(whoami?.operator_npub ?? "");
     if (!operatorNpub.startsWith("npub1")) {
@@ -255,7 +260,7 @@ async function reissueView(req: Request, env: Env): Promise<Response> {
   }
   if (!proofRaw) return json({ error: "proof_required" }, 401);
 
-  return withClient(env.MCP_URL, async (call) => {
+  return withClient(env, async (call) => {
     const whoami = await call("list_canonical_identities");
     const operatorNpub = String(whoami?.operator_npub ?? "");
     if (!operatorNpub.startsWith("npub1")) {
@@ -326,7 +331,7 @@ async function tick(env: Env): Promise<string> {
   const state: ProofState | null = raw ? (JSON.parse(raw) as ProofState) : null;
   const now = Date.now();
 
-  return withClient(env.MCP_URL, async (call) => {
+  return withClient(env, async (call) => {
     // 0) Ask the MCP who it is — it holds the operator nsec, so it's the source
     // of truth for its own npub. Free, unauthenticated, no npub input.
     const whoami = await call("list_canonical_identities");
@@ -342,7 +347,7 @@ async function tick(env: Env): Promise<string> {
         const mins = Math.ceil((until - now) / 60_000);
         return `previous tick was cut off mid-flight and its posts may still be claimed; holding off ~${mins}m.`;
       }
-      return fire(call, env, operatorNpub, state.token);
+      return fire(call, env, operatorNpub);
     }
 
     // 2) Proof in flight → try to complete it (poison-scoped: safe to poll).
@@ -351,12 +356,10 @@ async function tick(env: Env): Promise<string> {
         patron_npub: operatorNpub,
         dpop_token: state.poison,
       });
-      if (r?.success && r?.dpop_token) {
+      if (r?.success && r?.held_by_connection) {
         const expiresAt = now + (Number(r.expires_in_seconds) || 0) * 1000;
-        await env.PROOF_KV.put(KEY, JSON.stringify({
-          phase: "active", token: r.dpop_token, expiresAt, issuedAt: now,
-        }));
-        return fire(call, env, operatorNpub, r.dpop_token);
+        await env.PROOF_KV.put(KEY, JSON.stringify({ phase: "active", expiresAt, issuedAt: now }));
+        return fire(call, env, operatorNpub);
       }
       const code = String(r?.error_code ?? "");
       // A challenge the service can no longer match is dead: a reply to it can
@@ -404,10 +407,10 @@ async function request(call: Call, env: Env, operatorNpub: string): Promise<stri
   return "Sent a proof-request DM to the operator npub — reply from a key-holder (Studio) to authorize the scheduler.";
 }
 
-async function fire(call: Call, env: Env, operatorNpub: string, dpopToken: string): Promise<string> {
+async function fire(call: Call, env: Env, operatorNpub: string): Promise<string> {
   let r: any;
   try {
-    r = await call("process_scheduled_posts", { npub: operatorNpub, dpop_token: dpopToken });
+    r = await call("process_scheduled_posts", { npub: operatorNpub });
   } catch (e) {
     const msg = (e as Error).message ?? String(e);
     // The edge in front of the MCP cuts a request long before our own callTool
@@ -421,11 +424,13 @@ async function fire(call: Call, env: Env, operatorNpub: string, dpopToken: strin
     }
     throw e;
   }
-  // If the token was rejected (expired/revoked), drop it so the next tick
-  // re-runs the proof dance rather than wedging on a dead token.
+  // The connection no longer holds the operator npub (expired, revoked or
+  // forgotten): drop it so the next tick connects afresh and asks again,
+  // rather than wedging on a dead grant.
   const code = String(r?.error_code ?? "").toLowerCase();
-  if (r?.success === false && (code.includes("proof") || code.includes("dpop_token"))) {
+  if (r?.success === false && code.includes("proof")) {
     await env.PROOF_KV.delete(KEY);
+    await forgetHolder(env.PROOF_KV);
     return `proof rejected (${code}); cleared — will re-request next tick.`;
   }
   await env.PROOF_KV.delete(INFLIGHT_KEY);
@@ -440,12 +445,12 @@ function isCutOff(message: string): boolean {
   return m.includes("524") || m.includes("504") || m.includes("timed out") || m.includes("timeout");
 }
 
-async function withClient<T>(url: string, fn: (call: Call) => Promise<T>): Promise<T> {
+async function withClient<T>(env: Env, fn: (call: Call) => Promise<T>): Promise<T> {
   const client = new Client({ name: "excalibur-scheduler", version: "1.0.0" }, { capabilities: {} });
-  // The MCP refuses a request with no bearer. The scheduler proves itself in
-  // its arguments, so it is an anonymous caller at the connection.
-  const transport = new StreamableHTTPClientTransport(new URL(url), {
-    requestInit: { headers: { Authorization: "Bearer anonymous" } },
+  // The worker's holder connection: it acts as whatever npub its wallet holds.
+  const bearer = await holderBearer(env.PROOF_KV, env.MCP_URL);
+  const transport = new StreamableHTTPClientTransport(new URL(env.MCP_URL), {
+    requestInit: { headers: { Authorization: `Bearer ${bearer}` } },
   });
   await client.connect(transport);
   const call: Call = async (name, args = {}) => {
