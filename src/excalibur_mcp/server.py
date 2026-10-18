@@ -27,7 +27,7 @@ from tollbooth.llm_route import error_message as llm_error_message
 from tollbooth.llm_route import llm_failure_situation
 from tollbooth.oauth_config import OAuthProviderConfig
 from tollbooth.oauth_situation import OAuthSituation
-from tollbooth.params import DpopToken, PatronNpub
+from tollbooth.params import PatronNpub
 from tollbooth.runtime import OperatorRuntime, register_standard_tools
 from tollbooth.tool_identity import (
     CREATES,
@@ -63,9 +63,9 @@ mcp = FastMCP(
         "   - Get your **patron npub** from the dpyc-oracle's how_to_join() tool — "
         "this is the npub you registered as a DPYC Citizen, your identity for credit operations\n"
         "   - Call `request_credential_channel(recipient_npub=<patron_npub>)` to receive a welcome DM "
-        "(the response includes a session phrase / poison)\n"
+        "(the response includes a session phrase, its nonce)\n"
         "   - Reply via your Nostr client with your X API credentials in JSON\n"
-        "   - Call `receive_credentials(sender_npub=<patron_npub>, service=<service>, poison=<session phrase>)` "
+        "   - Call `receive_credentials(sender_npub=<patron_npub>, service=<service>, nonce=<session phrase>)` "
         "to vault your credentials — all three are required\n\n"
         "## Credits Model\n\n"
         "Tool calls cost api_sats per call. Auth and balance tools are always free. "
@@ -525,7 +525,6 @@ async def _x_api_error_to_response(exc: Any, npub: str = "") -> dict[str, Any]:
 async def post_tweet(
     text: str,
     npub: PatronNpub = "",
-    dpop_token: DpopToken = "",
 ) -> dict:
     """Post a text tweet with markdown formatting converted to Unicode rich text.
 
@@ -562,7 +561,6 @@ async def post_tweet(
 @runtime.paid_tool(capability_uuid("get_x_profile"), catch_errors=True)
 async def get_x_profile(
     npub: PatronNpub = "",
-    dpop_token: DpopToken = "",
 ) -> dict:
     """Fetch the connected X account's handle and name for this patron (free).
 
@@ -587,7 +585,6 @@ async def get_x_profile(
 async def post_nostr_message(
     message: str,
     npub: PatronNpub = "",
-    dpop_token: DpopToken = "",
 ) -> dict:
     """Publish a public Nostr note (kind 1) authored by your proven npub.
 
@@ -638,7 +635,6 @@ async def post_tweet_image(
     image_url: str = "",
     banner_svg: str = "",
     npub: PatronNpub = "",
-    dpop_token: DpopToken = "",
 ) -> dict:
     """Post a tweet with a hero banner image to X/Twitter.
 
@@ -708,7 +704,6 @@ async def create_post(
     tweet_url: str = "",
     title: str = "",
     npub: PatronNpub = "",
-    dpop_token: DpopToken = "",
 ) -> dict:
     """Store a new post (draft or scheduled). Returns its ``post_id``.
 
@@ -755,7 +750,6 @@ async def create_post(
 async def get_post(
     post_id: str,
     npub: PatronNpub = "",
-    dpop_token: DpopToken = "",
 ) -> dict:
     """Read one stored post by id (owner-scoped).
 
@@ -783,7 +777,6 @@ async def list_posts(
     sent_hour: int | None = None,
     time_zone: str = "",
     npub: PatronNpub = "",
-    dpop_token: DpopToken = "",
 ) -> dict:
     """List your stored posts, server-side sorted, filtered, and offset-paginated.
 
@@ -845,7 +838,6 @@ async def update_post(
     text_cache: str = "",
     client_req_id: str = "",
     npub: PatronNpub = "",
-    dpop_token: DpopToken = "",
 ) -> dict:
     """Patch a stored post. ``patch`` may set ``doc, publish_at, recurrence,
     cease_at, status`` (omit a field to leave it unchanged). ``text_cache`` is
@@ -878,7 +870,6 @@ async def delete_post(
     post_id: str,
     hard: bool = False,
     npub: PatronNpub = "",
-    dpop_token: DpopToken = "",
 ) -> dict:
     """Delete a stored post. Default is a soft delete (``status='archived'``);
     pass ``hard=True`` to remove the row permanently. The tweet on X, if any,
@@ -913,7 +904,6 @@ async def list_snippets(
     date_to: str = "",
     date_field: str = "created",
     npub: PatronNpub = "",
-    dpop_token: DpopToken = "",
 ) -> dict:
     """List your saved post snippets, server-side sorted, filtered, and
     offset-paginated. ``sort_col`` is one of ``favorite|created|updated|name``
@@ -952,7 +942,6 @@ async def list_snippets(
 async def get_snippet(
     snippet_id: str,
     npub: PatronNpub = "",
-    dpop_token: DpopToken = "",
 ) -> dict:
     """Read one of your saved snippets by id (full row incl. ``doc`` block
     document). Free and owner-scoped. Returns ``{"success": true, "snippet": …}``
@@ -975,7 +964,6 @@ async def save_snippet(
     favorite: bool | None = None,
     doc: dict | None = None,
     npub: PatronNpub = "",
-    dpop_token: DpopToken = "",
 ) -> dict:
     """Save a reusable post snippet (opening/footer/CTA). Omit ``snippet_id`` to
     create a new one; pass it to update an existing snippet in place (name/text/
@@ -1008,7 +996,6 @@ async def save_snippet(
 async def delete_snippet(
     snippet_id: str,
     npub: PatronNpub = "",
-    dpop_token: DpopToken = "",
 ) -> dict:
     """Delete one of your saved snippets by id. Free and owner-scoped.
 
@@ -1034,7 +1021,6 @@ async def find_conversations(
     weights: dict | None = None,
     safe_defaults: bool = True,
     npub: PatronNpub = "",
-    dpop_token: DpopToken = "",
 ) -> dict:
     """Search X's last 7 days for people asking something you could answer,
     score each thread 0..100, and store the result under your npub for
@@ -1087,7 +1073,6 @@ async def reply_to_conversation(
     conversation_id: str,
     text: str,
     npub: PatronNpub = "",
-    dpop_token: DpopToken = "",
 ) -> dict:
     """Post your reply into one of your leads' threads on X (``conversation_id``
     is the row id from ``list_conversations``). ``text`` is up to 280 characters;
@@ -1129,7 +1114,6 @@ async def list_conversations(
     date_to: str = "",
     date_field: str = "found",
     npub: PatronNpub = "",
-    dpop_token: DpopToken = "",
 ) -> dict:
     """Page through your stored conversation leads, server-side sorted and
     filtered. ``query_id`` narrows to one saved query (``"adhoc"`` for leads from
@@ -1176,7 +1160,6 @@ async def set_conversation_status(
     conversation_id: str,
     status: str,
     npub: PatronNpub = "",
-    dpop_token: DpopToken = "",
 ) -> dict:
     """Mark one of your leads ``new|seen|engaged|dismissed`` by its row id (the
     ``id`` from ``list_conversations``, not X's conversation id). A re-run of
@@ -1197,7 +1180,6 @@ async def set_conversation_status(
 @runtime.paid_tool(capability_uuid("list_conversation_queries"), catch_errors=True)
 async def list_conversation_queries(
     npub: PatronNpub = "",
-    dpop_token: DpopToken = "",
 ) -> dict:
     """List your saved conversation queries with their last-run watermarks.
     Free and owner-scoped. Returns ``{queries:[…]}``."""
@@ -1215,7 +1197,6 @@ async def save_conversation_query(
     weights: dict | None = None,
     safe_defaults: bool | None = None,
     npub: PatronNpub = "",
-    dpop_token: DpopToken = "",
 ) -> dict:
     """Save a named X search clause to run with ``find_conversations``. Omit
     ``query_id`` to create; pass it to update in place — only the fields you pass
@@ -1250,7 +1231,6 @@ async def save_conversation_query(
 async def delete_conversation_query(
     query_id: str,
     npub: PatronNpub = "",
-    dpop_token: DpopToken = "",
 ) -> dict:
     """Delete one of your saved conversation queries. The leads it found are
     kept (they become ad-hoc leads). Free and owner-scoped.
@@ -1272,7 +1252,6 @@ async def delete_conversation_query(
 @runtime.paid_tool(capability_uuid("get_voice"), catch_errors=True)
 async def get_voice(
     npub: PatronNpub = "",
-    dpop_token: DpopToken = "",
 ) -> dict:
     """Read your saved writing Voice — a profile blurb plus a list of "banned
     construction" chips (``{text, on}``) the editor passes to
@@ -1291,7 +1270,6 @@ async def save_voice(
     profile: str = "",
     bans: list | None = None,
     npub: PatronNpub = "",
-    dpop_token: DpopToken = "",
 ) -> dict:
     """Save your writing Voice (replaces the previous one — it is a per-npub
     singleton). ``profile`` is free text. ``bans`` is a list of ``{text, on}``
@@ -1325,7 +1303,6 @@ async def refine_post_region(
     voice: str = "",
     bans: str = "",
     npub: PatronNpub = "",
-    dpop_token: DpopToken = "",
 ) -> dict:
     """Refine a flagged region of a post with an LLM — server-side.
 
@@ -1457,7 +1434,6 @@ async def resolve_dynamic_block(
                     "the operator may price it ad valorem.",
     )] = 210,
     npub: PatronNpub = "",
-    dpop_token: DpopToken = "",
 ) -> dict:
     """Start resolving a dynamic post block with an LLM — returns a CLAIM CHECK.
 
@@ -1590,7 +1566,6 @@ async def resolve_dynamic_block(
 async def fetch_dynamic_block(
     claim_check: str,
     npub: PatronNpub = "",
-    dpop_token: DpopToken = "",
 ) -> dict:
     """Redeem a ``resolve_dynamic_block`` claim check (free, proof-gated).
 
@@ -1831,7 +1806,6 @@ runtime.register_job_runner("resolve_post_body", _resolve_post_body_runner)
 @runtime.paid_tool(capability_uuid("harvest_metrics"), catch_errors=True)
 async def harvest_metrics(
     npub: PatronNpub = "",
-    dpop_token: DpopToken = "",
     requeue_dead_id: Annotated[
         str,
         Field(description="Optional dead-letter job UUID to requeue before the sweep."),
@@ -1861,7 +1835,6 @@ async def harvest_metrics(
 async def get_post_metrics(
     post_id: Annotated[str, Field(description="The post UUID whose snapshot series to return.")],
     npub: PatronNpub = "",
-    dpop_token: DpopToken = "",
 ) -> dict:
     """Patron: raw metrics snapshot series for one owned post.
 
@@ -1883,7 +1856,6 @@ async def get_post_metrics(
 @runtime.paid_tool(capability_uuid("post_performance"), catch_errors=True)
 async def post_performance(
     npub: PatronNpub = "",
-    dpop_token: DpopToken = "",
 ) -> dict:
     """Patron: derived reach scores across your harvested post corpus.
 
@@ -1906,7 +1878,6 @@ async def post_performance(
 @runtime.paid_tool(capability_uuid("post_performance_infographic"), catch_errors=True)
 async def post_performance_infographic(
     npub: PatronNpub = "",
-    dpop_token: DpopToken = "",
 ) -> dict:
     """Patron: SVG infographic of post performance (gold-steel theme).
 
@@ -1926,7 +1897,6 @@ async def post_performance_infographic(
 @runtime.paid_tool(capability_uuid("process_scheduled_posts"), catch_errors=True)
 async def process_scheduled_posts(
     npub: PatronNpub = "",
-    dpop_token: DpopToken = "",
 ) -> dict:
     """Launch a publisher for every due post (operator-only).
 
@@ -1950,7 +1920,6 @@ async def process_scheduled_posts(
 @runtime.paid_tool(capability_uuid("get_scheduler_log"), catch_errors=True)
 async def get_scheduler_log(
     npub: PatronNpub = "",
-    dpop_token: DpopToken = "",
     limit: Annotated[int, Field(description="How many recent runs to return (1..100).")] = 25,
 ) -> dict:
     """Read recent scheduler-tick outcomes.
@@ -1978,7 +1947,6 @@ async def get_scheduler_log(
 @runtime.paid_tool(capability_uuid("scheduler_pending"), catch_errors=True)
 async def scheduler_pending(
     npub: PatronNpub = "",
-    dpop_token: DpopToken = "",
 ) -> dict:
     """What is the scheduled-post cron Worker waiting on? (operator-only).
 
@@ -1986,8 +1954,9 @@ async def scheduler_pending(
     phrase and parks. This returns that pending phrase so the operator can match
     it against the DM before approving in Studio — the Device-Grant second
     surface for a headless actor. The phrase lives only in the Worker's KV (an
-    impostor can't inject it); we read it AS the operator (a kind-27235 signed
-    with the operator key), so the human never signs anything in the browser.
+    impostor can't inject it); we read it AS the operator (a request signed
+    with the operator key, NIP-98), so the human never signs anything in the
+    browser.
 
     ``restricted``: gated to the operator npub, free. Never returns the active
     session token. Returns ``{phase, code, reason, requestedAt}`` — ``phase`` is
@@ -1995,16 +1964,15 @@ async def scheduler_pending(
     be reached.
     """
     import httpx
-    from tollbooth.identity_proof import create_proof
+    from tollbooth.identity_proof import sign_request
 
-    # Sign as the operator with the Worker's expected u-tag. Not a real tool
-    # name — a sentinel the Worker checks literally, so this proof can't be
-    # replayed against any billable MCP tool.
-    proof = create_proof(runtime._get_nsec(), "excalibur_scheduler_pending")
+    # Signed as the operator for this one request (method, URL, empty body), so
+    # it authorizes reading the pending view and nothing else.
     url = f"{get_settings().scheduler_worker_url.rstrip('/')}/pending"
+    signed = sign_request(runtime._get_nsec(), method="GET", url=url, body=b"")
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(url, params={"proof": proof})
+            resp = await client.get(url, headers={"Authorization": signed})
         if resp.status_code != 200:
             return {"phase": "unavailable", "status": resp.status_code}
         return resp.json()
@@ -2017,7 +1985,6 @@ async def scheduler_pending(
 @runtime.paid_tool(capability_uuid("scheduler_status"), catch_errors=True)
 async def scheduler_status(
     npub: PatronNpub = "",
-    dpop_token: DpopToken = "",
 ) -> dict:
     """The scheduler's configuration and current status (free; any proven patron).
 
@@ -2063,7 +2030,6 @@ async def scheduler_status(
 @runtime.paid_tool(capability_uuid("scheduler_check_now"), catch_errors=True)
 async def scheduler_check_now(
     npub: PatronNpub = "",
-    dpop_token: DpopToken = "",
 ) -> dict:
     """Ask the scheduler to run one tick now (free; any proven patron).
 
@@ -2098,7 +2064,6 @@ async def scheduler_check_now(
 @runtime.paid_tool(capability_uuid("scheduler_reissue"), catch_errors=True)
 async def scheduler_reissue(
     npub: PatronNpub = "",
-    dpop_token: DpopToken = "",
 ) -> dict:
     """Send the scheduler's proof request again, now (operator-only).
 
@@ -2108,21 +2073,21 @@ async def scheduler_reissue(
     away instead of waiting out its hour. Approve the NEWEST DM in Studio, then
     ``scheduler_check_now``.
 
-    Signed as the operator with a sentinel ``u``-tag the Worker checks
-    literally, like ``scheduler_pending``, so the browser signs nothing. An
+    A request signed as the operator (NIP-98), like ``scheduler_pending``, so
+    the browser signs nothing. An
     already-authorized scheduler is left alone. ``restricted``: gated to the
     operator npub, free. Returns ``{success, phase, requestedAt, message}``.
     """
     import httpx
-    from tollbooth.identity_proof import create_proof
+    from tollbooth.identity_proof import sign_request
 
-    proof = create_proof(runtime._get_nsec(), "excalibur_scheduler_reissue")
     url = f"{get_settings().scheduler_worker_url.rstrip('/')}/reissue"
+    signed = sign_request(runtime._get_nsec(), method="POST", url=url, body=b"")
     try:
         # Long enough for the Worker to open a courier channel: it publishes the
         # challenge and reads it back before answering.
         async with httpx.AsyncClient(timeout=45) as client:
-            resp = await client.post(url, json={"proof": proof})
+            resp = await client.post(url, headers={"Authorization": signed})
         body = resp.json()
     except (httpx.HTTPError, ValueError):
         return {

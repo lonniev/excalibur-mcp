@@ -31,8 +31,8 @@ MCP_URL = "https://excalibur-mcp.fastmcp.app/mcp"
 # Use the canonical domain the operator actually visits.
 FE_URL = "https://excalibur.tollbooth-dpyc.com"
 
-# KV caches the protocol-issued, short-lived proof token (+ in-flight poison) —
-# the same role localStorage plays for the FE. Create the namespace and paste
+# KV keeps the scheduler's proof state (the in-flight nonce, then when the
+# proven connection lapses) and its OAuth connection tokens. Create the namespace and paste
 # its id here:
 #   wrangler kv namespace create PROOF_KV
 [[kv_namespaces]]
