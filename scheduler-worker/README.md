@@ -31,8 +31,8 @@ connection's wallet; the grant stays with the MCP:
    without prior auth.)
 2. A **key-holder replies once** — the operator, via Pricing Studio or any
    nsec-holding agent. This reply is the consent.
-3. Next tick → `receive_npub_proof(operator_npub, poison)` proves the npub into
-   the connection (≤30 days). It's **poison-scoped**, so polling only pops the
+3. Next tick → `receive_npub_proof(operator_npub, nonce)` proves the npub into
+   the connection (≤30 days). It's **nonce-scoped**, so polling only pops the
    matching reply — it never drains other DMs.
 4. `process_scheduled_posts(npub)` names only the npub; the connection proves
    it. Steady-state ticks make no courier calls at all.

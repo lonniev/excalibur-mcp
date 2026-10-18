@@ -34,7 +34,7 @@ export function waitingOnLine(
 /// next check, so the card can say so rather than ask the operator to wait.
 export const DEAD_CHALLENGE: ReadonlySet<string> = new Set([
   "courier_no_pending_record",
-  "courier_dpop_token_mismatch",
+  "courier_nonce_mismatch",
   "courier_token_expired",
   "courier_no_pinned_relay",
 ]);
@@ -43,7 +43,7 @@ const WORDS: Record<string, string> = {
   no_reply: "no reply yet",
   courier_not_found: "no matching reply on the relay yet",
   courier_relay_unreachable: "the relay the request went to did not answer",
-  courier_dpop_token_mismatch: "this request was replaced by a newer one, so it can't complete",
+  courier_nonce_mismatch: "this request was replaced by a newer one, so it can't complete",
   courier_no_pending_record: "the service has lost this request, so it can't complete",
   courier_token_expired: "this request expired, so it can't complete",
   courier_no_pinned_relay: "this request has no relay to read the reply from, so it can't complete",

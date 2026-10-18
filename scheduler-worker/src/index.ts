@@ -17,7 +17,7 @@
  *   0. Ask the MCP for its operator npub (list_canonical_identities).
  *   1. Valid cached token  → call process_scheduled_posts (steady state; no
  *      courier traffic at all).
- *   2. Pending proof       → receive_npub_proof (poison-scoped, so polling only
+ *   2. Pending proof       → receive_npub_proof (nonce-scoped, so polling only
  *      pops the matching reply — safe). On success, cache the token and fire.
  *      A check that can NEVER complete (the challenge was replaced, expired or
  *      lost its record) sends a fresh request at once rather than waiting out
@@ -74,18 +74,13 @@ const REASON =
   "eXcalibur's scheduled-post worker is asking to post the tweets you've queued, " +
   "on your behalf. Approving authorizes it for about 30 days; it renews roughly monthly.";
 
-// The `u`-tag the FE signs (and this worker checks) on the kind-27235 event
-// that gates GET /pending — the same inline-proof shape a paid tool call uses,
-// bound here to the pending-view "capability" rather than a tool name.
-const PENDING_U_TAG = "excalibur_scheduler_pending";
+// The operator-gated routes (GET /pending, POST /reissue) take a request the
+// MCP signs with the operator key (NIP-98: `Authorization: Nostr <base64
+// kind-27235>` whose tags bind the method, the URL and the body's sha256).
 const PROOF_KIND = 27235;
-const PENDING_PROOF_SKEW_S = 120; // clock-skew tolerance for the read gate
-// The operator asking for a fresh request — the same signed shape as the
-// pending read, bound to its own `u`-tag so a proof minted to READ the phrase
-// cannot be replayed to re-issue it, or the other way round.
-const REISSUE_U_TAG = "excalibur_scheduler_reissue";
-// The id of the last reissue proof honoured. A captured proof is good for its
-// skew window; this stops it being played again inside that window.
+const PENDING_PROOF_SKEW_S = 120; // clock-skew tolerance for the signature
+// The id of the last reissue signature honoured. A captured request is good
+// for its skew window; this stops it being played again inside that window.
 const REISSUE_LAST_KEY = "reissue_last_proof";
 
 // What `receive_npub_proof` says when THIS challenge can never complete — the
@@ -96,7 +91,7 @@ const REISSUE_LAST_KEY = "reissue_last_proof";
 // answer" (`courier_relay_unreachable`) are NOT here — those are worth waiting on.
 const DEAD_CHALLENGE = new Set([
   "courier_no_pending_record",
-  "courier_dpop_token_mismatch",
+  "courier_nonce_mismatch",
   "courier_token_expired",
   "courier_no_pinned_relay",
 ]);
@@ -105,7 +100,7 @@ const DEAD_CHALLENGE = new Set([
 type LastCheck = { at: number; code: string; error: string };
 
 type ProofState =
-  | { phase: "pending"; poison: string; requestedAt: number; reason: string; lastCheck?: LastCheck }
+  | { phase: "pending"; nonce: string; requestedAt: number; reason: string; lastCheck?: LastCheck }
   // `issuedAt` is what makes the renewal lead RELATIVE: without it the granted
   // lifetime is unknowable after the fact, and the only options are a constant
   // (the bug) or spending a token until the instant it dies. A state written by
@@ -206,14 +201,13 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-// GET /pending?proof=<url-encoded kind-27235 event JSON>. Returns the pending
-// challenge phrase ONLY to a caller proving they are the operator npub. The MCP
-// satisfies this by signing with the operator key it already holds — no shared
-// secret, just the identity the request is addressed to. The active bearer
+// GET /pending, signed by the operator npub. Returns the pending challenge
+// phrase ONLY to the operator. The MCP satisfies this by signing with the
+// operator key it already holds — no shared secret, just the identity the
+// request is addressed to. The active bearer
 // token is NEVER surfaced; the pending phrase is the string already DM'd.
 async function pendingView(req: Request, env: Env): Promise<Response> {
-  const proofRaw = new URL(req.url).searchParams.get("proof");
-  if (!proofRaw) return json({ error: "proof_required" }, 401);
+  if (!req.headers.get("authorization")) return json({ error: "proof_required" }, 401);
 
   return withClient(env, async (call) => {
     const whoami = await call("list_canonical_identities");
@@ -221,7 +215,7 @@ async function pendingView(req: Request, env: Env): Promise<Response> {
     if (!operatorNpub.startsWith("npub1")) {
       return json({ error: "operator_npub_unresolved" }, 502);
     }
-    if (!verifyOperatorProof(proofRaw, operatorNpub, PENDING_U_TAG)) {
+    if (!(await verifyOperatorRequest(req, "", operatorNpub))) {
       // Same 403 whether the signature is bad or the signer simply isn't the
       // operator — a non-operator learns nothing about the scheduler's state.
       return json({ error: "not_operator" }, 403);
@@ -232,7 +226,7 @@ async function pendingView(req: Request, env: Env): Promise<Response> {
     if (state?.phase === "pending") {
       return json({
         phase: "pending",
-        code: state.poison, // the phrase the operator matches against the DM
+        code: state.nonce, // the phrase the operator matches against the DM
         reason: state.reason,
         requestedAt: state.requestedAt,
         lastCheck: state.lastCheck ?? null,
@@ -243,22 +237,18 @@ async function pendingView(req: Request, env: Env): Promise<Response> {
   }).catch((e) => json({ error: `pending_view_failed: ${(e as Error).message}` }, 502));
 }
 
-// POST /reissue  {"proof": "<kind-27235 event JSON>"}. The operator, who can
-// see the pending request is not going to complete, asks for a fresh one NOW
-// instead of waiting out the hour. Gated exactly like /pending — the MCP signs
-// as the operator — but with its own `u`-tag, and each proof is honoured once.
+// POST /reissue, signed by the operator npub. The operator, who can see the
+// pending request is not going to complete, asks for a fresh one NOW instead of
+// waiting out the hour. Gated exactly like /pending — the signature binds this
+// route and method, so one signed for /pending cannot ask for a reissue — and
+// each signature is honoured once.
 //
 // An authorized scheduler is left alone: re-issuing would throw away a token
 // that works, and the renewal window already re-requests when one is due.
 async function reissueView(req: Request, env: Env): Promise<Response> {
   if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
-  let proofRaw = "";
-  try {
-    proofRaw = String(((await req.json()) as { proof?: unknown })?.proof ?? "");
-  } catch {
-    // An unreadable body is the same as no proof.
-  }
-  if (!proofRaw) return json({ error: "proof_required" }, 401);
+  if (!req.headers.get("authorization")) return json({ error: "proof_required" }, 401);
+  const body = await req.text();
 
   return withClient(env, async (call) => {
     const whoami = await call("list_canonical_identities");
@@ -266,7 +256,7 @@ async function reissueView(req: Request, env: Env): Promise<Response> {
     if (!operatorNpub.startsWith("npub1")) {
       return json({ error: "operator_npub_unresolved" }, 502);
     }
-    const ev = verifyOperatorProof(proofRaw, operatorNpub, REISSUE_U_TAG);
+    const ev = await verifyOperatorRequest(req, body, operatorNpub);
     if (!ev) return json({ error: "not_operator" }, 403);
     if ((await env.PROOF_KV.get(REISSUE_LAST_KEY)) === ev.id) {
       return json({ error: "proof_already_used" }, 409);
@@ -289,18 +279,23 @@ async function reissueView(req: Request, env: Env): Promise<Response> {
   }).catch((e) => json({ error: `reissue_failed: ${(e as Error).message}` }, 502));
 }
 
-// Verify a kind-27235 event authorizes one operator-gated action: valid Schnorr
-// signature, the action's own `u`-tag, fresh, and signed by the operator npub.
-// Keyless — signature verification needs no secret on the worker. Returns the
-// verified event (so a caller can remember its id), or null.
-function verifyOperatorProof(
-  proofRaw: string, operatorNpub: string, uTag: string,
-): { id: string } | null {
+// Verify a request is signed by the operator npub (NIP-98): a valid Schnorr
+// signature on a fresh kind-27235 event whose tags name this request's method,
+// URL path and body hash. Keyless — signature verification needs no secret on
+// the worker. Returns the verified event (so a caller can remember its id), or
+// null.
+async function verifyOperatorRequest(
+  req: Request, body: string, operatorNpub: string,
+): Promise<{ id: string } | null> {
   try {
-    const ev = JSON.parse(proofRaw);
+    const [scheme, value] = (req.headers.get("authorization") ?? "").split(" ", 2);
+    if (scheme?.toLowerCase() !== "nostr" || !value) return null;
+    const ev = JSON.parse(atob(value));
     if (ev?.kind !== PROOF_KIND) return null;
-    const u = (ev.tags ?? []).find((t: string[]) => t[0] === "u")?.[1];
-    if (u !== uTag) return null;
+    const tag = (name: string) => (ev.tags ?? []).find((t: string[]) => t[0] === name)?.[1];
+    if (tag("method") !== req.method) return null;
+    if (new URL(String(tag("u"))).pathname !== new URL(req.url).pathname) return null;
+    if (tag("payload") !== (await sha256Hex(body))) return null;
     const age = Math.floor(Date.now() / 1000) - Number(ev.created_at ?? 0);
     if (!Number.isFinite(age) || Math.abs(age) > PENDING_PROOF_SKEW_S) return null;
     const decoded = nip19.decode(operatorNpub);
@@ -309,6 +304,11 @@ function verifyOperatorProof(
   } catch {
     return null;
   }
+}
+
+async function sha256Hex(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 // Is this authorization still far enough from expiry to spend?
@@ -350,11 +350,11 @@ async function tick(env: Env): Promise<string> {
       return fire(call, env, operatorNpub);
     }
 
-    // 2) Proof in flight → try to complete it (poison-scoped: safe to poll).
+    // 2) Proof in flight → try to complete it (nonce-scoped: safe to poll).
     if (state?.phase === "pending") {
       const r = await call("receive_npub_proof", {
         patron_npub: operatorNpub,
-        dpop_token: state.poison,
+        nonce: state.nonce,
       });
       if (r?.success && r?.held_by_connection) {
         const expiresAt = now + (Number(r.expires_in_seconds) || 0) * 1000;
@@ -394,12 +394,12 @@ async function request(call: Call, env: Env, operatorNpub: string): Promise<stri
     reason: REASON,
     ...(env.FE_URL ? { verify_at: env.FE_URL } : {}),
   });
-  if (!r?.dpop_token) return `request_npub_proof returned no session phrase: ${JSON.stringify(r)}`;
+  if (!r?.nonce) return `request_npub_proof returned no session phrase: ${JSON.stringify(r)}`;
   await env.PROOF_KV.put(
     KEY,
     JSON.stringify({
       phase: "pending",
-      poison: r.dpop_token,
+      nonce: r.nonce,
       requestedAt: Date.now(),
       reason: REASON,
     }),

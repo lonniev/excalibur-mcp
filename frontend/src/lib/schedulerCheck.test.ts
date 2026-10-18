@@ -41,7 +41,7 @@ describe("the last check, as the operator reads it", () => {
   it("tells waiting apart from a request that can never complete", () => {
     assert.equal(lastCheckLine(check("courier_not_found"), NOW),
       "Last check 12 min ago: no matching reply on the relay yet.");
-    assert.equal(lastCheckLine(check("courier_dpop_token_mismatch", 0), NOW),
+    assert.equal(lastCheckLine(check("courier_nonce_mismatch", 0), NOW),
       "Last check just now: this request was replaced by a newer one, so it can't complete.");
     assert.equal(isDead(check("courier_not_found")), false);
     assert.equal(isDead(check("courier_token_expired")), true);
