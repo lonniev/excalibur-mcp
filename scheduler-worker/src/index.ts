@@ -17,7 +17,7 @@
  *   0. Ask the MCP for its operator npub (list_canonical_identities).
  *   1. Valid cached token  → call process_scheduled_posts (steady state; no
  *      courier traffic at all).
- *   2. Pending proof       → receive_npub_proof (poison-scoped, so polling only
+ *   2. Pending proof       → receive_npub_proof (nonce-scoped, so polling only
  *      pops the matching reply — safe). On success, cache the token and fire.
  *      A check that can NEVER complete (the challenge was replaced, expired or
  *      lost its record) sends a fresh request at once rather than waiting out
@@ -96,7 +96,7 @@ const REISSUE_LAST_KEY = "reissue_last_proof";
 // answer" (`courier_relay_unreachable`) are NOT here — those are worth waiting on.
 const DEAD_CHALLENGE = new Set([
   "courier_no_pending_record",
-  "courier_dpop_token_mismatch",
+  "courier_nonce_mismatch",
   "courier_token_expired",
   "courier_no_pinned_relay",
 ]);
@@ -105,7 +105,7 @@ const DEAD_CHALLENGE = new Set([
 type LastCheck = { at: number; code: string; error: string };
 
 type ProofState =
-  | { phase: "pending"; poison: string; requestedAt: number; reason: string; lastCheck?: LastCheck }
+  | { phase: "pending"; nonce: string; requestedAt: number; reason: string; lastCheck?: LastCheck }
   // `issuedAt` is what makes the renewal lead RELATIVE: without it the granted
   // lifetime is unknowable after the fact, and the only options are a constant
   // (the bug) or spending a token until the instant it dies. A state written by
@@ -232,7 +232,7 @@ async function pendingView(req: Request, env: Env): Promise<Response> {
     if (state?.phase === "pending") {
       return json({
         phase: "pending",
-        code: state.poison, // the phrase the operator matches against the DM
+        code: state.nonce, // the phrase the operator matches against the DM
         reason: state.reason,
         requestedAt: state.requestedAt,
         lastCheck: state.lastCheck ?? null,
@@ -350,11 +350,11 @@ async function tick(env: Env): Promise<string> {
       return fire(call, env, operatorNpub);
     }
 
-    // 2) Proof in flight → try to complete it (poison-scoped: safe to poll).
+    // 2) Proof in flight → try to complete it (nonce-scoped: safe to poll).
     if (state?.phase === "pending") {
       const r = await call("receive_npub_proof", {
         patron_npub: operatorNpub,
-        dpop_token: state.poison,
+        nonce: state.nonce,
       });
       if (r?.success && r?.held_by_connection) {
         const expiresAt = now + (Number(r.expires_in_seconds) || 0) * 1000;
@@ -394,12 +394,12 @@ async function request(call: Call, env: Env, operatorNpub: string): Promise<stri
     reason: REASON,
     ...(env.FE_URL ? { verify_at: env.FE_URL } : {}),
   });
-  if (!r?.dpop_token) return `request_npub_proof returned no session phrase: ${JSON.stringify(r)}`;
+  if (!r?.nonce) return `request_npub_proof returned no session phrase: ${JSON.stringify(r)}`;
   await env.PROOF_KV.put(
     KEY,
     JSON.stringify({
       phase: "pending",
-      poison: r.dpop_token,
+      nonce: r.nonce,
       requestedAt: Date.now(),
       reason: REASON,
     }),
