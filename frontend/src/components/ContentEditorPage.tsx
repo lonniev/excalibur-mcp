@@ -51,7 +51,7 @@ import {
   clearDraft, draftIsUnsaved, readDraft, saveError, writeDraft, type LocalDraft,
 } from "../lib/postDraft";
 import ReadinessBadge from "./ReadinessBadge";
-import { nextSweepSlot, type Flip } from "../lib/readiness";
+import { archivePrompt, nextSweepSlot, type Flip } from "../lib/readiness";
 
 type Kind = "post" | "snippet";
 type Freq = "none" | "daily" | "weekdays" | "weekly" | "monthly";
@@ -1008,8 +1008,8 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
       return;
     }
     if (isNew) { nav(listPath); return; }
-    if (!window.confirm("Archive this post?")) return;
-    try { await deletePost(id!, false); nav(listPath); } catch (e) { setError((e as Error).message); }
+    if (!window.confirm(archivePrompt(loadedStatus))) return;
+    try { await deletePost(id!, false, "Archived from the post editor"); nav(listPath); } catch (e) { setError((e as Error).message); }
   }
 
   // Compose the text to actually post: static blocks verbatim, each dynamic block

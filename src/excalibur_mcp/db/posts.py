@@ -76,6 +76,7 @@ _FULL_COLS = (
     "publish_at, recurrence, cease_at, last_sent_at, tweet_url, "
     "last_attempt_at, last_attempt_reason, last_attempt_detail, "
     "template_id::text AS template_id, "
+    "archived_at, archived_reason, "
     "created_at, updated_at"
 )
 
@@ -467,7 +468,8 @@ async def update_post(
     if patch.get("status") in ("scheduled", "draft"):
         set_parts.append(
             "resolve_attempts = 0, resolved_at = NULL, x_call_at = NULL, "
-            "last_attempt_reason = NULL, last_attempt_detail = NULL",
+            "last_attempt_reason = NULL, last_attempt_detail = NULL, "
+            "archived_at = NULL, archived_reason = NULL",
         )
 
     # Transitioning to "sent" (the FE's Post It) stamps the fire time server-side,
@@ -490,16 +492,22 @@ async def update_post(
     return row
 
 
-async def soft_delete(npub: str, post_id: str) -> dict[str, Any] | None:
-    """Archive a post (soft delete); return ``{post_id, status}``."""
+async def soft_delete(
+    npub: str, post_id: str, reason: str | None = None,
+) -> dict[str, Any] | None:
+    """Archive a post (soft delete), stamping when and why; return
+    ``{post_id, status, prior_status}``."""
     return await fetchrow(
         """
-        UPDATE posts SET status = 'archived', updated_at = NOW()
-        WHERE id = $2::uuid AND npub = $1
-        RETURNING id::text AS post_id, status
+        UPDATE posts p SET status = 'archived', archived_at = NOW(),
+               archived_reason = $3, updated_at = NOW()
+        FROM (SELECT id, status FROM posts WHERE id = $2::uuid AND npub = $1) prior
+        WHERE p.id = prior.id
+        RETURNING p.id::text AS post_id, p.status, prior.status AS prior_status
         """,
         npub,
         post_id,
+        reason,
     )
 
 

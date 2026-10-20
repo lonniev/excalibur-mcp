@@ -109,6 +109,12 @@ async def _ensure_domain_schema(vault: Any) -> None:
         f"ALTER TABLE {t('posts')} ADD COLUMN IF NOT EXISTS last_attempt_detail TEXT",
         f"ALTER TABLE {t('posts')} ADD COLUMN IF NOT EXISTS template_id UUID",
 
+        # Archive is the owner's "retire this post", and the only state with no
+        # scheduler path out. When and why it happened travel with the row, so
+        # a batch nobody remembers choosing can be traced and undone.
+        f"ALTER TABLE {t('posts')} ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ",
+        f"ALTER TABLE {t('posts')} ADD COLUMN IF NOT EXISTS archived_reason TEXT",
+
         # Two-phase publishing (resolve, then post). Only resolution is slow —
         # a dynamic block runs 90-210s against an LLM — while posting is one
         # HTTPS call and two row writes. Carrying both in one claim forced a
