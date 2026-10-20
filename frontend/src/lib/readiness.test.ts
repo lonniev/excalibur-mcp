@@ -2,7 +2,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { BADGE_LABEL, flipOf, nextSweepSlot } from "./readiness.ts";
+import { BADGE_LABEL, archivePrompt, flipOf, nextSweepSlot } from "./readiness.ts";
 
 describe("a person flips Draft ↔ Ready; the machine's states are read-only", () => {
   it("draft and scheduled flip into each other", () => {
@@ -15,9 +15,22 @@ describe("a person flips Draft ↔ Ready; the machine's states are read-only", (
     assert.equal(flipOf("sending"), "draft");
   });
 
-  it("resolving, resolved, sent and archived cannot be flipped", () => {
-    for (const s of ["resolving", "resolved", "sent", "archived", "nonsense"]) {
+  it("archived restores to Draft, never straight to Ready", () => {
+    assert.equal(flipOf("archived"), "draft");
+  });
+
+  it("resolving, resolved and sent cannot be flipped", () => {
+    for (const s of ["resolving", "resolved", "sent", "nonsense"]) {
       assert.equal(flipOf(s), null, s);
+    }
+  });
+
+  it("archiving a post still meant to go out asks more pointedly", () => {
+    for (const s of ["scheduled", "paused", "resolving", "resolved", "sending"]) {
+      assert.match(archivePrompt(s), /still scheduled/, s);
+    }
+    for (const s of ["draft", "sent"]) {
+      assert.equal(archivePrompt(s), "Archive this post?", s);
     }
   });
 

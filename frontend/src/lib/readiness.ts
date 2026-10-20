@@ -3,8 +3,8 @@
 // A post's `status` column carries eight values, but only two of them are the
 // author's to choose. "Draft" means the scheduler ignores it; "Ready" means it
 // is in the queue (`scheduled` on the wire). The rest — resolving, resolved,
-// sending, sent, archived — are the machine's own bookkeeping, and `paused` is
-// the machine asking for a decision. The badge shows every one; it toggles
+// sending, sent — are the machine's own bookkeeping, `paused` is the machine
+// asking for a decision, and `archived` is the owner's own "retire it". The badge shows every one; it toggles
 // only where a person may flip it.
 //
 // Before this module the flip lived in four controls on two surfaces: "Save
@@ -37,7 +37,23 @@ const FLIPS: Record<string, Flip> = {
   paused: "scheduled",
   // A claim that never finished. The only rescue is back to Draft.
   sending: "draft",
+  // Restore. Back to Draft, never straight to Ready: the owner looks at the
+  // post — and the next slot the server gave it — before it goes out again.
+  archived: "draft",
 };
+
+/**
+ * Statuses where a post is still meant to go out. Archiving one of these takes
+ * it out of rotation, so the confirm says so.
+ */
+const LIVE = new Set(["scheduled", "paused", "resolving", "resolved", "sending"]);
+
+/** The question to ask before archiving a post in `status`. */
+export function archivePrompt(status: string): string {
+  return LIVE.has(status)
+    ? "This post is still scheduled to go out. Archive it anyway?"
+    : "Archive this post?";
+}
 
 /** Where a flip from `status` lands, or null when the badge is read-only. */
 export function flipOf(status: string): Flip | null {

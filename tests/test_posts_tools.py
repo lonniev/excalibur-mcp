@@ -7,6 +7,7 @@ rules — a repeated client_req_id or a missing post must never leave the patron
 charged.
 """
 
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -226,6 +227,7 @@ async def test_update_idempotent_repeat_refunds_and_noops():
 async def test_update_not_found_refunds():
     rt = _runtime()
     with patch.object(posts_tools.posts_db, "current_req_id", AsyncMock(return_value=None)), \
+         patch.object(posts_tools.posts_db, "get_post", AsyncMock(return_value=None)), \
          patch.object(posts_tools.posts_db, "update_post", AsyncMock(return_value=None)):
         out = await posts_tools.update(
             rt, TOOL, post_id=PID, patch={"status": "draft"}, text_cache="",
@@ -247,11 +249,73 @@ async def test_soft_delete_not_found_refunds():
 @pytest.mark.asyncio
 async def test_soft_delete_ok():
     rt = _runtime()
-    with patch.object(posts_tools.posts_db, "soft_delete",
-                      AsyncMock(return_value={"post_id": PID, "status": "archived"})):
-        out = await posts_tools.delete(rt, TOOL, post_id=PID, hard=False, npub=NPUB)
-    assert out == {"post_id": PID, "status": "archived"}
+    sd = AsyncMock(return_value={"post_id": PID, "status": "archived", "prior_status": "scheduled"})
+    with patch.object(posts_tools.posts_db, "soft_delete", sd):
+        out = await posts_tools.delete(rt, TOOL, post_id=PID, hard=False, npub=NPUB,
+                                       reason="  owner retired it  ")
+    assert out == {"post_id": PID, "status": "archived", "prior_status": "scheduled"}
+    sd.assert_awaited_once_with(NPUB, PID, "owner retired it")
     rt.rollback_debit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_soft_delete_rejects_an_overlong_reason():
+    with pytest.raises(ValueError):
+        await posts_tools.delete(_runtime(), TOOL, post_id=PID, hard=False, npub=NPUB,
+                                 reason="x" * 501)
+
+
+# -- Archive has one door; Restore rejoins the post's own rhythm --------------
+
+@pytest.mark.asyncio
+async def test_update_refuses_to_archive_and_names_delete_post():
+    with pytest.raises(ValueError, match="delete_post"):
+        await posts_tools.update(
+            _runtime(), TOOL, post_id=PID, patch={"status": "archived"}, text_cache="",
+            client_req_id="", npub=NPUB,
+        )
+
+
+def _archived(publish_at, recurrence, cease_at=None):
+    return {"post_id": PID, "status": "archived", "publish_at": publish_at,
+            "recurrence": recurrence, "cease_at": cease_at}
+
+
+async def _restore(row, patch_in):
+    upd = AsyncMock(return_value={"post_id": PID, "status": patch_in["status"], "updated_at": ""})
+    with patch.object(posts_tools.posts_db, "get_post", AsyncMock(return_value=row)), \
+         patch.object(posts_tools.posts_db, "update_post", upd):
+        await posts_tools.update(_runtime(), TOOL, post_id=PID, patch=patch_in,
+                                 text_cache="", client_req_id="", npub=NPUB)
+    return upd.await_args.args[2]
+
+
+@pytest.mark.asyncio
+async def test_restore_moves_a_stale_recurring_slot_to_its_next_future_one():
+    # Archived on a 402 a week ago: restoring as-is would fire on the next tick.
+    week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).replace(hour=10, minute=0, second=0,
+                                                                        microsecond=0)
+    sent = await _restore(_archived(week_ago.isoformat(), {"freq": "daily", "interval": 1}),
+                          {"status": "draft"})
+    nxt = datetime.fromisoformat(sent["publish_at"])
+    assert nxt > datetime.now(timezone.utc)
+    assert (nxt.hour, nxt.minute) == (10, 0)
+
+
+@pytest.mark.asyncio
+async def test_restore_keeps_a_one_off_time_and_an_explicit_time():
+    one_off = await _restore(_archived("2020-10-13T10:00:00+00:00", None), {"status": "draft"})
+    assert "publish_at" not in one_off
+    named = await _restore(_archived("2020-10-13T10:00:00+00:00", {"freq": "daily"}),
+                           {"status": "draft", "publish_at": "2030-01-01T09:00:00+00:00"})
+    assert named["publish_at"] == "2030-01-01T09:00:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_restore_leaves_a_live_post_alone():
+    row = {**_archived("2020-10-13T10:00:00+00:00", {"freq": "daily"}), "status": "paused"}
+    resumed = await _restore(row, {"status": "scheduled"})
+    assert "publish_at" not in resumed
 
 
 # -- doc schema is documented inline (issue #235) ----------------------------

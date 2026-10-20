@@ -69,7 +69,13 @@ mcp = FastMCP(
         "to vault your credentials — all three are required\n\n"
         "## Credits Model\n\n"
         "Tool calls cost api_sats per call. Auth and balance tools are always free. "
-        "Use `check_balance` to see your balance. Top up via `purchase_credits`."
+        "Use `check_balance` to see your balance. Top up via `purchase_credits`.\n\n"
+        "## Archive is the owner's choice\n\n"
+        "Archive retires a post the owner means to forget. A failed send is never a "
+        "reason to archive: when X refuses a post for money (402), the scheduler "
+        "pauses it, and when api_sats or the LLM budget run low it waits. Those "
+        "posts resume once funded. Report a failure to the owner and leave the post "
+        "where it is. Archive only when the owner asks, and say why in `reason`."
     ),
 )
 # Structured onboarding guidance — included in error responses so a calling
@@ -848,8 +854,11 @@ async def update_post(
         post_id: The post's UUID.
         patch: Object of the fields to change, any of ``doc``, ``publish_at``,
             ``recurrence``, ``cease_at``, ``status`` (``draft``, ``scheduled``,
-            ``archived``, ``sent``), ``tweet_url``, ``title``. Each value has
-            the same shape ``create_post`` takes.
+            ``sent``), ``tweet_url``, ``title``. Each value has the same shape
+            ``create_post`` takes. Archive with ``delete_post``. Setting
+            ``draft`` or ``scheduled`` on an archived post restores it; a
+            recurring one with no ``publish_at`` in the patch moves to its next
+            future slot, so it never fires at once to catch up.
         text_cache: Composed text (blocks joined) to store with a ``doc``
             change; blank leaves the stored text as it is.
         client_req_id: Idempotency key for this edit; resending the last applied
@@ -869,21 +878,28 @@ async def update_post(
 async def delete_post(
     post_id: str,
     hard: bool = False,
+    reason: str = "",
     npub: PatronNpub = "",
 ) -> dict:
-    """Delete a stored post. Default is a soft delete (``status='archived'``);
-    pass ``hard=True`` to remove the row permanently. The tweet on X, if any,
-    stays where it is.
+    """Archive a stored post, or with ``hard=True`` remove it permanently. The
+    tweet on X, if any, stays where it is.
+
+    Archive is the owner's choice to retire a post, in any state. It is never a
+    response to a failed send: a post X refused for money (402), or one waiting
+    on api_sats or the LLM budget, resumes on its own once funded. Archive only
+    when the owner asks. ``update_post`` with ``status="draft"`` restores an
+    archived post.
 
     Args:
         post_id: The post's UUID.
         hard: ``true`` removes the row permanently; ``false`` archives it.
+        reason: Why the owner is archiving it, kept with the post (≤500 chars).
     """
     from excalibur_mcp.tools import posts as posts_tools
 
     return await posts_tools.delete(
         runtime, capability_uuid("delete_post"),
-        post_id=post_id, hard=hard, npub=npub,
+        post_id=post_id, hard=hard, reason=reason, npub=npub,
     )
 
 

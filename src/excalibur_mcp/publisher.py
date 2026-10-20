@@ -155,26 +155,44 @@ def _next_state(
     if slot is None:
         return "sent", None
 
-    ref = now or datetime.now(timezone.utc)
-    cease = _parse_iso(cease_at)
-
     nxt = _advance(slot, recurrence)
     if nxt is None:
         return "sent", None
+    nxt = upcoming_slot(nxt, recurrence, cease_at, now=now)
+    if nxt is None:
+        return "sent", None
+    return "scheduled", nxt
 
-    # Skip whole missed occurrences rather than scheduling into the past. Bounded
-    # so a malformed recurrence can never spin: a year of daily slots is far more
-    # than any real outage, and anything beyond it is a broken pattern, not a gap.
+
+def upcoming_slot(
+    slot: datetime,
+    recurrence: dict[str, Any],
+    cease_at: Any,
+    *,
+    now: datetime | None = None,
+) -> datetime | None:
+    """The first slot of ``recurrence`` at or after ``slot`` that lies after now.
+
+    ``slot`` itself counts when it is still ahead. Returns ``None`` when the
+    pattern runs past ``cease_at`` first, or is malformed.
+
+    Skips whole missed occurrences rather than scheduling into the past — a post
+    rejoins its own rhythm instead of firing at once to catch up. Bounded so a
+    malformed recurrence can never spin: a year of daily slots is far more than
+    any real outage, and anything beyond it is a broken pattern, not a gap.
+    """
+    ref = now or datetime.now(timezone.utc)
+    nxt: datetime | None = slot
     for _ in range(400):
         if nxt is None or nxt > ref:
             break
         nxt = _advance(nxt, recurrence)
     if nxt is None or nxt <= ref:
-        return "sent", None
-
+        return None
+    cease = _parse_iso(cease_at)
     if cease is not None and nxt > cease:
-        return "sent", None
-    return "scheduled", nxt
+        return None
+    return nxt
 
 
 # -- companion notes ------------------------------------------------

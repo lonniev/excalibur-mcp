@@ -1038,3 +1038,25 @@ async def test_a_clean_publication_carries_no_fallbacks_key(_stub_record):
         await publisher.publish_one(rt, "p1")
 
     assert "fallbacks" not in _stub_record.await_args.args[0]
+
+
+# -- upcoming_slot: the one walk Restore and the scheduler share ---------------
+
+def test_upcoming_slot_keeps_a_slot_still_ahead():
+    now = datetime(2026, 10, 20, 2, 30, tzinfo=timezone.utc)
+    slot = datetime(2026, 10, 20, 10, 0, tzinfo=timezone.utc)
+    assert publisher.upcoming_slot(slot, {"freq": "daily"}, None, now=now) == slot
+
+
+def test_upcoming_slot_skips_missed_weekdays_onto_the_next_real_one():
+    now = datetime(2026, 10, 24, 12, 0, tzinfo=timezone.utc)  # a Saturday
+    slot = datetime(2026, 10, 13, 10, 0, tzinfo=timezone.utc)
+    nxt = publisher.upcoming_slot(slot, {"freq": "weekdays"}, None, now=now)
+    assert nxt == datetime(2026, 10, 26, 10, 0, tzinfo=timezone.utc)  # Monday
+
+
+def test_upcoming_slot_honours_cease_at():
+    now = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc)
+    slot = datetime(2026, 10, 13, 10, 0, tzinfo=timezone.utc)
+    assert publisher.upcoming_slot(slot, {"freq": "daily"}, "2026-10-19T00:00:00+00:00",
+                                   now=now) is None

@@ -18,9 +18,11 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import datetime
 from typing import Any
 
 from excalibur_mcp.db import posts as posts_db
+from excalibur_mcp.publisher import _as_dict, _parse_iso, upcoming_slot
 from excalibur_mcp.tools._filters import validate_search
 
 logger = logging.getLogger(__name__)
@@ -29,10 +31,12 @@ logger = logging.getLogger(__name__)
 # scheduler after a fired post). It's valid on both create (compose → Post It on
 # a brand-new draft) and patch (Post It on an existing draft).
 _CREATE_STATUS = {"draft", "scheduled", "sent"}
-_PATCH_STATUS = {"draft", "scheduled", "archived", "sent"}
+# Archiving has one door, ``delete``, so every archive records when and why.
+_PATCH_STATUS = {"draft", "scheduled", "sent"}
 _PATCHABLE = {"doc", "publish_at", "recurrence", "cease_at", "status", "tweet_url", "title"}
 _FREQ = {"daily", "weekdays", "weekly", "monthly"}
 _TITLE_MAX = 200
+_ARCHIVE_REASON_MAX = 500
 
 
 # -- validation --------------------------------------------------------------
@@ -146,6 +150,8 @@ async def get(runtime: Any, tool_id: str, *, post_id: str, npub: str) -> dict[st
         "template_id": row.get("template_id") or None,
         "last_attempt_at": str(row["last_attempt_at"]) if row.get("last_attempt_at") else None,
         "last_attempt_reason": row.get("last_attempt_reason"),
+        "archived_at": str(row["archived_at"]) if row.get("archived_at") else None,
+        "archived_reason": row.get("archived_reason"),
         "created_at": str(row.get("created_at") or ""),
         "updated_at": str(row.get("updated_at") or ""),
     }
@@ -193,6 +199,8 @@ async def update(
     unknown = set(patch) - _PATCHABLE
     if unknown:
         raise ValueError(f"unknown patch keys: {sorted(unknown)}")
+    if patch.get("status") == "archived":
+        raise ValueError("archive a post with delete_post, which records why")
     if "status" in patch and patch["status"] not in _PATCH_STATUS:
         raise ValueError(f"status must be one of {sorted(_PATCH_STATUS)}")
     if "recurrence" in patch:
@@ -212,6 +220,8 @@ async def update(
                     "updated_at": str(cur.get("updated_at") or "") if cur else "",
                     "idempotent": True}
 
+    patch = await _restored(npub, pid, patch)
+
     row = await posts_db.update_post(
         npub, pid, patch,
         text_cache=text_cache if text_cache not in ("", None) else None,
@@ -225,10 +235,49 @@ async def update(
             "updated_at": str(row.get("updated_at") or "")}
 
 
+async def _restored(npub: str, pid: str, patch: dict[str, Any]) -> dict[str, Any]:
+    """Bring an archived recurring post back on its own rhythm.
+
+    An archived post still carries the publish time it had when it left. Put back
+    in play as-is, a time already past is due on the very next tick — a dozen
+    restored together would post in one burst. So a restore that names no time
+    of its own moves to the next slot of the post's recurrence. A one-off keeps
+    its time: when it should go out instead is the author's call, not ours.
+    """
+    if patch.get("status") not in ("draft", "scheduled") or "publish_at" in patch:
+        return patch
+    cur = await posts_db.get_post(npub, pid)
+    if not cur or cur.get("status") != "archived":
+        return patch
+    slot = cur.get("publish_at")
+    if not isinstance(slot, datetime):
+        slot = _parse_iso(slot)
+    recurrence = _as_dict(cur.get("recurrence"))
+    if slot is None or not recurrence:
+        return patch
+    nxt = upcoming_slot(slot, recurrence, cur.get("cease_at"))
+    if nxt is None or nxt == slot:
+        return patch
+    return {**patch, "publish_at": nxt.isoformat()}
+
+
+def _clean_reason(reason: Any) -> str | None:
+    if reason is None:
+        return None
+    if not isinstance(reason, str):
+        raise ValueError("reason must be a string")
+    cleaned = reason.strip()
+    if len(cleaned) > _ARCHIVE_REASON_MAX:
+        raise ValueError(f"reason exceeds {_ARCHIVE_REASON_MAX} characters")
+    return cleaned or None
+
+
 async def delete(
     runtime: Any, tool_id: str, *, post_id: str, hard: bool, npub: str,
+    reason: Any = None,
 ) -> dict[str, Any]:
     pid = _require_uuid(post_id)
+    why = _clean_reason(reason)
     if hard:
         removed = await posts_db.hard_delete(npub, pid)
         if not removed:
@@ -237,9 +286,10 @@ async def delete(
                     "error": f"No post {pid} owned by this npub."}
         return {"post_id": pid, "deleted": True}
 
-    row = await posts_db.soft_delete(npub, pid)
+    row = await posts_db.soft_delete(npub, pid, why)
     if not row:
         await runtime.rollback_debit(tool_id, npub)
         return {"success": False, "error_code": "post_not_found",
                 "error": f"No post {pid} owned by this npub."}
-    return {"post_id": row["post_id"], "status": row["status"]}
+    return {"post_id": row["post_id"], "status": row["status"],
+            "prior_status": row.get("prior_status")}

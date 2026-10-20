@@ -11,7 +11,7 @@ import { attemptLabel } from "../lib/attemptLabel";
 import { parseLocalHourParam } from "../lib/timezone";
 import TweetPreviewModal from "./TweetPreviewModal";
 import ReadinessBadge from "./ReadinessBadge";
-import { BADGE_LABEL, nextSweepSlot, type Flip } from "../lib/readiness";
+import { BADGE_LABEL, archivePrompt, nextSweepSlot, type Flip } from "../lib/readiness";
 import {
   formatDateTime,
   formatHourLabel,
@@ -253,13 +253,14 @@ export default function PostsPage() {
     setPage(0);
   }
 
-  async function handleDelete(e: React.MouseEvent, id: string, hard: boolean) {
+  async function handleDelete(e: React.MouseEvent, id: string, hard: boolean, status: string) {
     e.stopPropagation();
     e.preventDefault();
-    if (hard && !window.confirm("Permanently delete this post? This cannot be undone.")) return;
+    const ask = hard ? "Permanently delete this post? This cannot be undone." : archivePrompt(status);
+    if (!window.confirm(ask)) return;
     setError(null);
     try {
-      await deletePost(id, hard);
+      await deletePost(id, hard, hard ? "" : "Archived from the Posts list");
       await refresh();
     } catch (err) {
       setError((err as Error).message);
@@ -751,14 +752,14 @@ export default function PostsPage() {
                         <ActionIcon
                           path={ICONS.archive}
                           title="Archive"
-                          onClick={(e) => handleDelete(e, p.post_id, false)}
+                          onClick={(e) => handleDelete(e, p.post_id, false, p.status)}
                           hover="hover:text-amber-600 dark:hover:text-amber-400"
                         />
                       )}
                       <ActionIcon
                         path={ICONS.delete}
                         title="Delete permanently"
-                        onClick={(e) => handleDelete(e, p.post_id, true)}
+                        onClick={(e) => handleDelete(e, p.post_id, true, p.status)}
                         hover="hover:text-red-500 dark:hover:text-red-400"
                       />
                     </span>

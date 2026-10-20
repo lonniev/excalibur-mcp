@@ -205,12 +205,13 @@ export async function updatePost(opts: {
 export interface DeletePostResult {
   post_id?: string;
   status?: string;
+  prior_status?: string;
   deleted?: boolean;
   error?: string;
 }
 
-export async function deletePost(postId: string, hard = false): Promise<DeletePostResult> {
-  return callTool<DeletePostResult>("delete_post", { post_id: postId, hard });
+export async function deletePost(postId: string, hard = false, reason = ""): Promise<DeletePostResult> {
+  return callTool<DeletePostResult>("delete_post", { post_id: postId, hard, reason });
 }
 
 // ─── Post to X (paid) ─────────────────────────────────────────────────────
