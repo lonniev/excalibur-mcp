@@ -3,7 +3,6 @@
 Sword-swift posting of pretty tweets to X (Twitter) via AI agents, monetized
 with Bitcoin Lightning micropayments through the DPYC(TM) Tollbooth protocol.
 
-[![Version](https://img.shields.io/badge/version-0.34.4-blue)](https://github.com/lonniev/excalibur-mcp)
 [![Python](https://img.shields.io/badge/python-3.12+-green)](https://python.org)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -23,15 +22,28 @@ Part of the [DPYC(TM) Social Contract](https://github.com/lonniev/dpyc-community
 Connect via Horizon -- no local install needed:
 
 ```
-https://www.fastmcp.cloud/mcp/lonniev/excalibur-mcp
+https://excalibur-mcp.fastmcp.app/mcp
 ```
+
+The web editor at <https://excalibur.tollbooth-dpyc.com> drives the same tools
+from a browser.
 
 ### Step 1: Check Session
 
 Call `excalibur_session_status` to see your current session state. If you have
 an active session with funded credits, you are ready to post.
 
-### Step 2: X OAuth2 + PKCE (Patron Credentials for X)
+### Step 2: Prove Your Npub on the Connection
+
+Identity rides on the connection, not on tool arguments. Connecting from an AI
+assistant is an OAuth holder connection: call
+`excalibur_request_npub_proof(patron_npub=<npub>)`, reply to the Nostr DM it
+sends, then call `excalibur_receive_npub_proof(patron_npub=<npub>, nonce=<nonce>)`
+once. The connection then holds your npub for the lifetime you chose in the
+reply (up to 30 days), and every tool call passes only `npub`. A caller that
+holds the nsec may instead sign each HTTP request (NIP-98).
+
+### Step 3: X OAuth2 + PKCE (Patron Credentials for X)
 
 1. Get your Nostr npub -- use the dpyc-oracle's `how_to_join()` tool, or any
    Nostr client.
@@ -44,7 +56,7 @@ an active session with funded credits, you are ready to post.
 Sessions are keyed by npub. Tokens are stored in the Neon vault and
 auto-refresh on expiry.
 
-### Step 3: Secure Courier (Operator Credentials)
+### Step 4: Secure Courier (Operator Credentials)
 
 Operator credentials (X OAuth2 app keys, BTCPay connection) are delivered via
 Secure Courier (`service="excalibur-operator"`). This is a human-in-the-loop
@@ -54,8 +66,8 @@ Nostr client. On `receive_credentials`, the relay DM is destructively drained
 
 ## Credits Model
 
-Tool calls cost `api_sats` per call. Credits have a `tranche_lifetime` --
-each purchase creates a tranche that expires after the configured lifetime.
+Tool calls cost `api_sats` per call. Each purchase creates a tranche; it
+expires only if the operator's pricing model sets a `tranche_lifetime`.
 Auth and balance tools are always free. Use `excalibur_check_balance` to see
 your balance and tranche expiry. Top up via `excalibur_purchase_credits`.
 
@@ -71,12 +83,13 @@ and Oracle delegation. Each tool is identified by a deterministic UUID v5.
 | Category | Tools |
 |----------|-------|
 | Session & Billing | `session_status`, `check_balance`, `account_statement`, `account_statement_infographic`, `restore_credits`, `service_status`, `check_price`, `check_authority_balance` |
-| Secure Courier | `request_credential_channel`, `receive_credentials`, `forget_credentials` |
-| Npub Proof | `request_npub_proof`, `receive_npub_proof` |
-| Purchase | `purchase_credits`, `check_payment` |
-| Pricing & Constraints | `get_pricing_model`, `set_pricing_model`, `reset_pricing_model`, `list_constraint_types` |
+| Secure Courier | `request_credential_channel`, `receive_credentials`, `forget_credentials`, `update_operator_credential`, `delete_operator_credential`, `update_patron_credential`, `delete_patron_credential`, `get_patron_credential_fields` |
+| Npub Proof | `request_npub_proof`, `receive_npub_proof`, `check_proof_status`, `held_identities` |
+| Purchase & Coupons | `purchase_credits`, `check_payment`, `mint_coupon`, `list_coupons`, `update_coupon`, `delete_coupon`, `redeem_coupon`, `list_my_coupons`, `forget_coupon` |
+| Pricing & Constraints | `get_pricing_model`, `set_pricing_model`, `reset_pricing_model`, `list_constraint_types`, `list_canonical_identities` |
 | Notarization | `notarize_ledger`, `list_notarizations`, `get_notarization_proof` |
-| Onboarding | `get_operator_onboarding_status`, `get_patron_onboarding_status` |
+| Onboarding & Adoption | `get_operator_onboarding_status`, `get_patron_onboarding_status`, `request_adoption`, `adoption_status`, `restore_neon_schema` |
+| Nostr & Diagnostics | `get_nostr_profile`, `publish_nostr_profile`, `request_echo`, `report_issue` |
 | OAuth (X) | `begin_oauth`, `check_oauth_status` |
 | Oracle (delegated) | `oracle_about`, `oracle_how_to_join`, `oracle_lookup_member`, `oracle_get_tax_rate`, `oracle_network_advisory` |
 
@@ -93,6 +106,7 @@ call with `check_price`. Read and auth tools are free.
 | `post_tweet` | Post a text tweet with markdown-to-Unicode rich text formatting |
 | `post_tweet_image` | Post a tweet with a hero banner image (image URL or SVG rendered to PNG) |
 | `get_x_profile` | Fetch the connected X account's handle and name for this patron (free) |
+| `post_nostr_message` | Publish a public Nostr note (kind 1) for your proven npub, signed by an ephemeral scribe key that `p`-tags you |
 
 **Stored posts (drafts & scheduling)**
 
@@ -123,6 +137,27 @@ call with `check_price`. Read and auth tools are free.
 | `resolve_dynamic_block` | Start resolving a dynamic (prompt-backed) post block; returns a claim check |
 | `fetch_dynamic_block` | Redeem a `resolve_dynamic_block` claim check (free, proof-gated) |
 
+**Conversation leads**
+
+| Tool | Description |
+|------|-------------|
+| `find_conversations` | Search X for people asking questions you could answer; score and store them as leads |
+| `list_conversations` | Page through your stored leads (free) |
+| `reply_to_conversation` | Post your reply into a lead's thread on X and mark the lead engaged |
+| `set_conversation_status` | Mark a lead new, seen, engaged or dismissed (free) |
+| `list_conversation_queries` | List your saved conversation queries (free) |
+| `save_conversation_query` | Create or update a saved conversation query (free) |
+| `delete_conversation_query` | Delete a saved query; its leads are kept (free) |
+
+**Post metrics**
+
+| Tool | Description |
+|------|-------------|
+| `harvest_metrics` | Cadence-aware sweep that snapshots X metrics for sent posts (operator-only) |
+| `get_post_metrics` | Read the metrics snapshot series for one of your posts |
+| `post_performance` | Derived reach scores across your harvested post metrics |
+| `post_performance_infographic` | SVG infographic of post performance |
+
 **Scheduler**
 
 | Tool | Description |
@@ -137,16 +172,19 @@ call with `check_price`. Read and auth tools are free.
 OAuth flow tools (`begin_oauth`, `check_oauth_status`) are now standard tools
 provided by the wheel (see the Standard Tools table above).
 
-All tools that take an `npub` also accept a `proof: str` parameter for
-kind-27235 Schnorr proof attestation.
+Tools that take an `npub` take only the `npub`: the connection proves it (see
+Security).
 
 ## Security
 
 - **Npub identity** -- Patrons are identified by a Nostr public key (`npub`),
   not an email or password. One keypair per role, managed by the user.
-- **Kind-27235 Schnorr proof** -- Tool calls carry an NIP-98-style Schnorr
-  signature proving the caller controls the claimed npub. Proof is cached for
-  ~1 hour; renew via `request_npub_proof` / `receive_npub_proof`.
+- **Identity on the connection** -- A connection proves its npub in one of
+  two ways: each HTTP request is signed with the npub's key (NIP-98, kind
+  27235), or an OAuth holder connection carries an Operator-signed grant
+  earned through `request_npub_proof` / `receive_npub_proof`. The patron
+  chooses the grant's lifetime, up to 30 days; `held_identities` and
+  `check_proof_status` show what a connection holds.
 - **Human-in-the-loop Secure Courier** -- Credential delivery requires
   conscious operator approval via Nostr DM. On receipt, the relay message is
   destructively drained so secrets exist only in the encrypted Neon vault.
@@ -165,9 +203,18 @@ src/excalibur_mcp/
   formatter.py     Markdown -> Unicode rich text (bold, italic, headers)
   refine.py        Server-side editorial refinement for the post editor
   resolve.py       Server-side resolution of dynamic (prompt-backed) post blocks
+  resolver.py      Builds one post's finished body (the slow half: dynamic blocks)
+  publisher.py     Carries a finished body to X (the fast half: bill, post, record)
   scheduler.py     Scheduled-post firing (publishes due posts on the owner's behalf)
-  tools/           Domain storage handlers (posts, snippets, voices)
-  db/              eXcalibur persistence on the wheel's NeonVault (posts, scheduler runs, migrations)
+  conversation_scoring.py  Pure scoring + query composition for conversation leads
+  metrics_harvest.py       Post-metrics harvest cadence and derived reach scores
+  nostr_note.py    Public Nostr notes signed by an ephemeral scribe key
+  tools/           Domain storage handlers (posts, snippets, voices, conversations, metrics)
+  db/              eXcalibur persistence on the wheel's NeonVault (posts, snippets, voices,
+                   conversations, metrics, scheduler runs, migrations)
+modal_app.py       Detached runner for long dynamic-block resolves (Modal)
+scheduler-worker/  Cloudflare Worker cron that fires due scheduled posts
+frontend/          The web editor (excalibur.tollbooth-dpyc.com)
 ```
 
 **Key design choices:**
@@ -211,6 +258,9 @@ set as environment variables:
 | `btcpay_host` | BTCPay Server URL |
 | `btcpay_store_id` | Store ID for invoices |
 | `btcpay_api_key` | API key with invoice permissions |
+| `llm_api_key` | Optional. Model-router key (OpenRouter by default) for `refine_post_region` and dynamic blocks; posting works without it |
+| `modal_token_id`, `modal_token_secret`, `modal_app_name` | Optional. Modal workspace that runs long dynamic-block resolves detached from the MCP host |
+| `github_repo`, `github_token` | Optional. Where `report_issue` files patron field reports (token needs only `issues:write`) |
 
 Certified operators bootstrap their Neon database URL from the Authority via
 encrypted Nostr DM -- `NEON_DATABASE_URL` is not read from the environment.
@@ -219,12 +269,8 @@ encrypted Nostr DM -- `NEON_DATABASE_URL` is not read from the environment.
 
 | Variable | Description |
 |----------|-------------|
-| `TOLLBOOTH_NOSTR_RELAYS` | Comma-separated relay URLs (overrides defaults) |
-| `SEED_BALANCE_SATS` | Starter credits for new users (default: 0) |
-| `DPYC_REGISTRY_CACHE_TTL_SECONDS` | How long to cache the DPYC community registry (default: 300) |
-| `CONSTRAINTS_ENABLED` | `"true"` to enable constraint engine evaluation on tool calls |
-| `CONSTRAINTS_CONFIG` | Optional constraint-engine configuration payload |
 | `SCHEDULER_WORKER_URL` | Public URL of the scheduled-post cron Worker (default: `https://excalibur-scheduler.lonniev.workers.dev`) |
+| `RESOLVE_BLOCK_BUDGET_MAX_S` | Ceiling, in seconds, on one dynamic block's LLM run (default: 1800); the job, lease and runner timeouts are derived from it |
 
 ## Troubleshooting
 
@@ -235,24 +281,15 @@ initialize Neon connections and load the pricing model. The runtime handles
 this with inline retry -- the caller receives the result after the warm-up
 completes, not a "service unavailable" error.
 
-### Credential lifecycle states
-
-Credential-related responses describe the current lifecycle state with clear
-guidance, not error messages:
-
-| State | Meaning | Next step |
-|-------|---------|-----------|
-| `no_session` | No npub recognized | Call `session_status` with your npub |
-| `awaiting_oauth` | OAuth flow started, browser not yet authorized | Open the `authorize_url` and authorize |
-| `awaiting_courier` | Secure Courier channel opened, credentials not yet received | Reply via Nostr client with credentials JSON |
-| `proof_expired` | Npub proof cache expired (~1 hour) | Call `request_npub_proof` then `receive_npub_proof` |
-| `insufficient_balance` | Credits exhausted or tranche expired | Call `purchase_credits` to top up |
-
 ### Common tool call situations
 
-- **"proof is required"** -- Call `request_npub_proof` then
-  `receive_npub_proof` to prove npub ownership. The cache expires after ~1
-  hour; renew with a fresh request/receive cycle.
+Responses describe the current lifecycle state with guidance on the next step,
+not bare error messages.
+
+- **`proof_required`** -- The connection does not prove that npub (or its
+  grant expired). Call `request_npub_proof`, reply to the DM, then
+  `receive_npub_proof` once. `check_proof_status` shows how long a grant has
+  left.
 - **"Insufficient credit balance"** -- Call `purchase_credits` to top up.
   Check tranche expiry with `check_balance`.
 - **"Operator credentials not configured"** -- Operator setup issue, not the
@@ -295,7 +332,12 @@ ruff check src/ tests/
 - [thebrain-mcp](https://github.com/lonniev/thebrain-mcp) -- TheBrain personal knowledge graph
 - [excalibur-mcp](https://github.com/lonniev/excalibur-mcp) -- X/Twitter posting
 - [taxsort-mcp](https://github.com/lonniev/taxsort-mcp) -- Tax classification + Cloudflare Pages UI
-- [optionality-mcp](https://github.com/lonniev/optionality-mcp) -- Options analytics (brokerage-data operator)
+- [optionality-mcp](https://github.com/lonniev/optionality-mcp) -- Options-trading practice game
+- [goodearth-mcp](https://github.com/lonniev/goodearth-mcp) -- Region-scoped climate analytics for small farms
+- [beesknees-mcp](https://github.com/lonniev/beesknees-mcp) -- The Bee's Knees race game
+- [roastify-mcp](https://github.com/lonniev/roastify-mcp) -- Roastify coffee catalog and packaging artwork
+- [ChartRemotely-mcp](https://github.com/lonniev/ChartRemotely-mcp) -- Puts a security on a desktop chart remotely
+- [tollbooth-web](https://github.com/lonniev/tollbooth-web) -- Shared browser SDK for operator front ends
 - [tollbooth-oauth2-collector](https://github.com/lonniev/tollbooth-oauth2-collector) -- OAuth2 callback handler (advocate service)
 - [tollbooth-shortlinks](https://github.com/lonniev/tollbooth-shortlinks) -- URL shortener utility
 
