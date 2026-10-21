@@ -5,6 +5,59 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 Changes not yet released live in `changelog.d/`, one file per change — see the README there for why, and `scripts/changelog.py` for what folds them in at release time.
 
+## [0.43.0] — 2026-10-21
+
+### Changed
+
+Moving a post out of Draft took a tour: "Save draft" and "Save changes" never
+changed its state; "Schedule with Excalibur" on the Schedule tab was the only
+way in; "Unschedule" the only way out, and it threw the publish time away; the
+list had Resume and Return-to-Draft besides. Content and readiness were
+tangled across four controls on two surfaces.
+
+Now a post carries one badge, in the editor's top bar and in the list's status
+column, and where a person may flip it the badge is a button: Draft ↔ Ready,
+Paused → Ready, a stuck Sending → Draft. Ready is `scheduled` on the wire — no
+new state. In the editor the flip persists with **Save**, which is now the one
+save button; on the list it lands at once. A post made Ready with no publish
+time takes the next sweep slot (:00 / :30), shown beside it and editable on
+the Schedule tab, so Ready never means "post this instant". Draft keeps its
+time, so the flip back costs nothing. The Schedule tab now sets only time,
+cadence and cease; the filter chiclets say Ready where they said scheduled.
+Saving a Ready, Paused or Resolving post no longer changes its state as a side
+effect: `status` travels only when the badge was flipped.
+
+- Connections authenticate as holders (tollbooth-dpyc 0.101.1 holder bearer): connecting from Claude.ai is an Authorization Code flow with no login page, each npub proven through a connection stays with it, and tool calls pass only `npub`. The web app reaches the MCP through the shared proxy (web 1.8.2) as an anonymous caller and proves itself as before. The scheduler worker sends `Bearer anonymous` on its MCP transport.
+
+- Every eXcalibur tool carries a title and its behaviour (what it reads, writes or deletes, and whether it reaches X, Nostr or the scheduler); every parameter has a description, with `npub` and `dpop_token` in the fleet's shared wording; the server reports itself as `excalibur-mcp` with its version, website and icon.
+
+- Pins tollbooth-dpyc 0.102.0: a request signed with an npub's own key (NIP-98) acts as that npub with no grant.
+
+- Pins tollbooth-dpyc 0.102.1: a request signed with an npub's own key (NIP-98) acts as that npub with no grant.
+
+- README matches the code: identity on the connection (NIP-98 or holder grant, patron-chosen lifetime up to 30 days) replaces the per-call `proof` argument; conversation-lead, post-metrics and `post_nostr_message` tools listed; standard-tool table, operator credentials (`llm_api_key`, Modal, field reports) and connect URL updated; unread env vars and the stale version badge removed.
+
+- Dependencies refreshed to current releases (mcp/fastmcp 2.3.0/4.1.0 → 2.3.0/4.1.0; frontend minor/patch). No service stays on old transitive versions.
+
+- Tools take only `npub`; the connection proves it (a request signed with the npub's key, or an OAuth connection that holds it after the DM). The `dpop_token` argument is gone, and the Courier phrase is `nonce`. Pins tollbooth-dpyc 0.103.0.
+- The scheduler routes `/pending` and `/reissue` take a request the MCP signs as the operator (NIP-98), checked against its method, path and body.
+
+- The web app moves to @tollbooth-dpyc/web 1.9.0: a tab that holds the signed-in key signs each request, and DM sign-in connects to the operator as a holder (one quick redirect, no login page) — no proof rides in tool arguments.
+
+- The scheduler worker connects to the MCP as a *holder* (headless OAuth, tokens in KV); the operator npub is proven into the connection by the usual DM and `process_scheduled_posts` carries only the npub. The first tick after deploy asks the operator for one fresh DM approval.
+
+### Fixed
+
+- Archived posts can be restored: the status badge flips Archived → Draft. A recurring post comes back at the next future slot of its own rhythm, so a batch of restored posts never fires at once to catch up.
+- Archiving asks first everywhere, and asks more pointedly when the post is still scheduled to go out.
+- Each archive records when and why (`archived_at`, `archived_reason`); `delete_post` takes a `reason`, and `update_post` no longer archives (one door, so every archive is recorded).
+- The tool descriptions and server instructions tell agents that a failed send or low funds is never a reason to archive: those posts pause or wait, and resume once funded.
+
+- The server instructions name `request_credential_channel`'s real argument, `sender_npub`, and pass its `nonce` to `receive_credentials`.
+
+- `find_conversations` refuses a bare `and` in a query (free, before X is called) — X joins terms with a space and rejects the word as an operator.
+- An X 400 now reports X's specific reason (`errors[].message`) in place of its generic "One or more parameters to your request was invalid."
+
 ## [0.42.1] — 2026-10-04
 
 ### Fixed — a reply X refuses on policy no longer blames the token

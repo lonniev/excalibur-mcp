@@ -1,4 +1,0 @@
-- Archived posts can be restored: the status badge flips Archived → Draft. A recurring post comes back at the next future slot of its own rhythm, so a batch of restored posts never fires at once to catch up.
-- Archiving asks first everywhere, and asks more pointedly when the post is still scheduled to go out.
-- Each archive records when and why (`archived_at`, `archived_reason`); `delete_post` takes a `reason`, and `update_post` no longer archives (one door, so every archive is recorded).
-- The tool descriptions and server instructions tell agents that a failed send or low funds is never a reason to archive: those posts pause or wait, and resume once funded.
