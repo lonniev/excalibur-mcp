@@ -1,1 +1,0 @@
-- Every eXcalibur tool carries a title and its behaviour (what it reads, writes or deletes, and whether it reaches X, Nostr or the scheduler); every parameter has a description, with `npub` and `dpop_token` in the fleet's shared wording; the server reports itself as `excalibur-mcp` with its version, website and icon.

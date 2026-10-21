@@ -1,1 +1,0 @@
-- The web app moves to @tollbooth-dpyc/web 1.9.0: a tab that holds the signed-in key signs each request, and DM sign-in connects to the operator as a holder (one quick redirect, no login page) — no proof rides in tool arguments.
