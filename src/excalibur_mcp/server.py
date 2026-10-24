@@ -1285,6 +1285,7 @@ async def get_voice(
 async def save_voice(
     profile: str = "",
     bans: list | None = None,
+    link_tags: dict | None = None,
     npub: PatronNpub = "",
 ) -> dict:
     """Save your writing Voice (replaces the previous one — it is a per-npub
@@ -1299,10 +1300,17 @@ async def save_voice(
             characters.
         bans: Up to 200 ``{"text": str, "on": bool}`` objects, each ``text`` up
             to 200 characters; null saves an empty list.
+        link_tags: Shop-link tagging, ``{"on": bool, "hosts": [hostname, ...]}``.
+            When on, every link to one of ``hosts`` in a post the scheduler sends
+            gains ``utm_source`` (x or nostr), ``utm_medium=social``,
+            ``utm_campaign`` (the post's id) and ``utm_content`` (the sent copy's
+            id). Empty ``hosts`` means the operator's default shop hosts. Null
+            keeps the saved setting; never saved, tagging is on for the defaults.
+            One post opts out with ``"utm": false`` at the top of its ``doc``.
     """
     from excalibur_mcp.tools import voices as voices_tools
 
-    return await voices_tools.save(npub, profile=profile, bans=bans)
+    return await voices_tools.save(npub, profile=profile, bans=bans, link_tags=link_tags)
 
 
 # ---------------------------------------------------------------------------

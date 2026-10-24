@@ -1060,3 +1060,127 @@ def test_upcoming_slot_honours_cease_at():
     slot = datetime(2026, 10, 13, 10, 0, tzinfo=timezone.utc)
     assert publisher.upcoming_slot(slot, {"freq": "daily"}, "2026-10-19T00:00:00+00:00",
                                    now=now) is None
+
+
+# ---------------------------------------------------------------------------
+# Shop links carry campaign tags naming the post and the copy that went out
+# ---------------------------------------------------------------------------
+
+_SHOP = "https://cafe.tollbooth-dpyc.com/products/mug"
+
+
+@pytest.fixture(autouse=True)
+def _shop_hosts():
+    """The owner never chose: tagging is on for the operator's default host.
+    Autouse, so no publication in this file reaches Neon for the setting."""
+    with patch("excalibur_mcp.db.voices.get_link_tags", AsyncMock(return_value=None)) as m:
+        yield m
+
+
+@pytest.mark.asyncio
+async def test_a_recurring_post_tags_its_links_with_template_and_occurrence(_shop_hosts):
+    rt = _runtime()
+    client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "t", "tweet_url": "u"}))
+    doc = {"blocks": [{"text": f"Mug: {_SHOP}", "flags": []}]}
+    with _claimed(doc=doc, text_cache=f"Mug: {_SHOP}"), \
+         patch.object(publisher.posts_db, "record_occurrence_and_advance",
+                      AsyncMock(return_value=True)) as occ, \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        out = await publisher.publish_one(rt, "p1")
+    assert out["outcome"] == "posted"
+    occurrence_id = occ.await_args.kwargs["occurrence_id"]
+    assert occurrence_id
+    tag = f"?utm_source=x&utm_medium=social&utm_campaign=p1&utm_content={occurrence_id}"
+    sent = client.post_tweet.await_args.args[0]
+    assert sent == f"Mug: {_SHOP}{tag}"
+    # The sent copy's saved text and blocks read what was posted.
+    assert occ.await_args.kwargs["text_cache"] == sent
+    assert occ.await_args.kwargs["doc"]["blocks"][0]["text"] == sent
+
+
+@pytest.mark.asyncio
+async def test_a_one_off_post_is_its_own_campaign_and_copy(_shop_hosts):
+    rt = _runtime()
+    client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "t", "tweet_url": "u"}))
+    with _claimed(recurrence=None, cease_at=None, text_cache=_SHOP), \
+         patch.object(publisher.posts_db, "mark_sent", AsyncMock(return_value=True)) as mark, \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        await publisher.publish_one(rt, "p1")
+    sent = client.post_tweet.await_args.args[0]
+    assert sent.endswith("utm_campaign=p1&utm_content=p1")
+    assert mark.await_args.kwargs["text_cache"] == sent
+
+
+@pytest.mark.asyncio
+async def test_an_ai_written_block_is_tagged_too(_shop_hosts):
+    """The resolver's output is the body; links the model wrote get tagged alike."""
+    rt = _runtime()
+    client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "t", "tweet_url": "u"}))
+    render = {"blocks": [
+        {"text": "Fresh today.", "flags": []},
+        {"text": f"Try it {_SHOP}", "flags": [], "dynamic": True, "resolved": True},
+    ]}
+    with _claimed(doc=_DYNAMIC_DOC, render=render, recurrence=None, cease_at=None,
+                  text_cache=f"Fresh today. Try it {_SHOP}"), \
+         patch.object(publisher.posts_db, "mark_sent", AsyncMock(return_value=True)), \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        await publisher.publish_one(rt, "p1")
+    assert "utm_source=x" in client.post_tweet.await_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_a_nostr_note_is_tagged_as_nostr(_shop_hosts):
+    rt = _runtime()
+    url = "https://x.com/i/status/twn"
+    client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "twn", "tweet_url": url}))
+    pub = Mock(return_value={"success": True})
+    doc = {"blocks": [
+        {"text": f"Mug {_SHOP}", "flags": []},
+        {"text": f"Thread {{{{tweet_url}}}} · shop {_SHOP}", "flags": [], "nostr": True},
+    ]}
+    with _claimed(doc=doc, recurrence=None, cease_at=None, text_cache=f"Mug {_SHOP}"), \
+         patch.object(publisher.posts_db, "mark_sent", AsyncMock(return_value=True)), \
+         patch("excalibur_mcp.nostr_note.publish_note", pub), \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        await publisher.publish_one(rt, "p1")
+    assert "utm_source=x&" in client.post_tweet.await_args.args[0]
+    note = pub.call_args.args[0]
+    assert note.startswith(f"Thread {url} · shop {_SHOP}?utm_source=nostr&")
+    assert "x.com/i/status/twn?" not in note  # the tweet's own URL is never tagged
+
+
+@pytest.mark.asyncio
+async def test_a_post_that_opts_out_is_sent_untagged(_shop_hosts):
+    rt = _runtime()
+    client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "t", "tweet_url": "u"}))
+    with _claimed(doc={"blocks": [], "utm": False}, recurrence=None, cease_at=None,
+                  text_cache=_SHOP), \
+         patch.object(publisher.posts_db, "mark_sent", AsyncMock(return_value=True)), \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        await publisher.publish_one(rt, "p1")
+    assert client.post_tweet.await_args.args[0] == _SHOP
+
+
+@pytest.mark.asyncio
+async def test_an_owner_who_turned_tagging_off_is_sent_untagged(_shop_hosts):
+    _shop_hosts.return_value = {"on": False, "hosts": []}
+    rt = _runtime()
+    client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "t", "tweet_url": "u"}))
+    with _claimed(recurrence=None, cease_at=None, text_cache=_SHOP), \
+         patch.object(publisher.posts_db, "mark_sent", AsyncMock(return_value=True)), \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        await publisher.publish_one(rt, "p1")
+    assert client.post_tweet.await_args.args[0] == _SHOP
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_setting_never_holds_the_post(_shop_hosts):
+    _shop_hosts.side_effect = RuntimeError("neon down")
+    rt = _runtime()
+    client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "t", "tweet_url": "u"}))
+    with _claimed(recurrence=None, cease_at=None, text_cache=_SHOP), \
+         patch.object(publisher.posts_db, "mark_sent", AsyncMock(return_value=True)), \
+         patch("excalibur_mcp.server._resolve_x_client", AsyncMock(return_value=(client, None))):
+        out = await publisher.publish_one(rt, "p1")
+    assert out["outcome"] == "posted"
+    assert "utm_content=p1" in client.post_tweet.await_args.args[0]

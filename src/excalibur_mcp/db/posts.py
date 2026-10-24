@@ -925,10 +925,13 @@ async def mark_sent(
     next_publish_at: str | None,
     tweet_url: str | None = None,
     claim_stamp: str | None = None,
+    text_cache: str | None = None,
 ) -> bool:
     """Record a fire: stamp last_sent_at, set the next status/publish_at, and
     store the posted tweet's URL (COALESCE keeps a prior URL on recurrence).
     A successful fire clears any prior ``last_attempt_reason`` (the hold is over).
+    ``text_cache``, when given, is the text exactly as it went out, campaign tags
+    and all, so the sent row reads what was posted.
 
     Test-and-set on the caller's claim. ``claim_stamp`` is the ``last_attempt_at``
     the publisher read when it picked the post up — ``claim_for_post`` sets that to
@@ -944,6 +947,7 @@ async def mark_sent(
             status               = $3,
             publish_at           = $4::timestamptz,
             tweet_url            = COALESCE($5, tweet_url),
+            text_cache           = COALESCE($7, text_cache),
             last_attempt_at      = $2::timestamptz,
             last_attempt_reason  = NULL,
             last_attempt_detail  = NULL,
@@ -959,6 +963,7 @@ async def mark_sent(
         next_publish_at,
         tweet_url or None,
         claim_stamp,
+        text_cache,
     )
     return row is not None
 
@@ -1008,6 +1013,7 @@ async def record_occurrence_and_advance(
     occurrence_publish_at: str | None,
     next_publish_at: str | None,
     claim_stamp: str | None,
+    occurrence_id: str | None = None,
 ) -> bool:
     """Snapshot this occurrence AND advance its template — in ONE statement.
 
@@ -1043,6 +1049,9 @@ async def record_occurrence_and_advance(
       work-list raises nothing. A permanently-broken template still trips the cap:
       it never reaches this statement, because this only runs after a live tweet.
 
+    ``occurrence_id`` is the id the publisher chose for this occurrence before the
+    send, so the links in the tweet could name it; ``None`` lets Postgres pick.
+
     Returns whether this publisher was still the owner. ``False`` means the tweet
     went out but the claim was lost — the caller must say so loudly, never silently.
     """
@@ -1067,8 +1076,10 @@ async def record_occurrence_and_advance(
             RETURNING id
         )
         INSERT INTO posts
-            (npub, status, doc, text_cache, publish_at, last_sent_at, tweet_url, template_id)
-        SELECT $2, 'sent', $3::jsonb, $4, $7::timestamptz, $6::timestamptz, $5, advanced.id
+            (id, npub, status, doc, text_cache, publish_at, last_sent_at, tweet_url,
+             template_id)
+        SELECT COALESCE($10::uuid, gen_random_uuid()), $2, 'sent', $3::jsonb, $4,
+               $7::timestamptz, $6::timestamptz, $5, advanced.id
         FROM advanced
         RETURNING id
         """,
@@ -1081,6 +1092,7 @@ async def record_occurrence_and_advance(
         occurrence_publish_at,
         next_publish_at,
         claim_stamp,
+        occurrence_id,
     )
     return row is not None
 

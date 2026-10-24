@@ -230,6 +230,9 @@ async def _ensure_domain_schema(vault: Any) -> None:
         "profile TEXT NOT NULL DEFAULT '', "
         "bans JSONB NOT NULL DEFAULT '[]', "
         "updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
+        # The owner's shop-link tagging, {"on": bool, "hosts": [...]}. NULL is
+        # "never chosen": their posts are tagged for the operator's default hosts.
+        f"ALTER TABLE {t('voice')} ADD COLUMN IF NOT EXISTS link_tags JSONB",
 
         # Append-only X post metrics. non_public_metrics / organic_metrics are
         # only available for 30 days after authorship under user-context OAuth —
