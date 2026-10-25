@@ -22,7 +22,7 @@ async def test_get_unset_returns_empty_voice_not_error():
     with patch.object(voices_tools.voices_db, "get_voice",
                       new=AsyncMock(return_value=None)):
         out = await voices_tools.get(NPUB)
-    assert out == {"success": True, "voice": {"profile": "", "bans": []}}
+    assert out == {"success": True, "voice": {"profile": "", "bans": [], "link_tags": None}}
 
 
 @pytest.mark.asyncio
@@ -68,7 +68,7 @@ async def test_save_rejects_ban_without_string_text():
 async def test_save_drops_blank_and_dedupes_bans():
     captured = {}
 
-    async def fake_upsert(npub, profile, bans):
+    async def fake_upsert(npub, profile, bans, link_tags=None):
         captured["bans"] = bans
         return {"npub": npub, "profile": profile, "bans": bans}
 
@@ -85,7 +85,7 @@ async def test_save_drops_blank_and_dedupes_bans():
 async def test_save_defaults_on_to_true():
     captured = {}
 
-    async def fake_upsert(npub, profile, bans):
+    async def fake_upsert(npub, profile, bans, link_tags=None):
         captured["bans"] = bans
         return {"npub": npub, "profile": profile, "bans": bans}
 
@@ -103,3 +103,35 @@ async def test_save_returns_stored_voice():
     assert out["success"] is True
     assert out["voice"]["profile"] == "plain"
     assert out["voice"]["bans"] == [{"text": "x", "on": True}]
+
+
+# -- link_tags ----------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_save_without_link_tags_keeps_the_saved_setting():
+    """An editor saving only the Voice passes None, which the upsert COALESCEs."""
+    upsert = AsyncMock(return_value={"npub": NPUB, "profile": "", "bans": []})
+    with patch.object(voices_tools.voices_db, "upsert_voice", new=upsert):
+        await voices_tools.save(NPUB, profile="p")
+    assert upsert.await_args.args[3] is None
+
+
+@pytest.mark.asyncio
+async def test_save_normalizes_link_tag_hosts():
+    upsert = AsyncMock(return_value={"npub": NPUB, "profile": "", "bans": []})
+    with patch.object(voices_tools.voices_db, "upsert_voice", new=upsert):
+        await voices_tools.save(NPUB, link_tags={
+            "on": True, "hosts": [" Cafe.Example.com ", "cafe.example.com", ""],
+        })
+    assert upsert.await_args.args[3] == {"on": True, "hosts": ["cafe.example.com"]}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad", [
+    "on", {"hosts": "cafe.example.com"}, {"hosts": [5]},
+    {"hosts": ["https://cafe.example.com/"]}, {"hosts": ["no spaces.com x"]},
+    {"hosts": [f"h{i}.example.com" for i in range(21)]},
+])
+async def test_save_rejects_bad_link_tags(bad):
+    with pytest.raises(ValueError):
+        await voices_tools.save(NPUB, link_tags=bad)

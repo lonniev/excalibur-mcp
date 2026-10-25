@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     # pending state from here, authenticating AS the operator (no shared secret).
     scheduler_worker_url: str = "https://excalibur-scheduler.lonniev.workers.dev"
 
+    # Shop hosts whose links a sent post tags with utm_ campaign parameters, for
+    # an owner who has not chosen their own (comma-separated). See utm.py.
+    utm_default_hosts: str = "cafe.tollbooth-dpyc.com"
+
     # ── Constraint Engine (opt-in) ───────────────────────────────────
     constraints_enabled: bool = False
     constraints_config: str | None = None

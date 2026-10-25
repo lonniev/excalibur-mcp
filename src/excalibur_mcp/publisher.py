@@ -28,6 +28,7 @@ from __future__ import annotations
 import calendar
 import json
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -37,6 +38,7 @@ from tollbooth.llm_route import classify_llm_failure
 from excalibur_mcp.db import posts as posts_db
 from excalibur_mcp.db import scheduler_runs
 from excalibur_mcp.formatter import markdown_to_unicode
+from excalibur_mcp.utm import owner_hosts, tag_links
 
 logger = logging.getLogger(__name__)
 
@@ -287,6 +289,46 @@ async def _publish_notes(
     return {"published": published, "failed": failed}
 
 
+async def _tag_hosts(owner: str, doc: dict[str, Any] | None) -> list[str]:
+    """The shop hosts this send tags links for; empty when tagging is off.
+
+    Off when the post opts out (``"utm": false`` on its doc) or the owner turned
+    tagging off. A setting that cannot be read sends the post with the operator's
+    default hosts: an untagged or default-tagged link costs a little attribution,
+    a held post costs the post.
+    """
+    from excalibur_mcp.config import get_settings
+    from excalibur_mcp.db import voices as voices_db
+
+    if isinstance(doc, dict) and doc.get("utm") is False:
+        return []
+    defaults = [h.strip() for h in get_settings().utm_default_hosts.split(",") if h.strip()]
+    try:
+        link_tags = await voices_db.get_link_tags(owner)
+    except Exception:  # noqa: BLE001 — attribution never holds a post
+        logger.exception("publisher: could not read link_tags for %s", owner)
+        link_tags = None
+    return owner_hosts(link_tags, defaults)
+
+
+def _tagged_blocks(
+    doc: dict[str, Any], *, hosts: list[str], campaign: str, content: str,
+) -> dict[str, Any]:
+    """``doc`` with each block's text tagged as it went out: tweet blocks for X,
+    companion-note blocks for Nostr."""
+    blocks = doc.get("blocks")
+    if not hosts or not isinstance(blocks, list):
+        return doc
+    out = []
+    for b in blocks:
+        if isinstance(b, dict) and isinstance(b.get("text"), str):
+            source = "nostr" if b.get("nostr") else "x"
+            b = {**b, "text": tag_links(b["text"], hosts=hosts, source=source,
+                                        campaign=campaign, content=content)}
+        out.append(b)
+    return {**doc, "blocks": out}
+
+
 async def _owner_voice(owner: str) -> tuple[str, list[str]]:
     """The owner's saved Voice (profile + active ban texts) for tone-matching.
 
@@ -481,6 +523,22 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
             stage="post", cost_sats=cost,
         )
 
+    # 3. Tag the shop links. Whether this firing recurs is settled here, before
+    # the send, because a recurring firing's sent copy is a new occurrence row
+    # and its id has to be in the links that go out. The same decision is the
+    # one recorded after the send, so the tag always names a row that exists.
+    slot = _parse_iso(row.get("publish_at")) or _now()
+    next_status, next_publish = _next_state(
+        slot, _as_dict(row.get("recurrence")), row.get("cease_at"), now=_now(),
+    )
+    occurrence_id = str(uuid.uuid4()) if next_status == "scheduled" else None
+    hosts = await _tag_hosts(owner, doc)
+    if hosts:
+        text = tag_links(text, hosts=hosts, source="x", campaign=post_id,
+                         content=occurrence_id or post_id)
+        occurrence_doc = _tagged_blocks(occurrence_doc, hosts=hosts, campaign=post_id,
+                                        content=occurrence_id or post_id)
+
     # 4. Take permission to call X, and only then call it.
     #
     # This is the last instruction before the irreversible one, and its answer is
@@ -556,14 +614,11 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
         # An exception can carry an empty message; its type still names it.
         return await _hold(str(exc) or type(exc).__name__)
 
-    # 6. Stamp the fire and reschedule (or retire past cease_at).
+    # 6. Stamp the fire and reschedule (or retire past cease_at), as decided in
+    # step 3. Anchored on the SCHEDULED slot, not on the send time. See
+    # _next_state: using the success moment compounds every delay into the next
+    # occurrence.
     sent_at = _now()
-    # Anchored on the SCHEDULED slot, not on `sent_at`. See _next_state: using
-    # the success moment compounds every delay into the next occurrence.
-    slot = _parse_iso(row.get("publish_at")) or sent_at
-    next_status, next_publish = _next_state(
-        slot, _as_dict(row.get("recurrence")), row.get("cease_at"), now=sent_at,
-    )
     tweet_url = (result or {}).get("tweet_url") if isinstance(result, dict) else None
 
     # Substitute the live X URL into each Nostr companion note and patch those
@@ -589,7 +644,8 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
         # snapshot carries the RESOLVED text + a static rendered doc, so history
         # shows exactly what went out, not the prompt.
         held = await posts_db.record_occurrence_and_advance(
-            template_id=post_id, npub=owner, doc=occurrence_doc, text_cache=text,
+            template_id=post_id, occurrence_id=occurrence_id,
+            npub=owner, doc=occurrence_doc, text_cache=text,
             tweet_url=tweet_url, sent_at=sent_at.isoformat(),
             occurrence_publish_at=str(row.get("publish_at")) if row.get("publish_at") else None,
             next_publish_at=next_publish.isoformat() if next_publish else None,
@@ -599,7 +655,7 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
         # One-shot: the row itself becomes the Sent record.
         held = await posts_db.mark_sent(
             post_id, sent_at.isoformat(), "sent", None, tweet_url,
-            claim_stamp=claim_stamp,
+            claim_stamp=claim_stamp, text_cache=text,
         )
 
     if not held:
