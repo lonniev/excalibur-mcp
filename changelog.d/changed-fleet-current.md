@@ -1,0 +1,1 @@
+- Runs on @tollbooth-dpyc/web 2.6.0, so Pay opens your own Lightning wallet and an open invoice says the page is watching for it.
