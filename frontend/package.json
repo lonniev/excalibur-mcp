@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
-    "@tollbooth-dpyc/web": "2.6.0",
+    "@tollbooth-dpyc/web": "2.6.1",
     "lucide-react": "^1.59.0",
     "nostr-tools": "^2.25.2",
     "react": "^19.3.1",
