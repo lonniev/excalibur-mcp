@@ -8,7 +8,6 @@ import { AccountPage, useAppShell } from "@tollbooth-dpyc/web/react";
 import {
   accountStyles,
   buildInfoStyles,
-  couponStyles,
   themeToggleStyles,
   timezonePickerStyles,
   usageStyles,
@@ -59,16 +58,6 @@ export default function ProfilePage() {
         fallback: "dark",
         labels: THEME_LABELS,
         classNames: themeToggleStyles,
-      }}
-      coupons={{
-        classNames: couponStyles,
-        intro:
-          "Redeem an operator code once. The discount applies automatically on subsequent paid calls until the per-patron cap or the window expires.",
-        empty:
-          "No coupons redeemed yet. Operators distribute codes via X, email, the welcome page, or DM — paste a code above to claim its discount.",
-        placeholder: "FRESHMAN, EARLYBIRD…",
-        redeemLabel: "🎟 Redeem",
-        forgetLabel: "🗑",
       }}
       build={{
         status,

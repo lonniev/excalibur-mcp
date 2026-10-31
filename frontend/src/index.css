@@ -1,5 +1,6 @@
 @import 'tailwindcss';
 @import '@tollbooth-dpyc/web/theme.css';
+@import '@tollbooth-dpyc/web/wallet.css';
 
 /* Replaces v3's `content` array. Stated explicitly rather than leaning on v4's
    automatic detection, so the scan surface stays reviewable. */
@@ -66,4 +67,10 @@
   --tb-notice-bg: color-mix(in oklab, var(--color-purple-500) 10%, transparent);
   --tb-notice-line: color-mix(in oklab, var(--color-purple-500) 30%, transparent);
   --tb-notice-ink: var(--color-purple-300);
+}
+
+/* The shared wallet in eXcalibur's dress: its cards, its ink on the figure. */
+:root {
+  --tb-wallet-gap: 1.25rem;
+  --tb-wallet-figure: var(--tb-ink);
 }
