@@ -2,13 +2,12 @@
 // brings the mechanics — the calls, the states, the words, the paging and
 // filtering arithmetic, the theme plumbing — and adds no colour or type of its
 // own; these classNames are the stone / zinc / amber look eXcalibur's own
-// Wallet, Coupons, table, theme and time-zone pickers, usage, health and
+// table, theme and time-zone pickers, usage, health and
 // build panels always had, light and dark.
 
 import type {
   AccountPageClassNames,
   BuildInfoPanelClassNames,
-  CouponsPanelClassNames,
   ErrorBoundaryClassNames,
   FundingStatusClassNames,
   PageControlsClassNames,
@@ -20,72 +19,14 @@ import type {
   ThemeToggleClassNames,
   TimezonePickerClassNames,
   UsageSummaryClassNames,
-  WalletPageClassNames,
 } from "@tollbooth-dpyc/web/react";
 
-/** The card every panel on Wallet and Profile sits in. */
+/** The card every panel on Profile sits in. */
 export const card = "rounded-xl border border-stone-200 dark:border-zinc-800 bg-white dark:bg-zinc-900";
 
-const input =
-  "rounded-lg px-3 py-1.5 text-sm bg-white dark:bg-zinc-950 border border-stone-300 dark:border-zinc-700 focus:outline-hidden focus:border-amber-400";
 const errorBox =
   "rounded-lg p-3 text-xs bg-red-50 border border-red-200 text-red-700 dark:bg-red-500/10 dark:border-red-500/30 dark:text-red-400";
 
-
-export const walletStyles: WalletPageClassNames = {
-  // The balance's own title is the small muted label it always was.
-  root: "max-w-3xl mx-auto px-4 py-6 space-y-5 [&>section:first-of-type>div:first-child]:text-xs [&>section:first-of-type>div:first-child]:font-normal [&>section:first-of-type>div:first-child]:text-stone-400 dark:[&>section:first-of-type>div:first-child]:text-zinc-500",
-  heading: "text-lg font-semibold",
-  section: `${card} p-5 space-y-3`,
-  sectionTitle: "text-sm font-medium",
-  figure: "text-3xl font-semibold tabular-nums",
-  unit: "text-base font-normal text-stone-400 dark:text-zinc-500",
-  stats: "flex flex-wrap gap-x-4 gap-y-1 text-xs text-stone-500 dark:text-zinc-400",
-  stat: "tabular-nums",
-  notice: "text-xs text-amber-600 dark:text-amber-400",
-  error: errorBox,
-  // Every action is a quiet chip. The one that moves a top-up forward is the
-  // amber button it always was — Create invoice, pushed to the end of its row;
-  // Open checkout, a link, stays the amber text link it always was.
-  chip:
-    "inline-flex items-center px-3 py-1.5 rounded-lg text-sm transition-colors text-stone-500 hover:bg-stone-100 dark:text-zinc-400 dark:hover:bg-zinc-800 disabled:opacity-40 disabled:pointer-events-none",
-  primary: [
-    "inline-flex items-center ml-auto px-4 py-2 rounded-lg text-sm transition-colors",
-    "bg-amber-600 text-white hover:bg-amber-500 disabled:opacity-40 disabled:pointer-events-none",
-    "[a&]:ml-0 [a&]:px-3 [a&]:py-1.5 [a&]:bg-transparent [a&]:hover:bg-transparent [a&]:hover:underline",
-    "[a&]:text-amber-600 dark:[a&]:text-amber-400",
-  ].join(" "),
-  chipActive: "bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-400",
-  chips: "flex flex-wrap items-center gap-2",
-  input: `${input} w-32`,
-  invoice: "rounded-lg border border-stone-200 dark:border-zinc-800 p-3 space-y-2",
-  bolt11: "font-mono text-xs break-all bg-stone-50 dark:bg-zinc-950 rounded-sm p-2",
-  status: "text-xs text-stone-500 dark:text-zinc-400",
-  list: "space-y-1.5 text-xs",
-  row: "flex justify-between gap-3 text-stone-500 dark:text-zinc-400 tabular-nums",
-};
-
-export const couponStyles: CouponsPanelClassNames = {
-  root: `${card} p-5`,
-  heading: "text-sm font-medium mb-1",
-  intro: "text-xs text-stone-500 dark:text-zinc-400 mb-4",
-  form: "flex gap-2 mb-3",
-  input: `${input} flex-1 min-w-0 py-2 uppercase`,
-  // Redeem is the amber button; each row's Remove is a quiet mark that reddens.
-  primary: "bg-amber-600 hover:bg-amber-500 text-white text-sm px-4 py-2 rounded-lg disabled:opacity-40 transition-colors whitespace-nowrap",
-  chip: "px-2 py-1 rounded-lg transition-colors text-stone-400 hover:text-red-500 dark:text-zinc-500 dark:hover:text-red-400",
-  message: "rounded-lg p-2.5 mb-3 text-xs border",
-  ok: "bg-green-50 border-green-200 text-green-700 dark:bg-green-500/10 dark:border-green-500/30 dark:text-green-400",
-  error: "bg-red-50 border-red-200 text-red-700 dark:bg-red-500/10 dark:border-red-500/30 dark:text-red-400",
-  loading: "text-xs text-stone-400 dark:text-zinc-500 py-2",
-  empty: "text-xs text-stone-400 dark:text-zinc-500 leading-relaxed",
-  list: "divide-y divide-stone-100 dark:divide-zinc-800",
-  row: "flex items-center gap-3 py-2.5 [&>div]:flex-1 [&>div]:min-w-0",
-  name: "font-mono text-sm",
-  discount: "ml-1 text-sm font-semibold text-amber-600 dark:text-amber-400",
-  meta: "text-xs text-stone-400 dark:text-zinc-500 mt-0.5",
-  active: "text-green-600 dark:text-green-400",
-};
 
 const filterField =
   "text-xs rounded-lg border border-stone-200 bg-stone-50 px-2 py-1.5 focus:outline-hidden focus:border-stone-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:focus:border-zinc-500";
