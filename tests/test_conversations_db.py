@@ -15,6 +15,7 @@ from excalibur_mcp.db import conversations as db
 NPUB = "npub1l94pd4qu4eszrl6ek032ftcnsu3tt9a7xvq2zp7eaxeklp6mrpzssmq8pf"
 QID = "11111111-1111-1111-1111-111111111111"
 RID = "22222222-2222-2222-2222-222222222222"
+RUN = "33333333-3333-3333-3333-333333333333"
 
 
 class Capture:
@@ -53,7 +54,9 @@ async def test_list_conversations_scopes_sorts_and_pages():
         )
     count_q, count_args = cap.calls[0]
     page_q, page_args = cap.calls[1]
-    assert "WHERE npub = $1" in count_q and "WHERE npub = $1" in page_q
+    assert "FROM conversations c WHERE npub = $1" in count_q
+    assert "FROM conversations c WHERE npub = $1" in page_q
+    assert "AS query_ids" in page_q and "FALSE AS in_run" in page_q
     assert "ORDER BY reply_count ASC, found_at DESC" in page_q
     assert "LIMIT $2 OFFSET $3" in page_q
     assert page_args == (NPUB, 10, 20)
@@ -80,7 +83,7 @@ async def test_list_conversations_filters_are_parameterised():
             date_field="posted",
         )
     q, args = cap.calls[1]
-    assert "query_id = $2::uuid" in q
+    assert "r.query_id = $2::uuid" in q and "h.lead_id = c.id" in q
     assert "status = ANY($3::text[])" in q
     assert "score >= $4" in q
     assert "(text ~* $5 OR author_username ~* $5)" in q
@@ -90,28 +93,32 @@ async def test_list_conversations_filters_are_parameterised():
 
 
 @pytest.mark.asyncio
-async def test_list_conversations_adhoc_only_is_null_query():
+async def test_list_conversations_by_run_and_marked_run():
     cap = Capture(row={"n": 0})
     p1, p2, p3 = _patched(cap)
     with p1, p2, p3:
-        await db.list_conversations(NPUB, adhoc_only=True)
-    assert "query_id IS NULL" in cap.calls[1][0]
+        await db.list_conversations(NPUB, run_id=RUN, mark_run_id=RUN, page_size=5)
+    count_q, count_args = cap.calls[0]
+    page_q, page_args = cap.calls[1]
+    assert "h.run_id = $2::uuid" in count_q and count_args == (NPUB, RUN)
+    assert "h.run_id = $3::uuid) AS in_run" in page_q
+    assert page_args == (NPUB, RUN, RUN, 5, 0)
 
 
 @pytest.mark.asyncio
 async def test_upsert_aliases_table_never_sets_status_and_counts():
-    cap = Capture(row={"inserted": True})
+    cap = Capture(row={"id": RID, "inserted": True})
     p1, p2, p3 = _patched(cap)
     row = {
-        "query_id": QID, "query_text": "mcp", "conversation_id": "c1", "tweet_id": "t1",
+        "query_text": "mcp", "conversation_id": "c1", "tweet_id": "t1",
         "author_id": "a1", "author_username": "ann", "author_followers": 5,
         "author_location": "Somewhere", "text": "how do I", "posted_at": "2026-10-04T00:00:00Z",
         "reply_count": 2, "like_count": 1, "is_reply": False, "has_media": True,
         "score": 55, "signals": ["need"],
     }
     with p1, p2, p3:
-        new, refreshed = await db.upsert_conversations(NPUB, [row, row])
-    assert (new, refreshed) == (2, 0)
+        ids, new, refreshed = await db.upsert_conversations(NPUB, [row, row])
+    assert (ids, new, refreshed) == ([RID, RID], 2, 0)
     q, args = cap.calls[0]
     assert q.startswith("INSERT INTO conversations AS c ")
     assert "conversations." not in q
@@ -119,8 +126,9 @@ async def test_upsert_aliases_table_never_sets_status_and_counts():
     set_clause = q.split("DO UPDATE SET", 1)[1]
     assert "status" not in set_clause
     assert "GREATEST(c.score, EXCLUDED.score)" in set_clause
-    assert "RETURNING (xmax = 0) AS inserted" in q
-    assert args[0] == NPUB and args[1] == QID and args[3] == "c1"
+    assert "query_id" not in q
+    assert "RETURNING id::text AS id, (xmax = 0) AS inserted" in q
+    assert args[0] == NPUB and args[1] == "mcp" and args[2] == "c1"
     assert args[-1] == json.dumps(["need"])
 
 
@@ -131,7 +139,7 @@ async def test_upsert_counts_refreshed_rows():
     row = {"query_text": "q", "conversation_id": "c", "tweet_id": "t", "author_id": "a",
            "author_username": "u", "text": "x"}
     with p1, p2, p3:
-        assert await db.upsert_conversations(NPUB, [row]) == (0, 1)
+        assert await db.upsert_conversations(NPUB, [row]) == ([], 0, 1)
 
 
 @pytest.mark.asyncio
@@ -157,6 +165,60 @@ async def test_purge_stale_scoped_and_keeps_engaged():
     assert q.startswith("DELETE FROM conversations WHERE npub = $1")
     assert "NOT (status = ANY($3::text[]))" in q
     assert args == (NPUB, 30, ["engaged"])
+    runs_q, runs_args = cap.calls[1]
+    assert runs_q.startswith("DELETE FROM conversation_runs WHERE npub = $1 AND query_id IS NULL")
+    assert runs_args == (NPUB, 30)
+
+
+@pytest.mark.asyncio
+async def test_record_run_scopes_hits_to_the_owner():
+    cap = Capture(row={"id": RUN})
+    p1, p2, p3 = _patched(cap)
+    with p1, p2, p3:
+        run_id = await db.record_run(
+            NPUB, query_id=None, query_text="mcp", posts_read=40, new_count=2, lead_ids=[RID],
+        )
+    assert run_id == RUN
+    run_q, run_args = cap.calls[0]
+    assert run_q.startswith("INSERT INTO conversation_runs (npub, query_id,")
+    assert run_args == (NPUB, None, "mcp", 40, 2)
+    hits_q, hits_args = cap.calls[1]
+    assert "WHERE c.npub = $1 AND c.id = ANY($3::uuid[])" in hits_q
+    assert hits_args == (NPUB, RUN, [RID])
+
+
+@pytest.mark.asyncio
+async def test_record_run_with_no_leads_writes_no_hits():
+    cap = Capture(row={"id": RUN})
+    p1, p2, p3 = _patched(cap)
+    with p1, p2, p3:
+        await db.record_run(NPUB, query_id=QID, query_text="q", posts_read=0, new_count=0, lead_ids=[])
+    assert len(cap.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_purge_query_detaches_then_deletes_only_orphans():
+    cap = Capture(rows=[{"lead_id": RID}, {"lead_id": RID}], result={"rowCount": 1})
+    p1, p2, p3 = _patched(cap)
+    with p1, p2, p3:
+        n = await db.purge_query(NPUB, QID)
+    assert n == 1
+    hits_q, hits_args = cap.calls[0]
+    assert hits_q.startswith("DELETE FROM conversation_hits h USING")
+    assert "r.npub = $1 AND r.query_id = $2::uuid AND c.npub = $1" in hits_q
+    assert hits_args == (NPUB, QID, 7, ["engaged"])
+    lead_q, lead_args = cap.calls[1]
+    assert "NOT EXISTS (SELECT 1 FROM conversation_hits h WHERE h.lead_id = c.id)" in lead_q
+    assert lead_args == (NPUB, [RID])
+
+
+@pytest.mark.asyncio
+async def test_purge_query_with_nothing_stale_deletes_nothing():
+    cap = Capture(rows=[])
+    p1, p2, p3 = _patched(cap)
+    with p1, p2, p3:
+        assert await db.purge_query(NPUB, QID) == 0
+    assert len(cap.calls) == 1
 
 
 @pytest.mark.asyncio
@@ -182,7 +244,7 @@ async def test_query_crud_scoped_and_query_change_resets_since_id():
     assert "since_id = NULL" not in cap.calls[5][0]
     assert "COALESCE($3, since_id)" in cap.calls[6][0]
     detach_q, delete_q = cap.calls[7][0], cap.calls[8][0]
-    assert detach_q.startswith("UPDATE conversations SET query_id = NULL")
+    assert detach_q.startswith("UPDATE conversation_runs SET query_id = NULL")
     assert delete_q.startswith("DELETE FROM conversation_queries")
 
 

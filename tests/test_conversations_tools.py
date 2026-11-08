@@ -17,6 +17,7 @@ from excalibur_mcp.x_client import XAPIError
 NPUB = "npub1l94pd4qu4eszrl6ek032ftcnsu3tt9a7xvq2zp7eaxeklp6mrpzssmq8pf"
 QID = "11111111-1111-1111-1111-111111111111"
 RID = "22222222-2222-2222-2222-222222222222"
+RUN = "33333333-3333-3333-3333-333333333333"
 TOOL = "tool-uuid"
 OWN = "777"
 
@@ -75,7 +76,8 @@ def _harness(client, *, saved=None):
     dbm = SimpleNamespace(
         get_query=AsyncMock(return_value=saved),
         purge_stale=AsyncMock(return_value=0),
-        upsert_conversations=AsyncMock(return_value=(1, 0)),
+        upsert_conversations=AsyncMock(return_value=([RID], 1, 0)),
+        record_run=AsyncMock(return_value=RUN),
         mark_query_run=AsyncMock(),
         STATUSES=tools.db.STATUSES,
         QUERY_LIMIT_PER_NPUB=50,
@@ -266,7 +268,10 @@ async def test_find_saved_query_threads_since_id_and_marks_run():
     assert client.calls[0]["since_id"] == "500"
     assert out["since_id"] == "500" and out["query_id"] == QID
     dbm.mark_query_run.assert_awaited_once_with(NPUB, QID, since_id="9", posts_read=1)
-    assert dbm.upsert_conversations.await_args.args[1][0]["query_id"] == QID
+    dbm.record_run.assert_awaited_once_with(
+        NPUB, query_id=QID, query_text="mcp", posts_read=1, new_count=1, lead_ids=[RID],
+    )
+    assert out["run_id"] == RUN
 
 
 @pytest.mark.asyncio
@@ -286,9 +291,20 @@ async def test_find_saved_weights_apply_under_call_overrides():
 
 
 @pytest.mark.asyncio
-async def test_find_adhoc_never_marks_a_run():
-    _, _, dbm = await _find(FakeClient([_page([_tweet("1")])]), query="mcp")
+async def test_find_adhoc_records_its_own_run_but_marks_no_query():
+    out, _, dbm = await _find(FakeClient([_page([_tweet("1")])]), query="mcp")
     dbm.mark_query_run.assert_not_awaited()
+    assert dbm.record_run.await_args.kwargs["query_id"] is None
+    assert dbm.record_run.await_args.kwargs["lead_ids"] == [RID]
+    assert out["run_id"] == RUN
+
+
+@pytest.mark.asyncio
+async def test_find_with_no_hits_still_records_the_run():
+    out, _, dbm = await _find(FakeClient([_page([])]), query="mcp")
+    dbm.upsert_conversations.assert_not_awaited()
+    assert dbm.record_run.await_args.kwargs["lead_ids"] == []
+    assert out["run_id"] == RUN
 
 
 # -- list / status / catalog -------------------------------------------------
@@ -306,12 +322,28 @@ async def test_list_threads_filters_and_adds_url():
 
 
 @pytest.mark.asyncio
-async def test_list_adhoc_and_bad_status():
+async def test_list_run_filters_and_bad_input():
     with patch.object(tools.db, "list_conversations", new=AsyncMock(return_value={"conversations": []})) as lst:
-        await tools.list_(NPUB, query_id="adhoc")
-    assert lst.await_args.kwargs["adhoc_only"] is True
+        await tools.list_(NPUB, run_id=RUN, mark_run_id=RUN)
+    kw = lst.await_args.kwargs
+    assert kw["run_id"] == RUN and kw["mark_run_id"] == RUN and kw["query_id"] is None
+    for bad in ({"status": "bogus"}, {"query_id": "adhoc"}, {"run_id": "nope"}):
+        with pytest.raises(ValueError):
+            await tools.list_(NPUB, **bad)
+
+
+@pytest.mark.asyncio
+async def test_purge_query_checks_owner_then_purges_seven_days():
+    with patch.object(tools.db, "get_query", new=AsyncMock(return_value=None)):
+        out = await tools.purge_query(NPUB, query_id=QID)
+    assert out["error_code"] == "conversation_query_not_found"
+    with patch.object(tools.db, "get_query", new=AsyncMock(return_value={"id": QID})), \
+            patch.object(tools.db, "purge_query", new=AsyncMock(return_value=3)) as purge:
+        out = await tools.purge_query(NPUB, query_id=QID)
+    purge.assert_awaited_once_with(NPUB, QID, days=7)
+    assert out == {"success": True, "id": QID, "purged": 3, "days": 7}
     with pytest.raises(ValueError):
-        await tools.list_(NPUB, status="bogus")
+        await tools.purge_query(NPUB, query_id="nope")
 
 
 @pytest.mark.asyncio

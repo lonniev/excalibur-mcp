@@ -201,6 +201,8 @@ _DOMAIN_TOOLS = [
                  title="Save a conversation query", behavior=SAVES, intent="Create or update a saved conversation query"),
     ToolIdentity(tool_id=capability_uuid("delete_conversation_query"), capability="delete_conversation_query", category="free",
                  title="Delete a conversation query", behavior=DELETES, intent="Delete a saved conversation query (its leads are kept)"),
+    ToolIdentity(tool_id=capability_uuid("purge_conversation_query"), capability="purge_conversation_query", category="free",
+                 title="Purge a conversation query", behavior=DELETES, intent="Forget a saved query's leads X no longer shows (engaged leads are kept)"),
     # Writing Voice — the patron's per-npub voice profile + "banned construction"
     # chips the editor feeds to refine_post_region. A singleton per npub (one
     # Voice, upserted). Priceable (read/write), proof-gated, owner-scoped — they
@@ -1053,7 +1055,7 @@ async def find_conversations(
     need, replies, band, spam, reply, replies_min, followers_min,
     followers_max, decay_hours).
 
-    Returns ``{posts_read, pages, new, refreshed, skipped_own, skipped_dupe,
+    Returns ``{run_id, posts_read, pages, new, refreshed, skipped_own, skipped_dupe,
     truncated_reason, top:[…]}``. Nothing is posted, liked or replied to —
     the reply is yours to write and send by hand.
 
@@ -1119,6 +1121,8 @@ async def reply_to_conversation(
 @runtime.paid_tool(capability_uuid("list_conversations"), catch_errors=True)
 async def list_conversations(
     query_id: str = "",
+    run_id: str = "",
+    mark_run_id: str = "",
     status: str = "",
     min_score: int = 0,
     sort_col: str = "score",
@@ -1132,19 +1136,23 @@ async def list_conversations(
     npub: PatronNpub = "",
 ) -> dict:
     """Page through your stored conversation leads, server-side sorted and
-    filtered. ``query_id`` narrows to one saved query (``"adhoc"`` for leads from
-    ad-hoc searches); ``status`` is a comma list of ``new|seen|engaged|dismissed``;
+    filtered. ``query_id`` narrows to every lead a saved query has found;
+    ``run_id`` narrows to the leads one search found (the ``run_id``
+    ``find_conversations`` returns, ad hoc or saved); ``status`` is a comma list of ``new|seen|engaged|dismissed``;
     ``min_score`` is 0..100. ``sort_col`` is one of
     ``score|found|seen|posted|replies|followers``; ``sort_dir`` is ``asc|desc``.
     ``search`` is a case-insensitive regex over the post text or author handle.
     ``date_from``/``date_to`` bound ``date_field`` (``found|posted``). ``page``
     is 0-indexed; ``page_size`` is 1..100. Free, owner-scoped. Each row carries
-    ``url`` — the thread on X — so you can open it without calling X yourself.
+    ``url`` — the thread on X — so you can open it without calling X yourself,
+    and ``query_ids``, the saved queries that found it.
     Returns ``{conversations:[…], total, page, page_size}``.
 
     Args:
-        query_id: UUID of a saved query to narrow to, ``adhoc`` for leads from
-            ad-hoc searches, or blank for all.
+        query_id: UUID of a saved query to narrow to, or blank for all.
+        run_id: UUID of one search's run to narrow to, or blank for all.
+        mark_run_id: UUID of a run; each row then carries ``in_run``, whether
+            that run found it. Blank for none.
         status: Comma-separated statuses from ``new``, ``seen``, ``engaged``,
             ``dismissed``; blank for all.
         min_score: Lowest score to include, 0..100.
@@ -1164,7 +1172,8 @@ async def list_conversations(
     from excalibur_mcp.tools import conversations as conversations_tools
 
     return await conversations_tools.list_(
-        npub, query_id=query_id, status=status, min_score=min_score,
+        npub, query_id=query_id, run_id=run_id, mark_run_id=mark_run_id,
+        status=status, min_score=min_score,
         sort_col=sort_col, sort_dir=sort_dir, page=page, page_size=page_size,
         search=search, date_from=date_from, date_to=date_to, date_field=date_field,
     )
@@ -1249,7 +1258,7 @@ async def delete_conversation_query(
     npub: PatronNpub = "",
 ) -> dict:
     """Delete one of your saved conversation queries. The leads it found are
-    kept (they become ad-hoc leads). Free and owner-scoped.
+    kept (its runs become ad-hoc runs). Free and owner-scoped.
 
     Args:
         query_id: The saved query's UUID.
@@ -1257,6 +1266,24 @@ async def delete_conversation_query(
     from excalibur_mcp.tools import conversations as conversations_tools
 
     return await conversations_tools.delete_query(npub, query_id=query_id)
+
+
+@tool
+@runtime.paid_tool(capability_uuid("purge_conversation_query"), catch_errors=True)
+async def purge_conversation_query(
+    query_id: str,
+    npub: PatronNpub = "",
+) -> dict:
+    """Forget a saved query's leads that X no longer shows: those not seen in
+    the last 7 days. Engaged leads stay, and so does a lead another search also
+    found. Free and owner-scoped. Returns ``{purged, days}``.
+
+    Args:
+        query_id: The saved query's UUID.
+    """
+    from excalibur_mcp.tools import conversations as conversations_tools
+
+    return await conversations_tools.purge_query(npub, query_id=query_id)
 
 
 # ---------------------------------------------------------------------------

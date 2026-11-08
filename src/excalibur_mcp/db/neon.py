@@ -39,6 +39,29 @@ _DOMAIN_TABLES: tuple[str, ...] = (
         "metrics_harvest_job",
         "conversation_queries",
         "conversations",
+        "conversation_runs",
+        "conversation_hits",
+    )
+
+
+def _query_id_backfill(t: Any) -> str:
+    """One run per (npub, query_id) holding the leads that column named, then
+    drop the column. Leads with no query (earlier ad hoc searches) get one ad
+    hoc run per patron. Guarded on the column, so it is a no-op once done."""
+    leads, runs, hits = t("conversations"), t("conversation_runs"), t("conversation_hits")
+    return (
+        "DO $$ BEGIN "
+        "IF EXISTS (SELECT 1 FROM pg_attribute "
+        f"WHERE attrelid = '{leads}'::regclass AND attname = 'query_id' AND NOT attisdropped) THEN "
+        f"EXECUTE 'INSERT INTO {runs} (npub, query_id, query_text, ran_at) "
+        f"SELECT npub, query_id, MIN(query_text), MAX(last_seen_at) FROM {leads} "
+        "GROUP BY npub, query_id'; "
+        f"EXECUTE 'INSERT INTO {hits} (run_id, lead_id) "
+        f"SELECT r.id, c.id FROM {leads} c JOIN {runs} r "
+        "ON r.npub = c.npub AND r.query_id IS NOT DISTINCT FROM c.query_id "
+        "ON CONFLICT DO NOTHING'; "
+        f"EXECUTE 'ALTER TABLE {leads} DROP COLUMN query_id'; "
+        "END IF; END $$"
     )
 
 
@@ -330,7 +353,6 @@ async def _ensure_domain_schema(vault: Any) -> None:
         f"CREATE TABLE IF NOT EXISTS {t('conversations')} ("
         "id UUID PRIMARY KEY DEFAULT gen_random_uuid(), "
         "npub TEXT NOT NULL, "
-        "query_id UUID, "                   # NULL once ad hoc or its query is deleted
         "query_text TEXT NOT NULL, "
         "conversation_id TEXT NOT NULL, "
         "tweet_id TEXT NOT NULL, "
@@ -362,8 +384,32 @@ async def _ensure_domain_schema(vault: Any) -> None:
         f"CREATE INDEX IF NOT EXISTS conversations_owner_score_idx "
         f"ON {t('conversations')} (npub, status, score DESC)",
 
-        f"CREATE INDEX IF NOT EXISTS conversations_owner_query_idx "
-        f"ON {t('conversations')} (npub, query_id)",
+        # One row per search the patron ran: a saved query's re-run, or an ad
+        # hoc search (query_id NULL). A hit says this run found that lead, so a
+        # thread two queries both found shows under each of them.
+        f"CREATE TABLE IF NOT EXISTS {t('conversation_runs')} ("
+        "id UUID PRIMARY KEY DEFAULT gen_random_uuid(), "
+        "npub TEXT NOT NULL, "
+        "query_id UUID, "
+        "query_text TEXT NOT NULL, "
+        "ran_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), "
+        "posts_read INT NOT NULL DEFAULT 0, "
+        "new_count INT NOT NULL DEFAULT 0)",
+
+        f"CREATE INDEX IF NOT EXISTS conversation_runs_owner_query_idx "
+        f"ON {t('conversation_runs')} (npub, query_id, ran_at DESC)",
+
+        f"CREATE TABLE IF NOT EXISTS {t('conversation_hits')} ("
+        f"run_id UUID NOT NULL REFERENCES {t('conversation_runs')} (id) ON DELETE CASCADE, "
+        f"lead_id UUID NOT NULL REFERENCES {t('conversations')} (id) ON DELETE CASCADE, "
+        "PRIMARY KEY (run_id, lead_id))",
+
+        f"CREATE INDEX IF NOT EXISTS conversation_hits_lead_idx "
+        f"ON {t('conversation_hits')} (lead_id)",
+
+        # Leads once carried the single query that found them first. Move that
+        # into one run per (patron, query) and drop the column. Runs once.
+        _query_id_backfill(t),
     ]
     for stmt in stmts:
         try:

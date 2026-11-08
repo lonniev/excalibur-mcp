@@ -4,8 +4,25 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
-  compactCount, runSummary, scoreTone, statusCounts, STATUSES,
+  ALL_LEADS, compactCount, runSummary, scoreTone, sourceNames, statusCounts, STATUSES, viewStatuses,
 } from "./conversationsPresentation.ts";
+
+describe("viewStatuses", () => {
+  it("keeps the working list to open leads and shows a search's results whole", () => {
+    assert.deepEqual(viewStatuses(ALL_LEADS), ["new", "seen"]);
+    assert.deepEqual(viewStatuses({ kind: "query", queryId: "q" }), [...STATUSES]);
+    assert.deepEqual(viewStatuses({ kind: "run", runId: "r", label: "mcp" }), [...STATUSES]);
+  });
+});
+
+describe("sourceNames", () => {
+  it("names every saved query that found a lead, else ad hoc", () => {
+    const queries = [{ id: "a", name: "MCP" }, { id: "b", name: "Lightning" }];
+    assert.equal(sourceNames(["a", "b"], queries), "MCP, Lightning");
+    assert.equal(sourceNames(["gone"], queries), "ad hoc");
+    assert.equal(sourceNames([], queries), "ad hoc");
+  });
+});
 
 describe("scoreTone", () => {
   it("bands at 60 and 30", () => {

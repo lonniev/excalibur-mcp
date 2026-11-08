@@ -33,6 +33,8 @@ _LOCATION_MAX = 64
 MAX_POSTS_FLOOR = 10
 MAX_POSTS_CAP = 300
 TOP_N = 10
+# X searches the last 7 days; a lead not seen in that long will not come back.
+PURGE_DAYS = 7
 _SINCE_ID_WINDOW = timedelta(days=7)
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 _QUOTED_RE = re.compile(r'"[^"]*"')
@@ -183,6 +185,17 @@ async def delete_query(npub: str, *, query_id: str) -> dict[str, Any]:
     return {"success": True, "deleted": True, "id": qid}
 
 
+async def purge_query(npub: str, *, query_id: str) -> dict[str, Any]:
+    """Forget a saved query's leads X no longer shows (not seen for 7 days).
+    Engaged leads stay, and so does a lead another search also found."""
+    qid = _require_uuid(query_id, "query_id")
+    if await db.get_query(npub, qid) is None:
+        return {"success": False, "error_code": "conversation_query_not_found",
+                "message": "No saved query with that id for this npub."}
+    purged = await db.purge_query(npub, qid, days=PURGE_DAYS)
+    return {"success": True, "id": qid, "purged": purged, "days": PURGE_DAYS}
+
+
 # ---------------------------------------------------------------------------
 # Leads (free)
 # ---------------------------------------------------------------------------
@@ -192,6 +205,8 @@ async def list_(
     npub: str,
     *,
     query_id: str = "",
+    run_id: str = "",
+    mark_run_id: str = "",
     status: str = "",
     min_score: int = 0,
     sort_col: str = "score",
@@ -203,16 +218,11 @@ async def list_(
     date_to: str = "",
     date_field: str = "found",
 ) -> dict[str, Any]:
-    qid: str | None = None
-    adhoc = False
-    if query_id == "adhoc":
-        adhoc = True
-    elif query_id:
-        qid = _require_uuid(query_id, "query_id")
     out = await db.list_conversations(
         npub,
-        query_id=qid,
-        adhoc_only=adhoc,
+        query_id=_require_uuid(query_id, "query_id") if query_id else None,
+        run_id=_require_uuid(run_id, "run_id") if run_id else None,
+        mark_run_id=_require_uuid(mark_run_id, "mark_run_id") if mark_run_id else None,
         statuses=_clean_statuses(status) or None,
         min_score=_clamp_int(min_score, 0, 100, "min_score"),
         sort_col=sort_col, sort_dir=sort_dir, page=page, page_size=page_size,
@@ -249,7 +259,7 @@ def _parse_ts(value: Any) -> datetime | None:
 
 def _row_from(
     tweet: dict[str, Any], author: dict[str, Any], *,
-    query_id: str | None, query_text: str, score: int, signals: list[str],
+    query_text: str, score: int, signals: list[str],
 ) -> dict[str, Any]:
     metrics = tweet.get("public_metrics") or {}
     author_metrics = author.get("public_metrics") or {}
@@ -257,7 +267,6 @@ def _row_from(
     cid = str(tweet.get("conversation_id") or tid)
     location = str(author.get("location") or "").strip()[:_LOCATION_MAX] or None
     return {
-        "query_id": query_id,
         "query_text": query_text,
         "conversation_id": cid,
         "tweet_id": tid,
@@ -388,7 +397,7 @@ async def find(
             continue
         author = users.get(author_id) or {}
         score, signals = scoring.score_tweet(tweet, author, weights=merged_weights, now=now)
-        row = _row_from(tweet, author, query_id=qid, query_text=query_text,
+        row = _row_from(tweet, author, query_text=query_text,
                         score=score, signals=signals)
         if not row["tweet_id"] or not row["author_id"]:
             continue
@@ -399,7 +408,13 @@ async def find(
     skipped_dupe = len(tweets) - skipped_own - len(kept)
 
     await db.purge_stale(npub)
-    new, refreshed = await db.upsert_conversations(npub, kept) if kept else (0, 0)
+    lead_ids, new, refreshed = (
+        await db.upsert_conversations(npub, kept) if kept else ([], 0, 0)
+    )
+    run_id = await db.record_run(
+        npub, query_id=qid, query_text=query_text, posts_read=posts_read,
+        new_count=new, lead_ids=lead_ids,
+    )
     if qid:
         await db.mark_query_run(npub, qid, since_id=newest_id, posts_read=posts_read)
 
@@ -411,6 +426,7 @@ async def find(
     return {
         "success": True,
         "query_id": qid,
+        "run_id": run_id,
         "query": query_text,
         "effective_query": effective,
         "posts_read": posts_read,

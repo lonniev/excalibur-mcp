@@ -148,6 +148,7 @@ call with `check_price`. Read and auth tools are free.
 | `list_conversation_queries` | List your saved conversation queries (free) |
 | `save_conversation_query` | Create or update a saved conversation query (free) |
 | `delete_conversation_query` | Delete a saved query; its leads are kept (free) |
+| `purge_conversation_query` | Forget a saved query's leads X no longer shows; engaged leads are kept (free) |
 
 **Post metrics**
 

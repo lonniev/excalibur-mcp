@@ -133,7 +133,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS conversation_queries_name_uniq
 CREATE TABLE IF NOT EXISTS conversations (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     npub             TEXT NOT NULL,
-    query_id         UUID,
     query_text       TEXT NOT NULL,
     conversation_id  TEXT NOT NULL,
     tweet_id         TEXT NOT NULL,
@@ -163,5 +162,28 @@ CREATE UNIQUE INDEX IF NOT EXISTS conversations_owner_conv_uniq
 CREATE INDEX IF NOT EXISTS conversations_owner_score_idx
     ON conversations (npub, status, score DESC);
 
-CREATE INDEX IF NOT EXISTS conversations_owner_query_idx
-    ON conversations (npub, query_id);
+-- One row per search the patron ran: a saved query's run, or an ad hoc search
+-- (query_id NULL). A hit says this run found that lead, so a thread two
+-- queries both found shows under each of them. (Leads once carried a single
+-- query_id; db/neon.py moves it into runs and drops the column.)
+CREATE TABLE IF NOT EXISTS conversation_runs (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    npub        TEXT NOT NULL,
+    query_id    UUID,
+    query_text  TEXT NOT NULL,
+    ran_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    posts_read  INT NOT NULL DEFAULT 0,
+    new_count   INT NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS conversation_runs_owner_query_idx
+    ON conversation_runs (npub, query_id, ran_at DESC);
+
+CREATE TABLE IF NOT EXISTS conversation_hits (
+    run_id   UUID NOT NULL REFERENCES conversation_runs (id) ON DELETE CASCADE,
+    lead_id  UUID NOT NULL REFERENCES conversations (id) ON DELETE CASCADE,
+    PRIMARY KEY (run_id, lead_id)
+);
+
+CREATE INDEX IF NOT EXISTS conversation_hits_lead_idx
+    ON conversation_hits (lead_id);

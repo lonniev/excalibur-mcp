@@ -1,0 +1,3 @@
+- Leads: each search now shows its own results. An ad hoc search lists just what it found. Clicking a saved query lists every lead it has found, including threads another query found first. Searching it again marks what that run found. A search's results show every status, and the All-leads list keeps new and seen.
+- Leads: each saved query has a Purge button (`purge_conversation_query`, free) that forgets its leads X no longer shows. Engaged leads stay, and so does any lead another search also found.
+- `find_conversations` returns `run_id`. `list_conversations` takes `run_id` and `mark_run_id` instead of `query_id="adhoc"`, and each lead carries `query_ids`, the saved queries that found it.
