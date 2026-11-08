@@ -1,11 +1,11 @@
-import { Loader2, Pencil, Plus, Radar, Shield, ShieldOff, Trash2 } from "lucide-react";
+import { Eraser, Loader2, Pencil, Plus, Radar, Shield, ShieldOff, Trash2 } from "lucide-react";
 import type { ConversationQueryRow } from "../lib/mcp";
 import { lastRunLabel } from "../lib/conversationsPresentation";
 
-/// The patron's saved-query catalog: one row each, with Run / Edit / Delete.
-/// Selecting a row filters the leads below to that query.
+/// The patron's saved-query catalog: one row each, with Search again / Edit /
+/// Purge / Delete. Selecting a row shows every lead that query has found.
 export default function ConversationQueriesPanel({
-  queries, selected, runningId, onSelect, onRun, onEdit, onDelete, onNew,
+  queries, selected, runningId, onSelect, onRun, onEdit, onDelete, onPurge, onNew,
 }: {
   queries: ConversationQueryRow[];
   selected: string;
@@ -14,6 +14,7 @@ export default function ConversationQueriesPanel({
   onRun: (q: ConversationQueryRow) => void;
   onEdit: (q: ConversationQueryRow) => void;
   onDelete: (q: ConversationQueryRow) => void;
+  onPurge: (q: ConversationQueryRow) => void;
   onNew: () => void;
 }) {
   return (
@@ -70,13 +71,16 @@ export default function ConversationQueriesPanel({
                       <button
                         onClick={(e) => { e.stopPropagation(); onRun(q); }}
                         disabled={runningId !== null}
-                        title="Run — searches X's last 7 days, newer than the last run"
+                        title="Search again — adds X posts newer than the last run"
                         className="hover:text-amber-600 disabled:opacity-40 dark:hover:text-amber-400"
                       >
                         {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Radar className="h-4 w-4" />}
                       </button>
                       <button onClick={(e) => { e.stopPropagation(); onEdit(q); }} title="Edit" className="hover:text-amber-600 dark:hover:text-amber-400">
                         <Pencil className="h-4 w-4" />
+                      </button>
+                      <button onClick={(e) => { e.stopPropagation(); onPurge(q); }} title="Purge leads X no longer shows (engaged leads are kept)" className="hover:text-amber-600 dark:hover:text-amber-400">
+                        <Eraser className="h-4 w-4" />
                       </button>
                       <button onClick={(e) => { e.stopPropagation(); onDelete(q); }} title="Delete (its leads are kept)" className="hover:text-red-500">
                         <Trash2 className="h-4 w-4" />

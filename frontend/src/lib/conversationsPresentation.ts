@@ -29,6 +29,27 @@ export function replyIntentUrl(tweetId: string, text: string): string {
 
 export const STATUSES: readonly ConversationStatus[] = ["new", "seen", "engaged", "dismissed"];
 
+/// What the lead table shows: every lead, everything one saved query has
+/// found (with the leads its latest run found marked), or one search's
+/// results.
+export type LeadsView =
+  | { kind: "all" }
+  | { kind: "query"; queryId: string; runId?: string }
+  | { kind: "run"; runId: string; label: string };
+
+export const ALL_LEADS: LeadsView = { kind: "all" };
+
+/// The working list hides what is done; a search's own results show it all.
+export function viewStatuses(view: LeadsView): ConversationStatus[] {
+  return view.kind === "all" ? ["new", "seen"] : [...STATUSES];
+}
+
+/// The saved queries that found a lead, by name; "ad hoc" when none did.
+export function sourceNames(ids: readonly string[], queries: readonly { id: string; name: string }[]): string {
+  const names = ids.map((id) => queries.find((q) => q.id === id)?.name).filter((n): n is string => !!n);
+  return names.length ? names.join(", ") : "ad hoc";
+}
+
 export type ScoreTone = "hot" | "warm" | "cool";
 
 /// 60+ is a question worth answering today; 30+ is worth a look; below that

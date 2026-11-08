@@ -585,7 +585,10 @@ export type ConversationStatus = "new" | "seen" | "engaged" | "dismissed";
 /// never calls X. `signals` names every scoring weight that fired.
 export interface ConversationRow {
   id: string;
-  query_id: string | null;
+  /// The saved queries whose runs found this lead; empty when only ad hoc searches did.
+  query_ids: string[];
+  /// Whether the run named by `markRunId` found it.
+  in_run?: boolean;
   query_text: string;
   conversation_id: string;
   tweet_id: string;
@@ -637,6 +640,7 @@ export interface ListConversationsResult {
 export interface FindConversationsResult {
   success?: boolean;
   query_id?: string | null;
+  run_id?: string;
   query?: string;
   effective_query?: string;
   posts_read?: number;
@@ -684,11 +688,14 @@ export async function findConversations(opts: {
 }
 
 /// Server-side sorted + offset-paginated lead list (the Snippets model).
-/// `queryId` narrows to one saved query, or `"adhoc"` for ad-hoc leads.
+/// `queryId` narrows to every lead a saved query has found; `runId` to the
+/// leads one search found. `markRunId` flags each row that run found.
 /// `sortCol` ∈ score|found|seen|posted|replies|followers.
 export async function listConversations(
   opts: {
     queryId?: string;
+    runId?: string;
+    markRunId?: string;
     statuses?: ConversationStatus[];
     minScore?: number;
     sortCol?: string;
@@ -704,6 +711,8 @@ export async function listConversations(
     page_size: opts.pageSize ?? 25,
   };
   if (opts.queryId) args.query_id = opts.queryId;
+  if (opts.runId) args.run_id = opts.runId;
+  if (opts.markRunId) args.mark_run_id = opts.markRunId;
   if (opts.statuses?.length) args.status = opts.statuses.join(",");
   if (opts.minScore) args.min_score = opts.minScore;
   if (opts.search) args.search = opts.search;
@@ -764,6 +773,16 @@ export async function saveConversationQuery(opts: {
 export async function deleteConversationQuery(id: string): Promise<boolean> {
   const r = await callTool<ConversationQueriesResult>("delete_conversation_query", { query_id: id });
   return r.deleted === true;
+}
+
+/// Forget a saved query's leads X no longer shows (not seen in 7 days).
+/// Engaged leads stay. Returns how many leads were deleted.
+export async function purgeConversationQuery(id: string): Promise<number> {
+  const r = await callTool<{ success?: boolean; purged?: number; message?: string; error?: string }>(
+    "purge_conversation_query", { query_id: id },
+  );
+  if (r.success === false) throw new Error(r.message || r.error || "Purge failed.");
+  return r.purged ?? 0;
 }
 
 // ─── Writing Voice (Neon-backed, npub-scoped singleton, free + proof-gated) ──

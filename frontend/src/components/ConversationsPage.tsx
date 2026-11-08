@@ -2,11 +2,11 @@ import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   ChevronDown, ChevronRight, Eye, ExternalLink, Image, Loader2, MapPin, MessageCircle,
-  MessageSquare, Radar, Reply, Search, Users, X,
+  MessageSquare, Radar, Reply, Search, Sparkles, Users, X,
 } from "lucide-react";
 import {
   deleteConversationQuery, findConversations, listConversationQueries, listConversations,
-  OAUTH_NEEDED_CODES, setConversationStatus,
+  OAUTH_NEEDED_CODES, purgeConversationQuery, setConversationStatus,
   type ConversationQueryRow, type ConversationRow, type ConversationStatus,
 } from "../lib/mcp";
 import { formatDateTime, localDateFilterBounds, type SortDir } from "@tollbooth-dpyc/web";
@@ -28,7 +28,8 @@ import {
 import { QUOTES } from "../lib/quotes";
 import { quoteStyles } from "../lib/quoteStyles";
 import {
-  compactCount, MAX_CLAUSE, normalizePgTimestamp, runSummary, scoreTone, SIGNAL_TITLES, STATUSES,
+  ALL_LEADS, compactCount, MAX_CLAUSE, normalizePgTimestamp, runSummary, scoreTone, SIGNAL_TITLES,
+  sourceNames, STATUSES, viewStatuses, type LeadsView,
 } from "../lib/conversationsPresentation";
 import ConversationQueriesPanel from "./ConversationQueriesPanel";
 import ConversationQueryEditor, { emptyQuery } from "./ConversationQueryEditor";
@@ -67,9 +68,9 @@ export default function ConversationsPage() {
   const [dateField, setDateField] = useState("found");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [statuses, setStatuses] = useState<ConversationStatus[]>(["new", "seen"]);
+  const [view, setView] = useState<LeadsView>(ALL_LEADS);
+  const [statuses, setStatuses] = useState<ConversationStatus[]>(viewStatuses(ALL_LEADS));
   const [queries, setQueries] = useState<ConversationQueryRow[]>([]);
-  const [selectedQuery, setSelectedQuery] = useState<string>("");
   const [adhoc, setAdhoc] = useState("");
   const [runningId, setRunningId] = useState<string | null>(null);
   const [lastRun, setLastRun] = useState<string | null>(null);
@@ -95,7 +96,10 @@ export default function ConversationsPage() {
     try {
       const bounds = localDateFilterBounds(dateFrom, dateTo, timeZone);
       const r = await listConversations({
-        queryId: selectedQuery, statuses, sortCol, sortDir, page, pageSize: PAGE_SIZE, search,
+        queryId: view.kind === "query" ? view.queryId : undefined,
+        runId: view.kind === "run" ? view.runId : undefined,
+        markRunId: view.kind === "query" ? view.runId : undefined,
+        statuses, sortCol, sortDir, page, pageSize: PAGE_SIZE, search,
         dateFrom: bounds.dateFrom, dateTo: bounds.dateTo, dateField,
       });
       if (r.error) setError(r.error);
@@ -106,10 +110,18 @@ export default function ConversationsPage() {
     } finally {
       setLoading(false);
     }
-  }, [selectedQuery, statuses, sortCol, sortDir, page, search, dateFrom, dateTo, dateField, timeZone]);
+  }, [view, statuses, sortCol, sortDir, page, search, dateFrom, dateTo, dateField, timeZone]);
 
   useEffect(() => { refreshQueries(); }, [refreshQueries]);
   useEffect(() => { refresh(); }, [refresh]);
+
+  /// Switch what the table shows. A search's own results show every status.
+  function show(next: LeadsView) {
+    setView(next);
+    setStatuses(viewStatuses(next));
+    setPage(0);
+    setOpen(null);
+  }
 
   function onSort(col: string, dir: SortDir) {
     setSortCol(col);
@@ -141,10 +153,10 @@ export default function ConversationsPage() {
     setError(null);
     setLastRun(null);
     try {
-      if (handleRunResult(await findConversations({ queryId: q.id }))) {
-        setSelectedQuery(q.id);
-        setPage(0);
-        await Promise.all([refresh(), refreshQueries()]);
+      const r = await findConversations({ queryId: q.id });
+      if (handleRunResult(r)) {
+        show({ kind: "query", queryId: q.id, runId: r.run_id });
+        await refreshQueries();
       }
     } catch (e) {
       setError((e as Error).message);
@@ -160,11 +172,8 @@ export default function ConversationsPage() {
     setError(null);
     setLastRun(null);
     try {
-      if (handleRunResult(await findConversations({ query: q }))) {
-        setSelectedQuery("adhoc");
-        setPage(0);
-        await refresh();
-      }
+      const r = await findConversations({ query: q });
+      if (handleRunResult(r) && r.run_id) show({ kind: "run", runId: r.run_id, label: q });
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -189,7 +198,7 @@ export default function ConversationsPage() {
     setError(null);
     try {
       await deleteConversationQuery(q.id);
-      if (selectedQuery === q.id) setSelectedQuery("");
+      if (view.kind === "query" && view.queryId === q.id) show(ALL_LEADS);
       if (editing?.id === q.id) setEditing(null);
       await refreshQueries();
     } catch (err) {
@@ -197,8 +206,21 @@ export default function ConversationsPage() {
     }
   }
 
+  async function purgeQuery(q: ConversationQueryRow) {
+    if (!window.confirm(`Forget the leads "${q.name}" found that X no longer shows? Engaged leads are kept.`)) return;
+    setError(null);
+    try {
+      const n = await purgeConversationQuery(q.id);
+      setLastRun(`${n} purged`);
+      await refresh();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
   const running = runningId !== null;
-  const queryName = (id: string | null) => queries.find((q) => q.id === id)?.name ?? "ad hoc";
+  const viewQuery = view.kind === "query" ? queries.find((q) => q.id === view.queryId) : undefined;
+  const viewLabel = view.kind === "query" ? viewQuery?.name ?? "query" : view.kind === "run" ? `“${view.label}”` : "";
 
   return (
     <div className="mx-auto w-[90%] max-w-[1600px] px-4 py-6">
@@ -222,10 +244,10 @@ export default function ConversationsPage() {
             const isNew = !editing.id;
             setEditing(null);
             await refreshQueries();
-            setSelectedQuery(saved.id);
             // A query the patron just wrote is a question they want answered now;
             // saving without running left them staring at "no leads match".
             if (isNew) await runSaved(saved);
+            else show({ kind: "query", queryId: saved.id });
           }}
           onDelete={editing.id ? () => removeQuery(editing) : undefined}
         />
@@ -233,12 +255,13 @@ export default function ConversationsPage() {
 
       <ConversationQueriesPanel
         queries={queries}
-        selected={selectedQuery}
+        selected={view.kind === "query" ? view.queryId : ""}
         runningId={runningId}
-        onSelect={(id) => { setSelectedQuery(id); setPage(0); }}
+        onSelect={(id) => show(id ? { kind: "query", queryId: id } : ALL_LEADS)}
         onRun={runSaved}
         onEdit={setEditing}
         onDelete={removeQuery}
+        onPurge={purgeQuery}
         onNew={() => setEditing(emptyQuery())}
       />
 
@@ -280,13 +303,15 @@ export default function ConversationsPage() {
             </button>
           );
         })}
-        {selectedQuery && (
+        {view.kind !== "all" && (
           <button
-            onClick={() => { setSelectedQuery(""); setPage(0); }}
-            className="ml-2 inline-flex items-center gap-1 rounded-full border border-amber-500 bg-amber-100 px-2.5 py-0.5 text-xs text-amber-900 dark:bg-amber-500/20 dark:text-amber-200"
-            title="Showing leads from this query only — click to show all"
+            onClick={() => show(ALL_LEADS)}
+            className="ml-2 inline-flex max-w-xs items-center gap-1 rounded-full border border-amber-500 bg-amber-100 px-2.5 py-0.5 text-xs text-amber-900 dark:bg-amber-500/20 dark:text-amber-200"
+            title="All leads"
           >
-            {queryName(selectedQuery)} <X className="h-3 w-3" />
+            {view.kind === "query" ? <Radar className="h-3 w-3 shrink-0" /> : <Search className="h-3 w-3 shrink-0" />}
+            <span className="truncate">{viewLabel}</span>
+            <X className="h-3 w-3 shrink-0" />
           </button>
         )}
       </div>
@@ -326,10 +351,10 @@ export default function ConversationsPage() {
       ) : rows.length === 0 ? (
         <div className="text-center py-12">
           <p className="text-sm text-stone-400 dark:text-zinc-500">
-            {selectedQuery && selectedQuery !== "adhoc" && !queries.find((q) => q.id === selectedQuery)?.last_run_at
+            {view.kind === "query" && viewQuery && !viewQuery.last_run_at
               ? "This query hasn't run yet."
-              : total === 0 && !search && !dateFrom && !dateTo && !selectedQuery && statuses.length === STATUSES.length
-                ? "No leads yet — run a search."
+              : view.kind === "run" && !search && !dateFrom && !dateTo && statuses.length === STATUSES.length
+                ? "This search found no one."
                 : "No leads match this filter."}
           </p>
         </div>
@@ -356,7 +381,7 @@ export default function ConversationsPage() {
                     expanded={expanded}
                     replying={replying === r.id}
                     timeZone={timeZone}
-                    queryName={queryName(r.query_id)}
+                    sources={sourceNames(r.query_ids ?? [], queries)}
                     onToggle={() => setOpen(expanded ? null : r.id)}
                     onMark={mark}
                     onReply={(e) => { e.stopPropagation(); setReplying(replying === r.id ? null : r.id); setOpen(r.id); }}
@@ -376,13 +401,13 @@ export default function ConversationsPage() {
 }
 
 function LeadRow({
-  row: r, expanded, replying, timeZone, queryName, onToggle, onMark, onReply, onReplyClose, onReplied, onNeedsXConnect,
+  row: r, expanded, replying, timeZone, sources, onToggle, onMark, onReply, onReplyClose, onReplied, onNeedsXConnect,
 }: {
   row: ConversationRow;
   expanded: boolean;
   replying: boolean;
   timeZone: string;
-  queryName: string;
+  sources: string;
   onToggle: () => void;
   onMark: (e: React.MouseEvent, row: ConversationRow, status: ConversationStatus) => void;
   onReply: (e: React.MouseEvent) => void;
@@ -407,6 +432,11 @@ function LeadRow({
           <span className="ml-1.5 inline-flex gap-1 align-middle text-stone-400 dark:text-zinc-500">
             {r.signals.includes("need") && <MessageSquare className="h-3.5 w-3.5" aria-label={SIGNAL_TITLES.need} />}
             {r.has_media && <Image className="h-3.5 w-3.5" aria-label="Has a photo" />}
+            {r.in_run && (
+              <span title="Found by this run" className="text-amber-500">
+                <Sparkles className="h-3.5 w-3.5" aria-label="Found by this run" />
+              </span>
+            )}
           </span>
         </td>
         <td className="px-3 py-2.5 align-top max-w-xl">
@@ -473,7 +503,7 @@ function LeadRow({
               )}
               <div>♥ {r.like_count} · {r.is_reply ? "a reply in the thread" : "top of the thread"}</div>
               <div>Found {when(r.found_at, timeZone)} · last seen {when(r.last_seen_at, timeZone)}</div>
-              <div>From <span className="text-stone-700 dark:text-zinc-300">{queryName}</span>{r.status_at && <> · {r.status} {when(r.status_at, timeZone)}</>}</div>
+              <div>From <span className="text-stone-700 dark:text-zinc-300">{sources}</span>{r.status_at && <> · {r.status} {when(r.status_at, timeZone)}</>}</div>
               {r.reply_url && (
                 <a
                   href={r.reply_url}
