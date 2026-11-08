@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { execSync } from 'child_process'
 import { readFileSync } from 'fs'
+import { agentGuide } from '@tollbooth-dpyc/web/agent-guide'
 
 const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'))
 
@@ -23,7 +24,19 @@ function resolveCommit(): string {
 }
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [
+    react(), tailwindcss(),
+    agentGuide({
+      name: "eXcalibur Posts Manager",
+      summary: "An AI-assisted content management system for your X (Twitter) posts, built on eXcalibur MCP. Write block-structured drafts, refine flagged passages with AI, schedule and repost, keep a snippet library, and publish to X.",
+      site: "https://excalibur.tollbooth-dpyc.com",
+      mcpUrl: "https://excalibur-mcp.fastmcp.app/mcp",
+      toolPrefix: "excalibur",
+      source: "https://github.com/lonniev/excalibur-mcp",
+      registryName: "io.github.lonniev/excalibur-mcp",
+      body: "agent-guide.md",
+    }),
+  ],
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
     __BUILD_COMMIT__: JSON.stringify(resolveCommit()),
