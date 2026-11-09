@@ -1047,7 +1047,7 @@ async def find_conversations(
     Pass exactly one of ``query_id`` (a saved query from
     ``save_conversation_query``) or ``query`` (an ad-hoc X search clause — your
     domain nouns are the selector; X has no ``?`` operator). ``safe_defaults``
-    appends ``-is:retweet -has:cashtags lang:en``;
+    appends ``-is:retweet lang:en``;
     your own posts are always excluded. ``max_posts`` caps the read
     (10..300) — every post X returns is billed to the operator, which is what
     this tool's fare covers. A saved query re-run reads only posts newer than
@@ -1061,7 +1061,7 @@ async def find_conversations(
 
     Args:
         query_id: UUID of a saved query to run. Give this or ``query``.
-        query: An ad-hoc X search clause, up to 449 characters, with no ``?``
+        query: An ad-hoc X search clause, up to 463 characters, with no ``?``
             operator. Give this or ``query_id``.
         max_posts: Most posts to read from X, 10..300.
         weights: Scoring overrides for this call, an object whose keys are any
@@ -1069,7 +1069,7 @@ async def find_conversations(
             ``replies_min``, ``followers_min``, ``followers_max``,
             ``decay_hours`` with integer values, laid over the saved query's
             weights or the defaults; null adds no overrides.
-        safe_defaults: ``true`` appends ``-is:retweet -has:cashtags lang:en`` to an ad-hoc ``query``; a saved query uses its own setting.
+        safe_defaults: ``true`` appends ``-is:retweet lang:en`` to an ad-hoc ``query``; a saved query uses its own setting.
     """
     from excalibur_mcp.tools import conversations as conversations_tools
 
@@ -1232,7 +1232,7 @@ async def save_conversation_query(
     Args:
         name: The query's name, up to 120 characters and unique among your
             queries. Required on create; blank on update keeps it.
-        query: The X search clause, up to 449 characters, with no ``?``
+        query: The X search clause, up to 463 characters, with no ``?``
             operator. Required on create; blank on update keeps it.
         query_id: UUID of the query to update; blank creates a new one.
         weights: Scoring overrides to store, an object whose keys are any of

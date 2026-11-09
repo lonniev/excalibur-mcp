@@ -73,7 +73,7 @@ export default function ConversationQueryEditor({ row, onClose, onSaved, onDelet
         />
         <label
           className="inline-flex items-center gap-1.5 text-xs text-stone-500 dark:text-zinc-400"
-          title="Append -is:retweet -has:cashtags lang:en"
+          title="Append -is:retweet lang:en"
         >
           <input type="checkbox" checked={safe} onChange={(e) => setSafe(e.target.checked)} />
           safe defaults

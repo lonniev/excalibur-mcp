@@ -201,7 +201,7 @@ async def test_find_composes_query_excludes_self_and_pages_to_cap():
         _page([_tweet(str(i)) for i in range(200, 300)], next_token="n4"),
     ])
     out, runtime, dbm = await _find(client, query="mcp", max_posts=250)
-    assert client.calls[0]["query"] == f"(mcp) -is:retweet -has:cashtags lang:en -from:{OWN}"
+    assert client.calls[0]["query"] == f"(mcp) -is:retweet lang:en -from:{OWN}"
     assert [c["max_results"] for c in client.calls] == [100, 100, 50]
     assert client.calls[1]["next_token"] == "n2"
     assert out["posts_read"] == 300 and out["pages"] == 3
