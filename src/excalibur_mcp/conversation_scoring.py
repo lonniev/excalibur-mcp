@@ -7,7 +7,7 @@ here knows what the patron sells: the need phrases and spam markers are the
 shape of a question and the shape of a shill, not a domain vocabulary.
 
 Learned from the discovery spike (2026-10-04): the search window is 7 days;
-``-has:links`` is safe because a photo is not a link; ``-has:cashtags`` cuts
+links are kept, since many good posts carry one (owner, 2026-11-09); ``-has:cashtags`` cuts
 most token-shill noise; bare domain nouns are the selector and a required
 co-noun collapses the result set. ``?`` is not an X operator.
 """
@@ -60,9 +60,9 @@ _SPAM_RE = re.compile(
     r"\$[A-Za-z]{2,10}\b|" + "|".join(re.escape(w) for w in SPAM_WORDS), re.IGNORECASE,
 )
 
-# X's "safe defaults": drop reposts, posts carrying an external link (a photo is
-# not a link), posts with cashtags, and non-English — unless the patron opts out.
-SAFE_DEFAULTS = "-is:retweet -has:links -has:cashtags lang:en"
+# X's "safe defaults": drop reposts, posts with cashtags, and non-English —
+# unless the patron opts out. Posts with links stay.
+SAFE_DEFAULTS = "-is:retweet -has:cashtags lang:en"
 # X's own ceiling on a recent-search query. The patron's clause gets whatever
 # is left after the parentheses, the safe defaults and ``-from:<own id>`` (X
 # user ids run to 20 digits) — no tighter than the endpoint itself.

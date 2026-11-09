@@ -1,0 +1,1 @@
+- Leads searches keep posts that carry a link; the default filter now drops only reposts, cashtags and non-English posts.

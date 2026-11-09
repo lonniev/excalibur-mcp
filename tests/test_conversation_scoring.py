@@ -113,7 +113,7 @@ def test_effective_weights_layers_in_order():
 
 def test_compose_query_wraps_defaults_and_excludes_self():
     assert sc.compose_query("mcp server", "123") == (
-        "(mcp server) -is:retweet -has:links -has:cashtags lang:en -from:123"
+        "(mcp server) -is:retweet -has:cashtags lang:en -from:123"
     )
 
 
@@ -135,4 +135,4 @@ def test_clause_budget_is_x_limit_minus_what_we_append():
     # A clause exactly at the budget composes to ≤ 512 even with a 20-digit own id.
     clause = "x" * sc.MAX_CLAUSE
     assert len(sc.compose_query(clause, "9" * 20)) <= sc.MAX_EFFECTIVE_QUERY
-    assert sc.MAX_CLAUSE == 438
+    assert sc.MAX_CLAUSE == 449
