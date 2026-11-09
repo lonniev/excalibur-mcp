@@ -8,7 +8,7 @@ import type { ConversationStatus } from "./mcp";
 /// X caps a recent-search query at 512 characters; the server appends the
 /// parentheses, the safe defaults and `-from:<own id>` (≤ 20 digits), which is
 /// what the clause budget leaves out. Mirrors conversation_scoring.MAX_CLAUSE.
-export const MAX_CLAUSE = 512 - (2 + 1 + "-is:retweet -has:links -has:cashtags lang:en".length + 1 + "-from:".length + 20);
+export const MAX_CLAUSE = 512 - (2 + 1 + "-is:retweet lang:en".length + 1 + "-from:".length + 20);
 
 /// X's length for a plain post. Weighted characters (URLs count 23, some
 /// scripts count double) are X's business; the server enforces 280 too.
