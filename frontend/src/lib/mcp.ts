@@ -1008,16 +1008,18 @@ export function getResolveBudgets(): Promise<ResolveBudgets | null> {
   return _budgetsPromise;
 }
 
-/// Poke the scheduler to run one tick now — claims a pending proof reply
-/// (completing authorization) and fires due posts. Operator-only. Returns true
-/// if the Worker accepted the poke (it runs in the background); re-read status a
-/// few seconds later to see the phase flip.
-export async function runSchedulerCheckNow(): Promise<boolean> {
+/// Ask the scheduler to check for the operator's approval now. It collects a
+/// pending proof reply (completing authorization) and answers with what it
+/// found; due posts go out on the next run. `message` is the scheduler's own
+/// line, or "" when it could not be asked.
+export async function runSchedulerCheckNow(): Promise<{ started: boolean; message: string }> {
   try {
-    const r = await callTool<{ started?: boolean }>("scheduler_check_now", {}, { bestEffort: true });
-    return !!r.started;
+    const r = await callTool<{ started?: boolean; message?: string }>(
+      "scheduler_check_now", {}, { bestEffort: true },
+    );
+    return { started: !!r.started, message: r.message ?? "" };
   } catch {
-    return false;
+    return { started: false, message: "" };
   }
 }
 

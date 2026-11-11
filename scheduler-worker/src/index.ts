@@ -129,19 +129,28 @@ export default {
   //   /pending → the pending challenge phrase; gated to the operator npub.
   //   /reissue → POST, operator-signed: drop the pending challenge and send a
   //              fresh one now, for the operator who can see the first is stuck.
-  //   /tick    → run one tick NOW, in the background; returns immediately so the
-  //              caller (the "Check for approval now" button) isn't held for the
-  //              minutes a post-firing tick can take. The operator MCP gates who
-  //              may call it; the tick itself is the same work the cron does.
+  //   /tick    → check for the operator's approval NOW and answer with what
+  //              it found. It collects a pending proof reply (or re-requests a
+  //              dead one) but fires no posts: firing can take minutes, and
+  //              work left in waitUntil after a fetch answers is cancelled
+  //              about 30 s later — which is how "Check now" never completed.
+  //              The next cron run posts what is due.
   //   anything else → synchronous manual tick (returns its result; for testing).
-  async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  async fetch(req: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
     if (url.pathname === "/status") return statusView(env);
     if (url.pathname === "/pending") return pendingView(req, env);
     if (url.pathname === "/reissue") return reissueView(req, env);
     if (url.pathname === "/tick") {
-      ctx.waitUntil(tick(env).then((m) => console.log(`excalibur scheduler (poke): ${m}`)));
-      return json({ started: true });
+      try {
+        const message = await tick(env, { fire: false });
+        console.log(`excalibur scheduler (check now): ${message}`);
+        return json({ started: true, message });
+      } catch (e) {
+        const message = `check failed — ${(e as Error).message}`;
+        console.error(`excalibur scheduler (check now): ${message}`);
+        return json({ started: false, message }, 502);
+      }
     }
     return new Response(await tick(env), { status: 200 });
   },
@@ -326,7 +335,9 @@ function renewalIsNotDue(
   return state.expiresAt - now > granted * RENEW_AT_REMAINING_FRACTION;
 }
 
-async function tick(env: Env): Promise<string> {
+// `fire: false` is "Check now": settle the authorization, post nothing. The
+// cron passes the default and posts what is due.
+async function tick(env: Env, { fire: fireDue = true }: { fire?: boolean } = {}): Promise<string> {
   const raw = await env.PROOF_KV.get(KEY);
   const state: ProofState | null = raw ? (JSON.parse(raw) as ProofState) : null;
   const now = Date.now();
@@ -347,6 +358,7 @@ async function tick(env: Env): Promise<string> {
         const mins = Math.ceil((until - now) / 60_000);
         return `previous tick was cut off mid-flight and its posts may still be claimed; holding off ~${mins}m.`;
       }
+      if (!fireDue) return "Authorized. Due posts go out on the next run.";
       return fire(call, env, operatorNpub);
     }
 
@@ -359,6 +371,7 @@ async function tick(env: Env): Promise<string> {
       if (r?.success && r?.held_by_connection) {
         const expiresAt = now + (Number(r.expires_in_seconds) || 0) * 1000;
         await env.PROOF_KV.put(KEY, JSON.stringify({ phase: "active", expiresAt, issuedAt: now }));
+        if (!fireDue) return "Approved. Due posts go out on the next run.";
         return fire(call, env, operatorNpub);
       }
       const code = String(r?.error_code ?? "");
