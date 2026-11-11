@@ -83,7 +83,7 @@ function relative(ms: number): string {
 export default function SchedulerPendingCard() {
   const [state, setState] = useState<Parked | null>(null);
   const [busy, setBusy] = useState(false);
-  const [poked, setPoked] = useState(false);
+  const [poked, setPoked] = useState<string | null>(null);
   const [reissued, setReissued] = useState("");
 
   const refresh = useCallback(async () => {
@@ -132,7 +132,7 @@ export default function SchedulerPendingCard() {
   // Worker drop it and DM a new phrase now. The card then shows that phrase.
   const reissue = useCallback(async () => {
     setBusy(true);
-    setPoked(false);
+    setPoked(null);
     setReissued("");
     const r = await reissueSchedulerProof();
     await refresh();
@@ -144,19 +144,16 @@ export default function SchedulerPendingCard() {
     );
   }, [refresh]);
 
-  // "check now": poke the scheduler to run a tick immediately so it claims the
-  // reply instead of waiting for the next cron. The Worker runs the tick in the
-  // background; give it a moment, then refresh — if it completed, the phase
-  // flips and this card disappears.
+  // "check now": the scheduler looks for the reply now instead of waiting for
+  // the next run, and answers with what it found. If it was approved, the
+  // phase flips on refresh and this card disappears.
   const checkNow = useCallback(async () => {
     setBusy(true);
-    setPoked(false);
-    await runSchedulerCheckNow();
-    window.setTimeout(() => {
-      void refresh();
-      setBusy(false);
-      setPoked(true);
-    }, 4000);
+    setPoked(null);
+    const { message } = await runSchedulerCheckNow();
+    await refresh();
+    setBusy(false);
+    setPoked(message || "Still waiting — give the reply a moment to land, then check again.");
   }, [refresh]);
 
   useEffect(() => {
@@ -261,9 +258,7 @@ export default function SchedulerPendingCard() {
           </button>
         )}
         {poked && !busy && (
-          <span className="text-xs text-amber-700 dark:text-amber-300/80">
-            Still waiting — give the reply a moment to land, then check again.
-          </span>
+          <span className="text-xs text-amber-700 dark:text-amber-300/80">{poked}</span>
         )}
       </div>
       {reissued && !busy && (

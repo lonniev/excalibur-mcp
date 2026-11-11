@@ -1,0 +1,1 @@
+- "Check now" on the Scheduler page now finishes. It looks for the operator's approval while you wait and shows what it found; due posts go out on the next run. Before, Cloudflare cancelled the check about 30 seconds in, so it never completed.

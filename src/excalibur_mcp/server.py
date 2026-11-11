@@ -2081,12 +2081,13 @@ async def scheduler_status(
 async def scheduler_check_now(
     npub: PatronNpub = "",
 ) -> dict:
-    """Ask the scheduler to run one tick now (free; any proven patron).
+    """Ask the scheduler to check for the operator's approval now (free; any proven patron).
 
-    Pokes the Worker's ``/tick`` — the same work the ~30-minute cron does: it
-    claims a pending proof reply (completing the operator's authorization) and
-    fires any due posts. Use it right after the operator approves in Studio so
-    nobody waits for the next tick.
+    Calls the Worker's ``/tick`` and waits for its answer: it collects a
+    pending proof reply (completing the operator's authorization), or
+    re-requests one that can no longer complete. It posts nothing; the next
+    ~30-minute run posts what is due. Use it right after the operator approves
+    in Studio so nobody waits for the next run.
 
     Deliberately NOT operator-only. Approving is the operator's act; noticing
     that they approved is anyone's, and a patron watching a parked scheduler is
@@ -2094,20 +2095,29 @@ async def scheduler_check_now(
     approve anything, only ask the Worker to look. The challenge phrase stays
     operator-gated (``scheduler_pending``).
 
-    The Worker runs the tick in the background and returns immediately; re-read
-    ``scheduler_status`` a few seconds later to see the phase flip. Returns
-    ``{started: true}`` or ``{started: false}`` if the Worker couldn't be
-    reached.
+    Returns ``{started, message}``: ``message`` is the Worker's own line
+    ("Approved. …", "Awaiting operator reply … (no reply yet)", or why the
+    request could not complete). ``scheduler_status`` shows the same result
+    as ``lastCheck``. ``started`` is false if the Worker couldn't be reached.
     """
     import httpx
 
     url = f"{get_settings().scheduler_worker_url.rstrip('/')}/tick"
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
+        # Collecting a reply drains a relay and calls this MCP back, so it
+        # takes tens of seconds, not the minutes a posting run can.
+        async with httpx.AsyncClient(timeout=90) as client:
             resp = await client.get(url)
-        return {"started": resp.status_code in (200, 202)}
     except httpx.HTTPError:
-        return {"started": False}
+        return {"started": False, "message": "The scheduler could not be reached."}
+    try:
+        body = resp.json()
+    except ValueError:
+        body = {}
+    return {
+        "started": resp.status_code == 200 and bool(body.get("started")),
+        "message": str(body.get("message") or "")[:400],
+    }
 
 
 @tool
