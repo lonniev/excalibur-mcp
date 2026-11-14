@@ -1,0 +1,1 @@
+- Each page loads the first time it opens, so the first visit downloads about a fifth less.

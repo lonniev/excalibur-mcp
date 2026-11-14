@@ -4,14 +4,18 @@ import { AppShell } from "@tollbooth-dpyc/web/react";
 import Nav from "./components/Nav";
 import Hero from "./components/Hero";
 import SchedulerLogSection from "./components/SchedulerLogSection";
+import { lazy, Suspense } from "react";
+import { Loader2 } from "lucide-react";
 import PostsPage from "./components/PostsPage";
-import SnippetsPage from "./components/SnippetsPage";
-import ConversationsPage from "./components/ConversationsPage";
-import ContentEditorPage from "./components/ContentEditorPage";
-import WalletPage from "./components/WalletPage";
-import ProfilePage from "./components/ProfilePage";
-import SchedulerPage from "./components/SchedulerPage";
-import PerformancePage from "./components/PerformancePage";
+
+// Each page past the post list is its own chunk, fetched the first time it opens.
+const SnippetsPage = lazy(() => import("./components/SnippetsPage"));
+const ConversationsPage = lazy(() => import("./components/ConversationsPage"));
+const ContentEditorPage = lazy(() => import("./components/ContentEditorPage"));
+const WalletPage = lazy(() => import("./components/WalletPage"));
+const ProfilePage = lazy(() => import("./components/ProfilePage"));
+const SchedulerPage = lazy(() => import("./components/SchedulerPage"));
+const PerformancePage = lazy(() => import("./components/PerformancePage"));
 
 /** The site's own words above the sign-in card. */
 const WELCOME = "An AI-assisted content management system for your X posts. Drafts, schedule and snippets live with your key, not a login.";
@@ -66,7 +70,15 @@ function Layout() {
     <>
       <Nav />
       <main className="flex-1">
-        <Outlet />
+        <Suspense
+          fallback={
+            <div className="flex justify-center py-16 text-stone-400 dark:text-zinc-500">
+              <Loader2 className="h-5 w-5 animate-spin" />
+            </div>
+          }
+        >
+          <Outlet />
+        </Suspense>
       </main>
     </>
   );
