@@ -8,6 +8,8 @@
 // checked only `.error`, so a blocked save slipped through the success branch,
 // cleared the dirty baseline, and dropped the post cache — and the edit vanished.
 
+import { tr } from "../i18n/index.ts";
+
 export interface SaveResultish {
   post_id?: string;
   updated_at?: string;
@@ -23,10 +25,10 @@ export interface SaveResultish {
 /// `success:false` soft failure, or a response with no `post_id` — is a failure
 /// the caller must surface WITHOUT discarding the author's edits.
 export function saveError(r: SaveResultish | null | undefined): string | null {
-  if (!r) return "The save didn't reach the server — your edits are still here. Try again.";
+  if (!r) return tr("lib.postDraft.notReached");
   if (r.error) return r.error;
-  if (r.success === false) return r.message || r.error_code || "The save was blocked — nothing was changed. Your edits are still here.";
-  if (!r.post_id) return "The save didn't confirm — your edits are still here. Try again.";
+  if (r.success === false) return r.message || r.error_code || tr("lib.postDraft.blocked");
+  if (!r.post_id) return tr("lib.postDraft.unconfirmed");
   return null;
 }
 

@@ -8,6 +8,8 @@
 
 import type { SchedulerLastCheck } from "./mcp";
 import { shortNpub } from "@tollbooth-dpyc/web";
+import { tr } from "../i18n/index.ts";
+import type { MessageKey } from "../i18n/en.ts";
 
 /// An npub as a person reads it: the name its profile publishes, else the
 /// shortened npub. Never the empty string for a real npub.
@@ -25,8 +27,8 @@ export function waitingOnLine(
   viewer: { npub: string; name?: string | null } | null,
 ): string {
   const op = whoIs(operator.npub, operator.name);
-  if (!viewer?.npub) return `Waiting on the operator, ${op}.`;
-  return `Waiting on the operator, ${op} — you're signed in as ${whoIs(viewer.npub, viewer.name)}.`;
+  if (!viewer?.npub) return tr("lib.schedulerCheck.waitingOn", { op });
+  return tr("lib.schedulerCheck.waitingOnSignedIn", { op, viewer: whoIs(viewer.npub, viewer.name) });
 }
 
 /// Codes meaning THIS request can never complete. Mirrors the Worker's
@@ -39,15 +41,16 @@ export const DEAD_CHALLENGE: ReadonlySet<string> = new Set([
   "courier_no_pinned_relay",
 ]);
 
-const WORDS: Record<string, string> = {
-  no_reply: "no reply yet",
-  courier_not_found: "no matching reply on the relay yet",
-  courier_relay_unreachable: "the relay the request went to did not answer",
-  courier_nonce_mismatch: "this request was replaced by a newer one, so it can't complete",
-  courier_no_pending_record: "the service has lost this request, so it can't complete",
-  courier_token_expired: "this request expired, so it can't complete",
-  courier_no_pinned_relay: "this request has no relay to read the reply from, so it can't complete",
-  secure_courier_unavailable: "the service's courier was not ready",
+// What each code means, as a catalog key; the words are read when shown.
+const CODE_WORDS: Record<string, MessageKey> = {
+  no_reply: "lib.schedulerCheck.code.no_reply",
+  courier_not_found: "lib.schedulerCheck.code.courier_not_found",
+  courier_relay_unreachable: "lib.schedulerCheck.code.courier_relay_unreachable",
+  courier_nonce_mismatch: "lib.schedulerCheck.code.courier_nonce_mismatch",
+  courier_no_pending_record: "lib.schedulerCheck.code.courier_no_pending_record",
+  courier_token_expired: "lib.schedulerCheck.code.courier_token_expired",
+  courier_no_pinned_relay: "lib.schedulerCheck.code.courier_no_pinned_relay",
+  secure_courier_unavailable: "lib.schedulerCheck.code.secure_courier_unavailable",
 };
 
 export function isDead(check: SchedulerLastCheck | null | undefined): boolean {
@@ -56,9 +59,9 @@ export function isDead(check: SchedulerLastCheck | null | undefined): boolean {
 
 function ago(ms: number, now: number): string {
   const mins = Math.max(0, Math.round((now - ms) / 60_000));
-  if (mins < 1) return "just now";
-  if (mins < 90) return `${mins} min ago`;
-  return `${Math.round(mins / 60)} h ago`;
+  if (mins < 1) return tr("lib.schedulerCheck.ago.justNow");
+  if (mins < 90) return tr("lib.schedulerCheck.ago.minutes", { n: mins });
+  return tr("lib.schedulerCheck.ago.hours", { n: Math.round(mins / 60) });
 }
 
 /// "Last check 12 min ago: no matching reply on the relay yet." — or null when
@@ -67,6 +70,7 @@ export function lastCheckLine(
   check: SchedulerLastCheck | null | undefined, now: number = Date.now(),
 ): string | null {
   if (!check) return null;
-  const words = WORDS[check.code] ?? check.code;
-  return `Last check ${ago(check.at, now)}: ${words}.`;
+  const key = CODE_WORDS[check.code];
+  const words = key ? tr(key) : check.code;
+  return tr("lib.schedulerCheck.lastCheck", { ago: ago(check.at, now), words });
 }

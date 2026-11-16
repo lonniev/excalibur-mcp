@@ -1,5 +1,7 @@
 import type { MouseEvent } from "react";
-import { BADGE_LABEL, flipOf, type Flip } from "../lib/readiness";
+import { badgeLabel, flipOf, type Flip } from "../lib/readiness";
+import { useT } from "../i18n";
+import type { MessageKey } from "../i18n/en";
 
 // One badge for a post's state, everywhere a post is seen or edited. Where a
 // person may flip it (Draft ↔ Ready, Paused → Ready, a stuck Sending → Draft)
@@ -26,9 +28,9 @@ const STYLE: Record<string, string> = {
   archived: "bg-stone-100 text-stone-400 dark:bg-zinc-800 dark:text-zinc-500",
 };
 
-const FLIP_TITLE: Record<Flip, string> = {
-  scheduled: "Mark Ready — the scheduler posts it at its publish time",
-  draft: "Return to Draft — it won't post until you mark it Ready again",
+const FLIP_TITLE: Record<Flip, MessageKey> = {
+  scheduled: "ui.readinessBadge.flipReady",
+  draft: "ui.readinessBadge.flipDraft",
 };
 
 export default function ReadinessBadge({
@@ -41,12 +43,14 @@ export default function ReadinessBadge({
   /** Extra line for the tooltip — e.g. a pause that may already be live on X. */
   caution?: string;
 }) {
-  const label = BADGE_LABEL[status] ?? status;
+  const t = useT();
+  const label = badgeLabel(status);
   const style = STYLE[status] ?? STYLE.draft;
   const next = onFlip ? flipOf(status) : null;
   const pill = `inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs ${style}`;
   if (!next) return <span className={pill}>{label}</span>;
-  const title = caution ? `${FLIP_TITLE[next]}\n\n${caution}` : FLIP_TITLE[next];
+  const flipTitle = t(FLIP_TITLE[next]);
+  const title = caution ? `${flipTitle}\n\n${caution}` : flipTitle;
   const click = (e: MouseEvent) => { e.stopPropagation(); e.preventDefault(); onFlip!(next); };
   return (
     <button
@@ -54,7 +58,7 @@ export default function ReadinessBadge({
       onClick={click}
       disabled={busy}
       title={title}
-      aria-label={`${label} — ${FLIP_TITLE[next]}`}
+      aria-label={t("ui.readinessBadge.flipAria", { label, action: flipTitle })}
       className={`${pill} ring-1 ring-inset ring-current/30 transition-opacity hover:opacity-80 disabled:opacity-50 ${busy ? "animate-pulse" : ""}`}
     >
       {label}

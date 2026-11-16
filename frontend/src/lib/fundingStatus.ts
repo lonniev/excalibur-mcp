@@ -5,6 +5,7 @@
 // Same rules: no prices, every row derived fresh and stamped when it was read.
 
 import { durationText, type OperatorOnboardingStatus, type StatusLevel, type StatusRow } from "@tollbooth-dpyc/web";
+import { tr } from "../i18n/index.ts";
 
 // Access-token renew window — under an hour means reconnect soon.
 export const OAUTH_WARNING_WITHIN_SEC = 60 * 60;
@@ -19,7 +20,7 @@ export interface OauthInput {
 export function composeOauthRow(oauth: OauthInput, checkedAt: string): StatusRow {
   const r = (state: StatusLevel, detail: string): StatusRow => ({
     id: "x-oauth",
-    dependency: "X account",
+    dependency: tr("lib.fundingStatus.xAccount"),
     state,
     detail,
     checked_at: checkedAt,
@@ -28,15 +29,20 @@ export function composeOauthRow(oauth: OauthInput, checkedAt: string): StatusRow
     return r(
       "warning",
       oauth.reason
-        ? `Couldn't verify connection (${oauth.reason}).`
-        : "Couldn't verify connection — service may be waking up.",
+        ? tr("lib.fundingStatus.unverifiedReason", { reason: oauth.reason })
+        : tr("lib.fundingStatus.unverified"),
     );
   }
-  if (oauth.kind === "disconnected") return r("blocked", "Not connected — authorize X before posting.");
+  if (oauth.kind === "disconnected") return r("blocked", tr("lib.fundingStatus.notConnected"));
   const sec = oauth.expiresInSec;
-  if (sec != null && sec <= 0) return r("blocked", "Access token expired — reconnect to keep posting.");
-  if (sec != null && sec < OAUTH_WARNING_WITHIN_SEC) return r("warning", `Connected — access renews in about ${durationText(sec)}.`);
-  return r("ok", sec != null && sec > 0 ? `Connected — access renews in about ${durationText(sec)}.` : "Connected.");
+  if (sec != null && sec <= 0) return r("blocked", tr("lib.fundingStatus.expired"));
+  if (sec != null && sec < OAUTH_WARNING_WITHIN_SEC) return r("warning", tr("lib.fundingStatus.renewsIn", { duration: durationText(sec) }));
+  return r(
+    "ok",
+    sec != null && sec > 0
+      ? tr("lib.fundingStatus.renewsIn", { duration: durationText(sec) })
+      : tr("lib.fundingStatus.connected"),
+  );
 }
 
 const LLM_FIELD = "llm_api_key";
@@ -45,23 +51,17 @@ const LLM_FIELD = "llm_api_key";
 export function composeModelRouterRow(onb: OperatorOnboardingStatus, checkedAt: string): StatusRow {
   const r = (state: StatusLevel, detail: string): StatusRow => ({
     id: "model-router",
-    dependency: "Model router",
+    dependency: tr("lib.fundingStatus.modelRouter"),
     state,
     detail,
     checked_at: checkedAt,
   });
   const has = (list: { field: string }[] | undefined) => (list ?? []).some((f) => f.field === LLM_FIELD);
   if (has(onb.configured)) {
-    return r(
-      "ok",
-      "llm_api_key is configured. Credit balance lives on the provider dashboard — nothing here can read it yet.",
-    );
+    return r("ok", tr("lib.fundingStatus.llmConfigured"));
   }
   if (has(onb.missing) || has(onb.optional_missing)) {
-    return r(
-      "warning",
-      "llm_api_key not delivered — refine and dynamic blocks will fail until the key is couriered (posting still works).",
-    );
+    return r("warning", tr("lib.fundingStatus.llmMissing"));
   }
-  return r("warning", "Couldn't determine llm_api_key state from onboarding.");
+  return r("warning", tr("lib.fundingStatus.llmUnknown"));
 }

@@ -23,14 +23,17 @@ import {
 } from "../lib/packageStyles";
 import { QUOTES } from "../lib/quotes";
 import { quoteStyles } from "../lib/quoteStyles";
+import { useT } from "../i18n";
+import type { MessageKey } from "../i18n/en";
 
-const DATE_FIELDS = [
-  { value: "created", label: "Created" },
-  { value: "updated", label: "Updated" },
+const DATE_FIELDS: { value: string; label: MessageKey }[] = [
+  { value: "created", label: "ui.snippetsPage.dateCreated" },
+  { value: "updated", label: "ui.snippetsPage.dateUpdated" },
 ];
 const PAGE_SIZE = 25;
 
 export default function SnippetsPage() {
+  const t = useT();
   const nav = useNavigate();
   const [snippets, setSnippets] = useState<SnippetRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -89,7 +92,7 @@ export default function SnippetsPage() {
   async function handleDelete(e: React.MouseEvent, id: string) {
     e.stopPropagation();
     e.preventDefault();
-    if (!window.confirm("Delete this snippet? This cannot be undone.")) return;
+    if (!window.confirm(t("ui.snippetsPage.confirmDelete"))) return;
     setError(null);
     try {
       await deleteSnippet(id);
@@ -102,25 +105,25 @@ export default function SnippetsPage() {
   return (
     <div className="mx-auto w-[90%] max-w-[1600px] px-4 py-6">
       <div className="flex items-center mb-4">
-        <h1 className="text-lg font-semibold">Snippets</h1>
+        <h1 className="text-lg font-semibold">{t("ui.snippetsPage.title")}</h1>
         <Link
           to="/snippets/new"
           className="ml-auto bg-amber-600 hover:bg-amber-500 text-white text-sm px-4 py-2 rounded-lg transition-colors"
         >
-          + New snippet
+          {t("ui.snippetsPage.new")}
         </Link>
       </div>
 
       <p className="text-xs text-stone-400 dark:text-zinc-500 mb-4">
-        Reusable content for your posts — favorites appear as one-click chiclets in the editor.
+        {t("ui.snippetsPage.intro")}
       </p>
 
       <TableFilter
         search={{
           value: search,
           onSearch: (t) => { setSearch(t); setPage(0); },
-          placeholder: "Search content (regex)…",
-          title: "Case-insensitive regular expression matched against the content",
+          placeholder: t("ui.snippetsPage.searchPlaceholder"),
+          title: t("ui.snippetsPage.searchTitle"),
         }}
         dates={{
           from: dateFrom,
@@ -128,12 +131,12 @@ export default function SnippetsPage() {
           onFrom: (v) => { setDateFrom(v); setPage(0); },
           onTo: (v) => { setDateTo(v); setPage(0); },
           field: dateField,
-          fields: DATE_FIELDS,
+          fields: DATE_FIELDS.map((f) => ({ value: f.value, label: t(f.label) })),
           onField: (v) => { setDateField(v); setPage(0); },
         }}
         onClear={() => { setSearch(""); setDateFrom(""); setDateTo(""); setDateField("created"); setPage(0); }}
         searchIcon={<Search className="h-3.5 w-3.5" />}
-        clearLabel={<><X className="h-3.5 w-3.5" /> Clear</>}
+        clearLabel={<><X className="h-3.5 w-3.5" /> {t("ui.snippetsPage.clear")}</>}
         classNames={tableFilterStyles}
       />
 
@@ -145,18 +148,18 @@ export default function SnippetsPage() {
 
       {loading && snippets.length === 0 ? (
         <div className="py-16">
-          <QuoteScroller quotes={QUOTES} spinner heading="Loading your snippets…" classNames={quoteStyles} />
+          <QuoteScroller quotes={QUOTES} spinner heading={t("ui.snippetsPage.loading")} classNames={quoteStyles} />
         </div>
       ) : snippets.length === 0 ? (
         (search || dateFrom || dateTo) ? (
           <div className="text-center py-12">
-            <p className="text-sm text-stone-400 dark:text-zinc-500">No snippets match this filter.</p>
+            <p className="text-sm text-stone-400 dark:text-zinc-500">{t("ui.snippetsPage.noMatch")}</p>
           </div>
         ) : (
           <div className="text-center py-12">
-            <p className="text-sm text-stone-400 dark:text-zinc-500 mb-3">No snippets yet.</p>
+            <p className="text-sm text-stone-400 dark:text-zinc-500 mb-3">{t("ui.snippetsPage.empty")}</p>
             <Link to="/snippets/new" className="text-sm text-amber-600 dark:text-amber-400 hover:underline">
-              Create your first snippet →
+              {t("ui.snippetsPage.createFirst")}
             </Link>
           </div>
         )
@@ -166,9 +169,9 @@ export default function SnippetsPage() {
             <thead className="border-b border-stone-200 dark:border-zinc-800">
               <tr>
                 <SortHeader label="★" col="favorite" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
-                <SortHeader label="Name" col="name" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
-                <SortHeader label="Content" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
-                <SortHeader label="Edited" col="updated" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
+                <SortHeader label={t("ui.snippetsPage.colName")} col="name" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
+                <SortHeader label={t("ui.snippetsPage.colContent")} activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
+                <SortHeader label={t("ui.snippetsPage.colEdited")} col="updated" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
                 <SortHeader label="" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={actionsHeaderStyles} />
               </tr>
             </thead>
@@ -182,7 +185,7 @@ export default function SnippetsPage() {
                   <td className="px-3 py-2.5 align-top">
                     <button
                       onClick={(e) => toggleFav(e, s)}
-                      title={s.favorite ? "Unfavorite" : "Favorite — adds a one-click chiclet in the editor"}
+                      title={s.favorite ? t("ui.snippetsPage.unfavorite") : t("ui.snippetsPage.favorite")}
                       className={s.favorite ? "text-amber-500" : "text-stone-300 hover:text-amber-500 dark:text-zinc-600"}
                     >
                       <Star className={`h-4 w-4 ${s.favorite ? "fill-current" : ""}`} />
@@ -199,11 +202,11 @@ export default function SnippetsPage() {
                   </td>
                   <td className="px-3 py-2.5 align-top text-right whitespace-nowrap">
                     <span className="inline-flex gap-2 text-xs text-stone-400 dark:text-zinc-500">
-                      <span role="button" onClick={(e) => { e.stopPropagation(); e.preventDefault(); nav(`/snippet/${s.id}`); }} className="hover:text-amber-600 dark:hover:text-amber-400 cursor-pointer" title="Edit">
-                        edit
+                      <span role="button" onClick={(e) => { e.stopPropagation(); e.preventDefault(); nav(`/snippet/${s.id}`); }} className="hover:text-amber-600 dark:hover:text-amber-400 cursor-pointer" title={t("ui.snippetsPage.editTitle")}>
+                        {t("ui.snippetsPage.edit")}
                       </span>
-                      <span role="button" onClick={(e) => handleDelete(e, s.id)} className="hover:text-red-500 dark:hover:text-red-400 cursor-pointer" title="Delete">
-                        delete
+                      <span role="button" onClick={(e) => handleDelete(e, s.id)} className="hover:text-red-500 dark:hover:text-red-400 cursor-pointer" title={t("ui.snippetsPage.deleteTitle")}>
+                        {t("ui.snippetsPage.delete")}
                       </span>
                     </span>
                   </td>

@@ -2,7 +2,10 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { BADGE_LABEL, archivePrompt, flipOf, nextSweepSlot } from "./readiness.ts";
+import { archivePrompt, badgeLabel, flipOf, nextSweepSlot } from "./readiness.ts";
+import { registerExcalibur } from "../i18n/index.ts";
+
+await registerExcalibur();
 
 describe("a person flips Draft ↔ Ready; the machine's states are read-only", () => {
   it("draft and scheduled flip into each other", () => {
@@ -36,9 +39,9 @@ describe("a person flips Draft ↔ Ready; the machine's states are read-only", (
 
   it("every status the list filters on has a badge label", () => {
     for (const s of ["draft", "scheduled", "resolving", "resolved", "sending", "paused", "sent", "archived"]) {
-      assert.ok(BADGE_LABEL[s], s);
+      assert.notEqual(badgeLabel(s), s, s);
     }
-    assert.equal(BADGE_LABEL.scheduled, "Ready");
+    assert.equal(badgeLabel("scheduled"), "Ready");
   });
 });
 

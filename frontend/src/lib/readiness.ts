@@ -13,20 +13,29 @@
 // the publish time away), plus Resume / Return-to-Draft on the list. One badge
 // now does it everywhere, and content saves are just content saves.
 
+import { tr } from "../i18n/index.ts";
+import type { MessageKey } from "../i18n/en.ts";
+
 /** The wire status a flip persists. */
 export type Flip = "draft" | "scheduled";
 
-/** What the badge says for each status. `Ready` covers the whole queue family. */
-export const BADGE_LABEL: Record<string, string> = {
-  draft: "Draft",
-  scheduled: "Ready",
-  resolving: "Resolving",
-  resolved: "Resolved",
-  sending: "Sending",
-  paused: "Paused",
-  sent: "Sent",
-  archived: "Archived",
+/** The catalog key for what the badge says on each status. `Ready` covers the whole queue family. */
+const BADGE_KEY: Record<string, MessageKey> = {
+  draft: "lib.readiness.badge.draft",
+  scheduled: "lib.readiness.badge.scheduled",
+  resolving: "lib.readiness.badge.resolving",
+  resolved: "lib.readiness.badge.resolved",
+  sending: "lib.readiness.badge.sending",
+  paused: "lib.readiness.badge.paused",
+  sent: "lib.readiness.badge.sent",
+  archived: "lib.readiness.badge.archived",
 };
+
+/** What the badge says for `status`, in the language on screen; an unknown status as it came. */
+export function badgeLabel(status: string): string {
+  const key = BADGE_KEY[status];
+  return key ? tr(key) : status;
+}
 
 /** Statuses a person may flip, and where each flip lands. */
 const FLIPS: Record<string, Flip> = {
@@ -50,9 +59,7 @@ const LIVE = new Set(["scheduled", "paused", "resolving", "resolved", "sending"]
 
 /** The question to ask before archiving a post in `status`. */
 export function archivePrompt(status: string): string {
-  return LIVE.has(status)
-    ? "This post is still scheduled to go out. Archive it anyway?"
-    : "Archive this post?";
+  return LIVE.has(status) ? tr("lib.readiness.archiveLive") : tr("lib.readiness.archive");
 }
 
 /** Where a flip from `status` lands, or null when the badge is read-only. */

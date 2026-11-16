@@ -11,7 +11,7 @@ import { attemptLabel } from "../lib/attemptLabel";
 import { parseLocalHourParam } from "../lib/timezone";
 import TweetPreviewModal from "./TweetPreviewModal";
 import ReadinessBadge from "./ReadinessBadge";
-import { BADGE_LABEL, archivePrompt, nextSweepSlot, type Flip } from "../lib/readiness";
+import { archivePrompt, badgeLabel, nextSweepSlot, type Flip } from "../lib/readiness";
 import {
   formatDateTime,
   formatHourLabel,
@@ -37,6 +37,8 @@ import {
 import { QUOTES } from "../lib/quotes";
 import { quoteStyles } from "../lib/quoteStyles";
 import SchedulerHealth from "./SchedulerHealth";
+import { useT, WORDS, type Translate } from "../i18n";
+import { Tx } from "@tollbooth-dpyc/web/react";
 import SchedulerPendingCard from "./SchedulerPendingCard";
 import { RefreshButton } from "@tollbooth-dpyc/web/react";
 
@@ -49,11 +51,11 @@ import { RefreshButton } from "@tollbooth-dpyc/web/react";
 // other clears them so you can pick from scratch. Default is everything
 // selected — equivalent to the old unfiltered view.
 const POST_STATUSES = ["draft", "scheduled", "resolving", "resolved", "sending", "paused", "sent", "archived"] as const;
-const DATE_FIELDS = [
-  { value: "created", label: "Created" },
-  { value: "updated", label: "Updated" },
-  { value: "scheduled", label: "Scheduled" },
-  { value: "sent", label: "Posted" },
+const DATE_FIELDS = (t: Translate) => [
+  { value: "created", label: t("ui.postsPage.dateCreated") },
+  { value: "updated", label: t("ui.postsPage.dateUpdated") },
+  { value: "scheduled", label: t("ui.postsPage.dateScheduled") },
+  { value: "sent", label: t("ui.postsPage.datePosted") },
 ];
 const PAGE_SIZE = 25;
 
@@ -131,6 +133,7 @@ function ChicletBox({ on }: { on: boolean }) {
 }
 
 export default function PostsPage() {
+  const t = useT();
   const nav = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   // When set (?template=<id>), the list is scoped to one template's published
@@ -256,7 +259,7 @@ export default function PostsPage() {
   async function handleDelete(e: React.MouseEvent, id: string, hard: boolean, status: string) {
     e.stopPropagation();
     e.preventDefault();
-    const ask = hard ? "Permanently delete this post? This cannot be undone." : archivePrompt(status);
+    const ask = hard ? t("ui.postsPage.confirmDelete") : archivePrompt(status);
     if (!window.confirm(ask)) return;
     setError(null);
     try {
@@ -276,10 +279,10 @@ export default function PostsPage() {
     try {
       const row = await getPost(id);
       const text = (row.text_cache ?? "").trim();
-      if (!text) { setError("Nothing to repost."); return; }
+      if (!text) { setError(t("ui.postsPage.nothingToRepost")); return; }
       const r = await postTweet(text);
-      if (r.error || r.success === false) setError(r.message || r.error || "Repost failed.");
-      else setNotice("Reposted to X.");
+      if (r.error || r.success === false) setError(r.message || r.error || t("ui.postsPage.repostFailed"));
+      else setNotice(t("ui.postsPage.reposted"));
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -332,7 +335,7 @@ export default function PostsPage() {
         ceaseAt: row.cease_at ?? undefined,
         clientReqId: uid(),
       });
-      if (r.error || !r.post_id) { setError(r.error || "Duplicate failed."); return; }
+      if (r.error || !r.post_id) { setError(r.error || t("ui.postsPage.duplicateFailed")); return; }
       nav(`/post/${r.post_id}`);
     } catch (err) {
       setError((err as Error).message);
@@ -347,15 +350,15 @@ export default function PostsPage() {
         <TweetPreviewModal url={preview.url} text={preview.text} onClose={() => setPreview(null)} />
       )}
       <div className="flex items-center gap-3 mb-4">
-        <h1 className="text-lg font-semibold">Posts</h1>
+        <h1 className="text-lg font-semibold">{t("ui.postsPage.title")}</h1>
         <SchedulerHealth />
         <Link
           to="/new"
           className="ml-auto inline-flex items-center gap-1.5 bg-green-600 hover:bg-green-500 text-white text-sm px-4 py-2 rounded-lg transition-colors"
-          aria-label="Compose"
+          aria-label={t("ui.postsPage.compose")}
         >
           <Plus className="h-6 w-6" aria-hidden />
-          Compose
+          {t("ui.postsPage.compose")}
         </Link>
       </div>
 
@@ -365,18 +368,18 @@ export default function PostsPage() {
 
       {templateFilter && (
         <div className="mb-4 flex items-center gap-2 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-800 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-300">
-          <span>↻ Showing published postings from one recurring template.</span>
+          <span>↻ {t("ui.postsPage.templateBanner")}</span>
           <Link
             to={`/post/${templateFilter}`}
             className="underline underline-offset-2 hover:no-underline"
           >
-            Open the template →
+            {t("ui.postsPage.openTemplate")} →
           </Link>
           <button
             onClick={() => { setSearchParams({}); setPage(0); }}
             className="ml-auto rounded-md px-2 py-0.5 text-violet-700 hover:bg-violet-100 dark:text-violet-300 dark:hover:bg-violet-500/20"
           >
-            Clear ✕
+            {t("ui.postsPage.clear")} ✕
           </button>
         </div>
       )}
@@ -387,17 +390,22 @@ export default function PostsPage() {
           data-testid="hour-filter-banner"
         >
           <span>
-            ⏱ Showing posts sent around{" "}
-            <strong className="font-medium">{formatHourLabel(hourFilter, timeZone)}</strong>
-            {" "}
-            <span className="text-amber-700/80 dark:text-amber-400/80">({timeZone})</span>
-            .
+            ⏱{" "}
+            <Tx
+              ns={WORDS}
+              k="ui.postsPage.hourBanner"
+              vars={{ hour: formatHourLabel(hourFilter, timeZone), zone: timeZone }}
+              components={{
+                hour: <strong className="font-medium" />,
+                zone: <span className="text-amber-700/80 dark:text-amber-400/80" />,
+              }}
+            />
           </span>
           <Link
             to="/performance"
             className="underline underline-offset-2 hover:no-underline"
           >
-            Back to Performance →
+            {t("ui.postsPage.backToPerformance")} →
           </Link>
           <button
             type="button"
@@ -409,7 +417,7 @@ export default function PostsPage() {
             }}
             className="ml-auto rounded-md px-2 py-0.5 text-amber-800 hover:bg-amber-100 dark:text-amber-300 dark:hover:bg-amber-500/20"
           >
-            Clear ✕
+            {t("ui.postsPage.clear")} ✕
           </button>
         </div>
       )}
@@ -419,7 +427,7 @@ export default function PostsPage() {
           onClick={selectAll}
           disabled={loading}
           aria-pressed={allSelected}
-          title="Show every status"
+          title={t("ui.postsPage.allTitle")}
           className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg capitalize border transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
             allSelected
               ? "bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-500/15 dark:text-amber-400 dark:border-amber-500/30"
@@ -427,13 +435,13 @@ export default function PostsPage() {
           }`}
         >
           <ChicletBox on={allSelected} />
-          all
+          {t("ui.postsPage.all")}
         </button>
         <button
           onClick={selectNone}
           disabled={loading}
           aria-pressed={noneSelected}
-          title="Clear every status, then pick the ones you want"
+          title={t("ui.postsPage.noneTitle")}
           className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg capitalize border transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
             noneSelected
               ? "bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-500/15 dark:text-amber-400 dark:border-amber-500/30"
@@ -441,18 +449,18 @@ export default function PostsPage() {
           }`}
         >
           <ChicletBox on={noneSelected} />
-          none
+          {t("ui.postsPage.none")}
         </button>
         {POST_STATUSES.map((s) => {
           const on = selected.has(s);
-          const label = BADGE_LABEL[s];
+          const label = badgeLabel(s);
           return (
             <button
               key={s}
               onClick={() => toggleStatus(s)}
               disabled={loading}
               aria-pressed={on}
-              title={on ? `Showing ${label} posts — click to hide` : `Hiding ${label} posts — click to show`}
+              title={on ? t("ui.postsPage.chicletShowing", { label }) : t("ui.postsPage.chicletHiding", { label })}
               className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                 on
                   ? "bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-500/15 dark:text-amber-400 dark:border-amber-500/30"
@@ -465,7 +473,7 @@ export default function PostsPage() {
           );
         })}
         <span className="ml-auto">
-          <RefreshButton onRefresh={refresh} busy={loading} label="Refresh posts" iconSize={24} classNames={refreshStyles.toolbar} />
+          <RefreshButton onRefresh={refresh} busy={loading} label={t("ui.postsPage.refresh")} iconSize={24} classNames={refreshStyles.toolbar} />
         </span>
       </div>
 
@@ -474,8 +482,8 @@ export default function PostsPage() {
           search={{
             value: search,
             onSearch: (t) => { setSearch(t); setPage(0); },
-            placeholder: "Search content (regex)…",
-            title: "Case-insensitive regular expression matched against the content",
+            placeholder: t("ui.postsPage.searchPlaceholder"),
+            title: t("ui.postsPage.searchTitle"),
           }}
           dates={{
             from: dateFrom,
@@ -483,12 +491,12 @@ export default function PostsPage() {
             onFrom: (v) => { setDateFrom(v); setPage(0); },
             onTo: (v) => { setDateTo(v); setPage(0); },
             field: dateField,
-            fields: DATE_FIELDS,
+            fields: DATE_FIELDS(t),
             onField: (v) => { setDateField(v); setPage(0); },
           }}
           onClear={() => { setSearch(""); setDateFrom(""); setDateTo(""); setDateField("created"); setPage(0); }}
           searchIcon={<Search className="h-3.5 w-3.5" />}
-          clearLabel={<><X className="h-3.5 w-3.5" /> Clear</>}
+          clearLabel={<><X className="h-3.5 w-3.5" /> {t("ui.postsPage.clear")}</>}
           classNames={tableFilterStyles}
         />
       )}
@@ -510,19 +518,19 @@ export default function PostsPage() {
         // without this the stale table just sits there (no feedback) and the
         // human click-spams the tabs while the MCP cold-starts.
         <div className="py-16">
-          <QuoteScroller quotes={QUOTES} spinner heading="Loading your posts…" classNames={quoteStyles} />
+          <QuoteScroller quotes={QUOTES} spinner heading={t("ui.postsPage.loading")} classNames={quoteStyles} />
         </div>
       ) : posts.length === 0 ? (
         <div className="text-center py-12">
           <p className="text-sm text-stone-400 dark:text-zinc-500 mb-3">
             {noneSelected
-              ? "No status selected — pick one above, or choose all."
+              ? t("ui.postsPage.emptyNoStatus")
               : search || dateFrom || dateTo || hourFilter != null || !allSelected
-                ? "No posts match this filter."
-                : "No posts yet."}
+                ? t("ui.postsPage.emptyFiltered")
+                : t("ui.postsPage.emptyNone")}
           </p>
           <Link to="/new" className="text-sm text-amber-600 dark:text-amber-400 hover:underline">
-            Compose a new post →
+            {t("ui.postsPage.composeNew")} →
           </Link>
         </div>
       ) : (
@@ -530,11 +538,11 @@ export default function PostsPage() {
           <TableShell classNames={tableShellStyles}>
             <thead className="border-b border-stone-200 dark:border-zinc-800">
               <tr>
-                <SortHeader label="Status" col="status" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
-                <SortHeader label="Post" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
-                <SortHeader label="Scheduled" col="scheduled" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
-                <SortHeader label="Edited" col="updated" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
-                <SortHeader label="Posted" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
+                <SortHeader label={t("ui.postsPage.colStatus")} col="status" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
+                <SortHeader label={t("ui.postsPage.colPost")} activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
+                <SortHeader label={t("ui.postsPage.colScheduled")} col="scheduled" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
+                <SortHeader label={t("ui.postsPage.colEdited")} col="updated" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
+                <SortHeader label={t("ui.postsPage.colPosted")} activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
                 <SortHeader label="" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={actionsHeaderStyles} />
               </tr>
             </thead>
@@ -568,7 +576,7 @@ export default function PostsPage() {
                       onFlip={(next) => void handleFlip(p.post_id, next, p.publish_at)}
                       busy={flipping === p.post_id}
                       caution={p.status === "paused" && p.last_attempt_reason && UNCONFIRMED_SEND.includes(p.last_attempt_reason)
-                        ? "The publisher never confirmed, so this post MAY already be live on X. Check your timeline first — a post that did go out would publish twice."
+                        ? t("ui.postsPage.unconfirmedCaution")
                         : undefined}
                     />
                     {/* A degraded send is still a send, so `status` reads "Sent"
@@ -582,14 +590,18 @@ export default function PostsPage() {
                     {fellLabels.length > 0 && (
                       <span
                         className="mt-1 flex items-start gap-1 text-[11px] text-amber-600 dark:text-amber-400"
-                        title={`This post went out with the author's FALLBACK text, not the post as written.\n\n${p.fell_back!
-                          .map((f, i) => `Block ${i + 1}: ${attemptLabel(f.reason ?? "unreported")}${
-                            f.budget_s ? ` (gave up within a ${f.budget_s}s budget)` : ""
-                          }`)
-                          .join("\n")}\n\nThe tweet is live; the content is the consolation copy. Open the post to see what was published.`}
+                        title={t("ui.postsPage.fellBackTitle", {
+                          blocks: p.fell_back!
+                            .map((f, i) => t(f.budget_s ? "ui.postsPage.fellBackBlockBudget" : "ui.postsPage.fellBackBlock", {
+                              n: i + 1,
+                              reason: attemptLabel(f.reason ?? "unreported"),
+                              budget: f.budget_s ?? "",
+                            }))
+                            .join("\n"),
+                        })}
                       >
                         <span aria-hidden>⚠</span>
-                        <span>fell back — {fellLabels.join("; ")}</span>
+                        <span>{t("ui.postsPage.fellBack", { reasons: fellLabels.join("; ") })}</span>
                       </span>
                     )}
                     {/* Also on `resolved`/`resolving`: a post the recovery sweep
@@ -604,17 +616,21 @@ export default function PostsPage() {
                             ? "text-stone-500 dark:text-zinc-400"
                             : "text-rose-600 dark:text-rose-400"
                         }`}
-                        title={`Scheduler tried to post${p.last_attempt_at ? ` at ${fmt(p.last_attempt_at, timeZone)}` : ""} but held it back: ${p.last_attempt_reason}.${p.last_attempt_detail ? `\n\n${p.last_attempt_detail}` : ""}\n\n${oauthResolved ? "X has been reconnected since, so this cause is resolved. It will retry on the next tick." : "It will retry on the next tick."}`}
+                        title={`${p.last_attempt_at
+                          ? t("ui.postsPage.heldAt", { at: fmt(p.last_attempt_at, timeZone), reason: p.last_attempt_reason })
+                          : t("ui.postsPage.held", { reason: p.last_attempt_reason })}${p.last_attempt_detail ? `\n\n${p.last_attempt_detail}` : ""}\n\n${oauthResolved ? t("ui.postsPage.retryResolved") : t("ui.postsPage.retry")}`}
                       >
                         {oauthResolved
-                          ? `↺ last attempt: ${attemptLabel(p.last_attempt_reason)}`
+                          ? `↺ ${t("ui.postsPage.lastAttempt", { reason: attemptLabel(p.last_attempt_reason) })}`
                           : `⚠ ${attemptLabel(p.last_attempt_reason)}`}
                       </span>
                     )}
                     {p.status === "paused" && p.last_attempt_reason && (
                       <span
                         className="mt-1 flex items-center gap-1 text-[11px] text-rose-600 dark:text-rose-400"
-                        title={`Scheduler paused this post${p.last_attempt_at ? ` at ${fmt(p.last_attempt_at, timeZone)}` : ""}: ${p.last_attempt_reason}.${p.last_attempt_detail ? `\n\n${p.last_attempt_detail}` : ""}\n\n${UNCONFIRMED_SEND.includes(p.last_attempt_reason) ? "The publisher never confirmed, so this post MAY already be live on X. Check your timeline first — a post that did go out would publish twice." : "Fix the cause at the provider, then mark it Ready."}`}
+                        title={`${p.last_attempt_at
+                          ? t("ui.postsPage.pausedAt", { at: fmt(p.last_attempt_at, timeZone), reason: p.last_attempt_reason })
+                          : t("ui.postsPage.paused", { reason: p.last_attempt_reason })}${p.last_attempt_detail ? `\n\n${p.last_attempt_detail}` : ""}\n\n${UNCONFIRMED_SEND.includes(p.last_attempt_reason) ? t("ui.postsPage.unconfirmedCaution") : t("ui.postsPage.pausedFix")}`}
                       >
                         ⏸ {attemptLabel(p.last_attempt_reason)}
                       </span>
@@ -648,17 +664,19 @@ export default function PostsPage() {
                         type="button"
                         onClick={(e) => { e.stopPropagation(); nav("/profile"); }}
                         className="mt-1 inline-flex items-center gap-1 rounded-sm bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 transition-colors hover:bg-amber-500/25 dark:text-amber-400"
-                        title="Reconnect your X account — this post reschedules itself once X accepts you again."
+                        title={t("ui.postsPage.reconnectTitle")}
                       >
-                        Reconnect X →
+                        {t("ui.postsPage.reconnect")} →
                       </button>
                     )}
                     {p.status === "sending" && (
                       <span
                         className="mt-1 flex items-center gap-1 text-[11px] text-sky-600 dark:text-sky-400"
-                        title={`The scheduler claimed this post${p.last_attempt_at ? ` at ${fmt(p.last_attempt_at, timeZone)}` : ""} and is posting it. If it lingers here, return it to Draft to rescue it.`}
+                        title={p.last_attempt_at
+                          ? t("ui.postsPage.sendingAt", { at: fmt(p.last_attempt_at, timeZone) })
+                          : t("ui.postsPage.sending")}
                       >
-                        ⟳ working…
+                        ⟳ {t("ui.postsPage.working")}
                       </span>
                     )}
                   </td>
@@ -669,24 +687,24 @@ export default function PostsPage() {
                         {p.excerpt && <p className="truncate text-xs text-stone-500 dark:text-zinc-400">{p.excerpt}</p>}
                       </>
                     ) : (
-                      <p className="truncate text-stone-800 dark:text-zinc-200">{p.excerpt || "(empty draft)"}</p>
+                      <p className="truncate text-stone-800 dark:text-zinc-200">{p.excerpt || t("ui.postsPage.emptyDraft")}</p>
                     )}
                     {(p.is_recurring || p.has_dynamic || p.template_id) && (
                       <div className="mt-1 flex flex-wrap items-center gap-1.5">
                         {p.is_recurring && (
                           <span
                             className="inline-flex items-center gap-0.5 text-[11px] px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300"
-                            title="Recurring — this template reposts on its cadence, resolving fresh each time."
+                            title={t("ui.postsPage.recurringTitle")}
                           >
-                            ↻ recurring
+                            ↻ {t("ui.postsPage.recurring")}
                           </span>
                         )}
                         {p.has_dynamic && (
                           <span
                             className="inline-flex items-center gap-0.5 text-[11px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
-                            title="Dynamic — carries a live prompt-driven block that resolves at post time (not frozen text)."
+                            title={t("ui.postsPage.dynamicTitle")}
                           >
-                            ⚡ dynamic
+                            ⚡ {t("ui.postsPage.dynamic")}
                           </span>
                         )}
                         {p.template_id && (
@@ -694,9 +712,9 @@ export default function PostsPage() {
                             to={`/post/${p.template_id}`}
                             onClick={(e) => e.stopPropagation()}
                             className="inline-flex items-center gap-0.5 text-[11px] px-1.5 py-0.5 rounded-full bg-stone-100 text-stone-600 hover:underline dark:bg-zinc-800 dark:text-zinc-300"
-                            title="This is a published record. Open the recurring template it fired from."
+                            title={t("ui.postsPage.fromSeriesTitle")}
                           >
-                            ↗ from series
+                            ↗ {t("ui.postsPage.fromSeries")}
                           </Link>
                         )}
                       </div>
@@ -714,7 +732,7 @@ export default function PostsPage() {
                         <button
                           onClick={(e) => { e.stopPropagation(); e.preventDefault(); setPreview({ url: p.tweet_url!, text: p.excerpt || "" }); }}
                           className="inline-flex items-center gap-1 text-green-600 hover:underline dark:text-green-400"
-                          title={`Peek at the posted tweet (${fmt(p.last_sent_at, timeZone)})`}
+                          title={t("ui.postsPage.peekTitle", { at: fmt(p.last_sent_at, timeZone) })}
                         >
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
                             <path d={ICONS.visibility} />
@@ -722,7 +740,7 @@ export default function PostsPage() {
                           {fmt(p.last_sent_at, timeZone)}
                         </button>
                       ) : (
-                        <span className="inline-flex items-center gap-1 text-green-600 dark:text-green-400" title={`Posted to X at ${fmt(p.last_sent_at, timeZone)}`}>
+                        <span className="inline-flex items-center gap-1 text-green-600 dark:text-green-400" title={t("ui.postsPage.postedAtTitle", { at: fmt(p.last_sent_at, timeZone) })}>
                           ✓ {fmt(p.last_sent_at, timeZone)}
                         </span>
                       )
@@ -734,7 +752,7 @@ export default function PostsPage() {
                     <span className="inline-flex items-center gap-1 justify-end">
                       <ActionIcon
                         path={ICONS.duplicate}
-                        title="Duplicate — open an editable draft copy of this post (unscheduled)"
+                        title={t("ui.postsPage.duplicateTitle")}
                         onClick={(e) => handleDuplicate(e, p.post_id)}
                         busy={duplicating === p.post_id}
                         hover="hover:text-amber-600 dark:hover:text-amber-400"
@@ -742,7 +760,7 @@ export default function PostsPage() {
                       {p.status === "sent" && (
                         <ActionIcon
                           path={ICONS.repost}
-                          title="Repost to X now"
+                          title={t("ui.postsPage.repostTitle")}
                           onClick={(e) => handleRepost(e, p.post_id)}
                           busy={reposting === p.post_id}
                           hover="hover:text-green-600 dark:hover:text-green-400"
@@ -751,14 +769,14 @@ export default function PostsPage() {
                       {p.status !== "archived" && (
                         <ActionIcon
                           path={ICONS.archive}
-                          title="Archive"
+                          title={t("ui.postsPage.archiveTitle")}
                           onClick={(e) => handleDelete(e, p.post_id, false, p.status)}
                           hover="hover:text-amber-600 dark:hover:text-amber-400"
                         />
                       )}
                       <ActionIcon
                         path={ICONS.delete}
-                        title="Delete permanently"
+                        title={t("ui.postsPage.deleteTitle")}
                         onClick={(e) => handleDelete(e, p.post_id, true, p.status)}
                         hover="hover:text-red-500 dark:hover:text-red-400"
                       />

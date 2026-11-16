@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { configureTollbooth } from "@tollbooth-dpyc/web";
 import { ErrorBoundary } from "@tollbooth-dpyc/web/react";
 import App from "./App";
+import { registerExcalibur } from "./i18n";
 import "./index.css";
 import { errorBoundaryStyles } from "./lib/packageStyles";
 
@@ -20,6 +21,9 @@ configureTollbooth({
   // call would only bury what the patron did.
   quietTools: ["get_scheduler_log", "get_x_profile"],
 });
+
+// eXcalibur's words; the package's AppShell starts the reader's language.
+void registerExcalibur();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

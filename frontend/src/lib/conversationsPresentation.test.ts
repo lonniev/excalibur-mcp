@@ -3,9 +3,12 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { registerExcalibur } from "../i18n/index.ts";
 import {
   ALL_LEADS, compactCount, runSummary, scoreTone, sourceNames, statusCounts, STATUSES, viewStatuses,
 } from "./conversationsPresentation.ts";
+
+await registerExcalibur();
 
 describe("viewStatuses", () => {
   it("keeps the working list to open leads and shows a search's results whole", () => {

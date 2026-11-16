@@ -5,6 +5,7 @@
 
 import { useEffect, useRef } from "react";
 import { X, ExternalLink } from "lucide-react";
+import { useT } from "../i18n";
 
 declare global {
   interface Window {
@@ -23,6 +24,7 @@ export default function TweetPreviewModal({
   text: string;
   onClose: () => void;
 }) {
+  const t = useT();
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -57,8 +59,8 @@ export default function TweetPreviewModal({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-3 flex items-center gap-2">
-          <span className="text-sm font-medium text-zinc-100">Posted to X</span>
-          <button onClick={onClose} className="ml-auto text-zinc-500 hover:text-zinc-200" title="Close">
+          <span className="text-sm font-medium text-zinc-100">{t("ui.tweetPreviewModal.title")}</span>
+          <button onClick={onClose} className="ml-auto text-zinc-500 hover:text-zinc-200" title={t("ui.tweetPreviewModal.close")}>
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -68,7 +70,7 @@ export default function TweetPreviewModal({
               the text + link below are the visible preview. */}
           <blockquote className="twitter-tweet" data-theme="dark" data-dnt="true">
             <p style={{ whiteSpace: "pre-wrap" }}>{text}</p>
-            {url && <a href={url}>View on X</a>}
+            {url && <a href={url}>{t("ui.tweetPreviewModal.view")}</a>}
           </blockquote>
         </div>
 
@@ -79,7 +81,7 @@ export default function TweetPreviewModal({
             rel="noopener noreferrer"
             className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-sm text-white transition-colors hover:bg-amber-500"
           >
-            <ExternalLink className="h-4 w-4" /> Open on X
+            <ExternalLink className="h-4 w-4" /> {t("ui.tweetPreviewModal.open")}
           </a>
         )}
       </div>

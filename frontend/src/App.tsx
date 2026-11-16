@@ -7,6 +7,8 @@ import SchedulerLogSection from "./components/SchedulerLogSection";
 import { lazy, Suspense } from "react";
 import { Loader2 } from "lucide-react";
 import PostsPage from "./components/PostsPage";
+import { useT, WORDS } from "./i18n";
+import { Tx } from "@tollbooth-dpyc/web/react";
 
 // Each page past the post list is its own chunk, fetched the first time it opens.
 const SnippetsPage = lazy(() => import("./components/SnippetsPage"));
@@ -17,17 +19,15 @@ const ProfilePage = lazy(() => import("./components/ProfilePage"));
 const SchedulerPage = lazy(() => import("./components/SchedulerPage"));
 const PerformancePage = lazy(() => import("./components/PerformancePage"));
 
-/** The site's own words above the sign-in card. */
-const WELCOME = "An AI-assisted content management system for your X posts. Drafts, schedule and snippets live with your key, not a login.";
-
 // The session, the sign-in gate, the theme, the avatar and the debug log are
 // the package's AppShell; eXcalibur brings its routes, its hero and its footer,
 // and the scheduler controls it keeps in the debug log.
 export default function App() {
+  const t = useT();
   return (
     <AppShell
       theme="dark"
-      gateOptions={{ welcome: WELCOME }}
+      gateOptions={{ welcome: t("ui.app.welcome") }}
       classNames={{ root: "bg-stone-50 dark:bg-zinc-950 text-stone-900 dark:text-zinc-100 transition-colors" }}
       footer={({ status }) => <Footer status={status} />}
       debug={{ children: <SchedulerLogSection /> }}
@@ -85,34 +85,40 @@ function Layout() {
 }
 
 function TopBar() {
+  const t = useT();
   return (
     <header className="border-b border-stone-200 dark:border-zinc-800 px-4 py-3 flex items-center gap-2">
       <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
       <span className="font-semibold tracking-wide">eXcalibur</span>
-      <span className="text-sm text-stone-400 dark:text-zinc-500">Posts Manager</span>
+      <span className="text-sm text-stone-400 dark:text-zinc-500">{t("ui.app.postsManager")}</span>
     </header>
   );
 }
 
 function Footer({ status }: { status: ServiceStatus | null }) {
+  const t = useT();
   return (
     <footer className="border-t border-stone-100 px-4 py-3 text-center text-xs text-stone-400 dark:border-zinc-900 dark:text-zinc-600 space-y-0.5">
       <div>
-        eXcalibur Posts Manager v{__APP_VERSION__} · {__BUILD_COMMIT__}
+        {t("ui.app.footerVersion", { version: __APP_VERSION__ })} · {__BUILD_COMMIT__}
         {status?.version && ` · MCP ${status.version}`}
         {status?.tollbooth_dpyc_version && ` · SDK ${status.tollbooth_dpyc_version}`}
       </div>
       <div>
-        Monetized with{" "}
-        <a
-          href="https://tollbooth-dpyc.com"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-amber-600/80 hover:underline dark:text-amber-400/80"
-        >
-          Tollbooth DPYC™
-        </a>{" "}
-        · Apache-2.0 · Patent Pending (US Prov. 64/045,999)
+        <Tx
+          ns={WORDS}
+          k="ui.app.footerMonetized"
+          components={{
+            tollbooth: (
+              <a
+                href="https://tollbooth-dpyc.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-amber-600/80 hover:underline dark:text-amber-400/80"
+              />
+            ),
+          }}
+        />
       </div>
     </footer>
   );

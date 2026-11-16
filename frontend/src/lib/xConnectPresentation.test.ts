@@ -9,6 +9,10 @@ import assert from "node:assert/strict";
 import { presentXConnectedCard } from "./xConnectPresentation.ts";
 import { composeOauthRow } from "./fundingStatus.ts";
 
+import { registerExcalibur } from "../i18n/index.ts";
+
+await registerExcalibur();
+
 const opts = { checkedAt: "2026-08-09T14:55:34.000Z" };
 
 describe("presentXConnectedCard", () => {

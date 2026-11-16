@@ -6,8 +6,11 @@
 
 import { Swords, Feather, Sparkles, CalendarClock } from "lucide-react";
 import type { ReactNode } from "react";
+import { Tx } from "@tollbooth-dpyc/web/react";
+import { useT, WORDS } from "../i18n";
 
 export default function Hero() {
+  const t = useT();
   return (
     <section className="relative overflow-hidden border-b border-stone-200 dark:border-zinc-800">
       {/* ambient gradient — pure CSS, decorative only */}
@@ -27,66 +30,70 @@ export default function Hero() {
           </span>
           <div>
             <div className="text-2xl font-semibold tracking-tight">
-              eXcalibur <span className="font-normal text-stone-400 dark:text-zinc-500">Posts Manager</span>
+              eXcalibur <span className="font-normal text-stone-400 dark:text-zinc-500">{t("ui.hero.postsManager")}</span>
             </div>
             <div className="text-xs uppercase tracking-widest text-amber-600 dark:text-amber-400">
-              A Content Management System for X
+              {t("ui.hero.tagline")}
             </div>
           </div>
         </div>
 
         <h1 className="max-w-2xl text-3xl font-semibold leading-tight tracking-tight sm:text-4xl">
-          An AI-assisted Content Management System for your X posts.
+          {t("ui.hero.headline")}
         </h1>
         <p className="mt-4 max-w-2xl text-base leading-relaxed text-stone-600 dark:text-zinc-400">
-          Stay in the zone. Let your agentic assistant post thoughts or marketing copy straight to X
-          through{" "}
-          <a
-            href="https://github.com/lonniev/excalibur-mcp"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-stone-700 underline-offset-2 hover:underline dark:text-zinc-300"
-          >
-            eXcalibur MCP
-          </a>{" "}
-          — the monetized MCP for X posting — or route a draft into eXcalibur Posts Manager for
-          editorial fine-tuning first.
+          <Tx
+            ns={WORDS}
+            k="ui.hero.intro"
+            components={{
+              mcp: (
+                <a
+                  href="https://github.com/lonniev/excalibur-mcp"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-stone-700 underline-offset-2 hover:underline dark:text-zinc-300"
+                />
+              ),
+            }}
+          />
         </p>
         <p className="mt-3 max-w-2xl text-base leading-relaxed text-stone-600 dark:text-zinc-400">
-          Draft in a block editor, refine flagged passages with AI, schedule and repost, and
-          keep a reusable snippet library. Sign in with a Nostr key and pay per use in Bitcoin
-          Lightning — your posts, schedule, and snippets live with your npub, not a login.
+          {t("ui.hero.more")}
         </p>
 
         <div className="mt-8 grid max-w-3xl gap-3 sm:grid-cols-3">
           <Feature
             icon={<Feather className="h-5 w-5" />}
-            title="Block editor"
-            body="X-aware Unicode formatting, dividers, and an emoji picker — what you see is what posts."
+            title={t("ui.hero.editorTitle")}
+            body={t("ui.hero.editorBody")}
           />
           <Feature
             icon={<Sparkles className="h-5 w-5" />}
-            title="Refine a passage"
-            body="Flag a region and the server rewrites it. The AI key stays vaulted — it never reaches your browser."
+            title={t("ui.hero.refineTitle")}
+            body={t("ui.hero.refineBody")}
           />
           <Feature
             icon={<CalendarClock className="h-5 w-5" />}
-            title="Schedule & reuse"
-            body="Queue posts, repost a sent one, and one-click your favorite snippets into any draft."
+            title={t("ui.hero.scheduleTitle")}
+            body={t("ui.hero.scheduleBody")}
           />
         </div>
 
         <p className="mt-8 text-xs text-stone-400 dark:text-zinc-500">
-          Powered by{" "}
-          <a
-            href="https://tollbooth-dpyc.com"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-amber-600/90 hover:underline dark:text-amber-400/90"
-          >
-            Tollbooth DPYC™
-          </a>{" "}
-          — operator-controlled dynamic pricing at the MCP layer.
+          <Tx
+            ns={WORDS}
+            k="ui.hero.poweredBy"
+            components={{
+              tollbooth: (
+                <a
+                  href="https://tollbooth-dpyc.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-amber-600/90 hover:underline dark:text-amber-400/90"
+                />
+              ),
+            }}
+          />
         </p>
       </div>
     </section>

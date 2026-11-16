@@ -12,43 +12,47 @@ import SchedulerPendingCard from "./SchedulerPendingCard";
 import { RefreshButton } from "@tollbooth-dpyc/web/react";
 import { refreshStyles } from "../lib/packageStyles";
 import SchedulerStatusLine from "./SchedulerStatusLine";
-import { deriveSchedulerState, schedulerStatusTitle } from "../lib/schedulerState";
+import { agoMs, deriveSchedulerState, schedulerStatusTitle } from "../lib/schedulerState";
 import { attemptLabel } from "../lib/attemptLabel";
+import { tr, useT } from "../i18n";
+import type { MessageKey } from "../i18n/en";
 
 const POLL_MS = 60 * 1000;
 
-function relative(ms: number): string {
-  const secs = Math.max(0, Math.round((Date.now() - ms) / 1000));
-  if (secs < 90) return `${secs}s ago`;
-  const mins = Math.round(secs / 60);
-  if (mins < 90) return `${mins} min ago`;
-  const hrs = Math.round(mins / 60);
-  if (hrs < 36) return `${hrs} h ago`;
-  return `${Math.round(hrs / 24)} d ago`;
-}
+const relative = agoMs;
 
 function until(ms: number): string {
   const secs = Math.round((ms - Date.now()) / 1000);
-  if (secs <= 0) return "now";
+  if (secs <= 0) return tr("ui.schedulerPage.until.now");
   const days = Math.round(secs / 86400);
-  if (days >= 2) return `in ${days} days`;
+  if (days >= 2) return tr("ui.schedulerPage.until.days", { n: days });
   const hrs = Math.round(secs / 3600);
-  if (hrs >= 2) return `in ${hrs} h`;
-  return `in ${Math.max(1, Math.round(secs / 60))} min`;
+  if (hrs >= 2) return tr("ui.schedulerPage.until.hours", { n: hrs });
+  return tr("ui.schedulerPage.until.minutes", { n: Math.max(1, Math.round(secs / 60)) });
 }
 
 
 // "47 min" reads fine; "1387 min" does not. Hours and days once it's worth it.
 function untilMins(m: number): string {
-  if (m < 90) return `${m} min`;
+  if (m < 90) return tr("ui.schedulerPage.span.minutes", { n: m });
   const h = Math.round(m / 60);
-  return h < 36 ? `${h} h` : `${Math.round(h / 24)} d`;
+  return h < 36
+    ? tr("ui.schedulerPage.span.hours", { n: h })
+    : tr("ui.schedulerPage.span.days", { n: Math.round(h / 24) });
 }
+
+// A publication's outcome is an enum from the server; these are its words.
+const OUTCOME: Record<string, MessageKey> = {
+  posted: "ui.schedulerPage.outcome.posted",
+  held: "ui.schedulerPage.outcome.held",
+  paused: "ui.schedulerPage.outcome.paused",
+};
 
 // One log row, rendered by kind. A TICK is the scheduler dispatching — it never
 // publishes anything, so it has no outcome to show, only what it handed off. A
 // PUBLICATION is one post's result, written by the publisher that did the work.
 function RunCells({ summary: s }: { summary: SchedulerRun["summary"] }) {
+  const t = useT();
   const cell = "py-1.5 pr-4";
   if (s.kind === "publication") {
     const fell = s.fallbacks ?? [];
@@ -59,7 +63,9 @@ function RunCells({ summary: s }: { summary: SchedulerRun["summary"] }) {
     return (
       <>
         <td className={`${cell} ${tone}`}>
-          {s.outcome ?? "published"}
+          {s.outcome
+            ? (OUTCOME[s.outcome] ? t(OUTCOME[s.outcome]) : s.outcome)
+            : t("ui.schedulerPage.outcome.published")}
           {/* Which post. Without it the log tells you something didn't publish
               and leaves you to find it — and "held" is an attempt outcome, not
               a status, so there is no Held tab to look in. The post is still
@@ -69,7 +75,7 @@ function RunCells({ summary: s }: { summary: SchedulerRun["summary"] }) {
               to={`/post/${s.post_id}`}
               onClick={(e) => e.stopPropagation()}
               className="ml-1.5 font-mono text-[11px] text-stone-500 underline decoration-dotted underline-offset-2 hover:text-stone-800 dark:text-zinc-400 dark:hover:text-zinc-100"
-              title="Open this post"
+              title={t("ui.schedulerPage.openPost")}
             >
               {s.post_id.slice(0, 8)}
             </Link>
@@ -95,8 +101,13 @@ function RunCells({ summary: s }: { summary: SchedulerRun["summary"] }) {
             // the per-block breakdown kept in the tooltip.
             <span
               className="ml-1.5 text-amber-600 dark:text-amber-400"
-              title={`Posted, but ${fell.length === 1 ? "a dynamic block" : `${fell.length} dynamic blocks`} fell back to the author's text:\n${fell
-                .map((f) => `block ${f.block}: ${attemptLabel(f.reason ?? "unreported")}${f.budget_s ? ` (budget ${f.budget_s}s)` : ""}`)
+              title={`${t("ui.schedulerPage.fellBack", { count: fell.length })}\n${fell
+                .map((f) => {
+                  const line = { block: String(f.block), reason: attemptLabel(f.reason ?? "unreported") };
+                  return f.budget_s
+                    ? t("ui.schedulerPage.fellBackLineBudget", { ...line, s: f.budget_s })
+                    : t("ui.schedulerPage.fellBackLine", line);
+                })
                 .join("\n")}`}
             >
               ⚠ {Array.from(new Set(fell.map((f) => attemptLabel(f.reason ?? "unreported")))).join("; ")}
@@ -111,8 +122,8 @@ function RunCells({ summary: s }: { summary: SchedulerRun["summary"] }) {
   if (s.status === "started") {
     return (
       <>
-        <td className={`${cell} text-stone-500 dark:text-zinc-400`}>tick</td>
-        <td className={`${cell} text-amber-600 dark:text-amber-400`}>started, never finished</td>
+        <td className={`${cell} text-stone-500 dark:text-zinc-400`}>{t("ui.schedulerPage.tick")}</td>
+        <td className={`${cell} text-amber-600 dark:text-amber-400`}>{t("ui.schedulerPage.tickCutOff")}</td>
       </>
     );
   }
@@ -123,24 +134,26 @@ function RunCells({ summary: s }: { summary: SchedulerRun["summary"] }) {
   const repaired = Object.values(s.recovered ?? {}).reduce((n, e) => n + (e?.length ?? 0), 0);
   const contended = s.contended?.length ?? 0;
   const did = [
-    posted && `${posted} posted`,
-    resolving && `${resolving} resolving`,
-    repaired && `${repaired} recovered`,
+    posted && t("ui.schedulerPage.tickPosted", { n: posted }),
+    resolving && t("ui.schedulerPage.tickResolving", { n: resolving }),
+    repaired && t("ui.schedulerPage.tickRecovered", { n: repaired }),
   ].filter(Boolean).join(" · ");
   return (
     <>
-      <td className={`${cell} text-stone-500 dark:text-zinc-400`}>tick</td>
+      <td className={`${cell} text-stone-500 dark:text-zinc-400`}>{t("ui.schedulerPage.tick")}</td>
       <td className={`${cell} text-stone-600 dark:text-zinc-300`}>
-        {did || (s.processed ? `${s.processed} handled` : "nothing due")}
+        {did || (s.processed
+          ? t("ui.schedulerPage.tickHandled", { n: s.processed })
+          : t("ui.schedulerPage.tickNothingDue"))}
         {/* The forecast — what makes a quiet tick worth reading. */}
         {(() => {
           const up = s.upcoming;
           if (!up) return null;
           const text = !up.count
-            ? "nothing scheduled ahead"
+            ? t("ui.schedulerPage.nothingAhead")
             : up.next_in_minutes === undefined
-              ? `${up.count} ahead`
-              : `next of ${up.count} in ${untilMins(up.next_in_minutes)}`;
+              ? t("ui.schedulerPage.ahead", { n: up.count })
+              : t("ui.schedulerPage.nextOf", { n: up.count, when: untilMins(up.next_in_minutes) });
           return <span className="ml-1.5 text-stone-500 dark:text-zinc-400">· {text}</span>;
         })()}
         {contended > 0 && (
@@ -148,13 +161,13 @@ function RunCells({ summary: s }: { summary: SchedulerRun["summary"] }) {
             className="ml-1.5 text-stone-500 dark:text-zinc-400"
             title={(s.contended ?? []).map((c) => c.reason).filter(Boolean).join(", ")}
           >
-            · {contended} skipped
+            · {t("ui.schedulerPage.skipped", { n: contended })}
           </span>
         )}
         {/* Which build answered — turns a row you skim past into one that can
             settle "is my deploy actually live?". */}
         {(s.who?.version || s.who?.commit) && (
-          <span className="ml-1.5 text-stone-400 dark:text-zinc-500" title="The build that ran this tick">
+          <span className="ml-1.5 text-stone-400 dark:text-zinc-500" title={t("ui.schedulerPage.buildTitle")}>
             · {[s.who.version && `v${s.who.version}`, s.who.commit].filter(Boolean).join(" ")}
           </span>
         )}
@@ -185,21 +198,26 @@ function authorizationLine(status: SchedulerStatus | null): string {
   const a = status?.authorization;
   if (!a) return "—";
   if (a.phase === "active") {
-    const granted = a.grantedForMinutes != null
-      ? ` · granted ${untilMins(a.grantedForMinutes)}`
-      : "";
+    const span = a.grantedForMinutes != null ? untilMins(a.grantedForMinutes) : null;
     // A held-but-unspendable token is the state that hid a Worker bug for
     // hours: it posts nothing and reads as "authorized", so say plainly that
     // the next tick will renew rather than fire.
-    return a.spendable
-      ? `Authorized — renews ${until(a.expiresAt)}${granted}`
-      : `Authorized but due for renewal — the next tick re-requests${granted}`;
+    if (a.spendable) {
+      const when = until(a.expiresAt);
+      return span
+        ? tr("ui.schedulerPage.auth.authorizedGranted", { when, span })
+        : tr("ui.schedulerPage.auth.authorized", { when });
+    }
+    return span
+      ? tr("ui.schedulerPage.auth.dueRenewalGranted", { span })
+      : tr("ui.schedulerPage.auth.dueRenewal");
   }
-  if (a.phase === "pending") return `Awaiting your approval (requested ${relative(a.requestedAt)})`;
-  return "Idle — no authorization needed right now";
+  if (a.phase === "pending") return tr("ui.schedulerPage.auth.pending", { ago: relative(a.requestedAt) });
+  return tr("ui.schedulerPage.auth.idle");
 }
 
 export default function SchedulerPage() {
+  const t = useT();
   const [status, setStatus] = useState<SchedulerStatus | null>(null);
   const [runs, setRuns] = useState<SchedulerRun[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -259,7 +277,7 @@ export default function SchedulerPage() {
   return (
     <div className="mx-auto w-[90%] max-w-[1000px] px-4 py-6">
       <div className="mb-4 flex items-center gap-3">
-        <h1 className="text-lg font-semibold">Scheduler</h1>
+        <h1 className="text-lg font-semibold">{t("ui.schedulerPage.title")}</h1>
         <span
           className="flex items-center gap-1.5 text-xs text-stone-500 dark:text-zinc-400"
           title={schedulerStatusTitle(schedState)}
@@ -267,13 +285,12 @@ export default function SchedulerPage() {
           <SchedulerStatusLine state={schedState} />
         </span>
         <span className="ml-auto">
-          <RefreshButton onRefresh={refresh} busy={loading} label="Refresh scheduler status" classNames={refreshStyles.header} />
+          <RefreshButton onRefresh={refresh} busy={loading} label={t("ui.schedulerPage.refresh")} classNames={refreshStyles.header} />
         </span>
       </div>
 
       <p className="mb-4 text-sm text-stone-500 dark:text-zinc-400">
-        A background worker checks for due posts on a schedule and posts them on each owner's behalf.
-        It holds no keys — it renews a short-lived authorization from your npub, the same way you sign in.
+        {t("ui.schedulerPage.intro")}
       </p>
 
       {/* Pending approval (operator-only; renders nothing otherwise). */}
@@ -282,40 +299,40 @@ export default function SchedulerPage() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
-        <Card title="Status">
-          <Row label="npub authorization">{authorizationLine(status)}</Row>
-          <Row label="Last tick">{runs.length ? relative(new Date(runs[0].run_at).getTime()) : "—"}</Row>
-          <Row label="Runs on">{status?.cadence ?? "—"}</Row>
+        <Card title={t("ui.schedulerPage.card.status")}>
+          <Row label={t("ui.schedulerPage.row.npubAuthorization")}>{authorizationLine(status)}</Row>
+          <Row label={t("ui.schedulerPage.row.lastTick")}>{runs.length ? relative(new Date(runs[0].run_at).getTime()) : "—"}</Row>
+          <Row label={t("ui.schedulerPage.row.runsOn")}>{status?.cadence ?? "—"}</Row>
           {workerDown && (
-            <Row label="Worker">
-              <span className="text-amber-600 dark:text-amber-400">unreachable right now</span>
+            <Row label={t("ui.schedulerPage.row.worker")}>
+              <span className="text-amber-600 dark:text-amber-400">{t("ui.schedulerPage.workerUnreachable")}</span>
             </Row>
           )}
         </Card>
 
-        <Card title="Configuration">
-          <Row label="Acts for (operator)">
+        <Card title={t("ui.schedulerPage.card.configuration")}>
+          <Row label={t("ui.schedulerPage.row.actsFor")}>
             <span className="font-mono text-xs">
               {status?.operator_npub ? `${status.operator_npub.slice(0, 14)}…${status.operator_npub.slice(-6)}` : "—"}
             </span>
           </Row>
-          <Row label="Cadence">{status?.cadence ?? "—"}</Row>
+          <Row label={t("ui.schedulerPage.row.cadence")}>{status?.cadence ?? "—"}</Row>
           {/* "the token" used to stand alone here, one card away from the X
               connection panel — so a monthly npub renewal read as X access
               expiring every 30 minutes. Both rows now name whose credential
               they mean. Nothing on this page describes the X OAuth token. */}
-          <Row label="npub renewal">
+          <Row label={t("ui.schedulerPage.row.npubRenewal")}>
             {status?.renewsAtRemainingPercent != null
-              ? `re-requests this worker's npub authorization once ${status.renewsAtRemainingPercent}% of the granted lifetime is left — a share, not a fixed number of hours, because you choose that lifetime when you approve (not your X connection)`
+              ? t("ui.schedulerPage.npubRenewal", { pct: status.renewsAtRemainingPercent })
               : "—"}
           </Row>
-          <Row label="npub re-nudge">
+          <Row label={t("ui.schedulerPage.row.npubRenudge")}>
             {status?.rerequestAfterHours != null
-              ? `resends the npub-approval DM if unanswered for ${status.rerequestAfterHours} h`
+              ? t("ui.schedulerPage.npubRenudge", { h: status.rerequestAfterHours })
               : "—"}
           </Row>
-          <Row label="Worker version">{status?.version ?? "—"}</Row>
-          <Row label="Verify venue">
+          <Row label={t("ui.schedulerPage.row.workerVersion")}>{status?.version ?? "—"}</Row>
+          <Row label={t("ui.schedulerPage.row.verifyVenue")}>
             {status?.verifyAt ? (
               <a href={status.verifyAt} className="text-amber-700 underline dark:text-amber-400">
                 {status.verifyAt}
@@ -328,21 +345,21 @@ export default function SchedulerPage() {
       </div>
 
       <div className="mt-4">
-        <Card title="Traffic log">
+        <Card title={t("ui.schedulerPage.card.trafficLog")}>
           {!loaded ? (
-            <p className="text-sm text-stone-400">Loading…</p>
+            <p className="text-sm text-stone-400">{t("ui.schedulerPage.loading")}</p>
           ) : !runs.length ? (
             <p className="text-sm text-stone-500 dark:text-zinc-400">
-              No ticks recorded yet — the scheduler logs a run each time it checks for due posts.
+              {t("ui.schedulerPage.noTicks")}
             </p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead className="text-xs uppercase tracking-wide text-stone-400 dark:text-zinc-500">
                   <tr>
-                    <th className="py-1.5 pr-4 font-medium">When</th>
-                    <th className="py-1.5 pr-4 font-medium">Event</th>
-                    <th className="py-1.5 pr-4 font-medium">Detail</th>
+                    <th className="py-1.5 pr-4 font-medium">{t("ui.schedulerPage.col.when")}</th>
+                    <th className="py-1.5 pr-4 font-medium">{t("ui.schedulerPage.col.event")}</th>
+                    <th className="py-1.5 pr-4 font-medium">{t("ui.schedulerPage.col.detail")}</th>
                   </tr>
                 </thead>
                 <tbody>

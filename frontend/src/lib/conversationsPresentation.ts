@@ -4,6 +4,8 @@
 // page only decides how loudly to show it and which glyph each signal gets.
 
 import type { ConversationStatus } from "./mcp";
+import type { MessageKey } from "../i18n/en.ts";
+import { tr } from "../i18n/index.ts";
 
 /// X caps a recent-search query at 512 characters; the server appends the
 /// parentheses, the safe defaults and `-from:<own id>` (≤ 20 digits), which is
@@ -47,7 +49,7 @@ export function viewStatuses(view: LeadsView): ConversationStatus[] {
 /// The saved queries that found a lead, by name; "ad hoc" when none did.
 export function sourceNames(ids: readonly string[], queries: readonly { id: string; name: string }[]): string {
   const names = ids.map((id) => queries.find((q) => q.id === id)?.name).filter((n): n is string => !!n);
-  return names.length ? names.join(", ") : "ad hoc";
+  return names.length ? names.join(", ") : tr("lib.conversationsPresentation.adHoc");
 }
 
 export type ScoreTone = "hot" | "warm" | "cool";
@@ -61,14 +63,20 @@ export function scoreTone(score: number): ScoreTone {
 }
 
 /// Signal → short glyph title. Icons live in the page; this is the vocabulary.
-export const SIGNAL_TITLES: Readonly<Record<string, string>> = {
-  need: "Asks a question",
-  thread: "Live thread",
-  reachable: "Reachable author",
-  spam: "Looks promotional",
-  reply: "Is itself a reply",
-  aged: "Older — score decayed",
+const SIGNAL_TITLES: Readonly<Record<string, MessageKey>> = {
+  need: "lib.conversationsPresentation.signal.need",
+  thread: "lib.conversationsPresentation.signal.thread",
+  reachable: "lib.conversationsPresentation.signal.reachable",
+  spam: "lib.conversationsPresentation.signal.spam",
+  reply: "lib.conversationsPresentation.signal.reply",
+  aged: "lib.conversationsPresentation.signal.aged",
 };
+
+/// A signal's title in the language on screen; an unknown signal shows as its id.
+export function signalTitle(signal: string): string {
+  const key = SIGNAL_TITLES[signal];
+  return key ? tr(key) : signal;
+}
 
 /// Tally rows per status for the filter chips, in display order.
 export function statusCounts(
@@ -106,23 +114,24 @@ export const DEFAULT_WEIGHTS: Readonly<Record<string, number>> = {
 
 export interface WeightField {
   key: string;
-  label: string;
-  hint: string;
+  /** Catalog keys, read with `t` / `tr` when shown. */
+  label: MessageKey;
+  hint: MessageKey;
   min: number;
   max: number;
 }
 
 /// Display order and bounds (bounds mirror the server's _WEIGHT_BOUNDS).
 export const WEIGHT_FIELDS: readonly WeightField[] = [
-  { key: "need", label: "Asks a question", hint: "how do I, anyone know, looking for…", min: -100, max: 100 },
-  { key: "replies", label: "Live thread", hint: "reply count at or above the threshold", min: -100, max: 100 },
-  { key: "replies_min", label: "Thread threshold", hint: "replies needed to count as live", min: 0, max: 1000 },
-  { key: "band", label: "Reachable author", hint: "followers inside the band", min: -100, max: 100 },
-  { key: "followers_min", label: "Band from", hint: "followers", min: 0, max: 10_000_000 },
-  { key: "followers_max", label: "Band to", hint: "followers", min: 0, max: 10_000_000 },
-  { key: "spam", label: "Looks promotional", hint: "cashtags, styled letters, airdrop…", min: -100, max: 100 },
-  { key: "reply", label: "Is a reply", hint: "not a top-level post", min: -100, max: 100 },
-  { key: "decay_hours", label: "Fades over", hint: "hours until positive signals reach 0", min: 1, max: 168 },
+  { key: "need", label: "lib.conversationsPresentation.weight.need", hint: "lib.conversationsPresentation.weight.needHint", min: -100, max: 100 },
+  { key: "replies", label: "lib.conversationsPresentation.weight.replies", hint: "lib.conversationsPresentation.weight.repliesHint", min: -100, max: 100 },
+  { key: "replies_min", label: "lib.conversationsPresentation.weight.repliesMin", hint: "lib.conversationsPresentation.weight.repliesMinHint", min: 0, max: 1000 },
+  { key: "band", label: "lib.conversationsPresentation.weight.band", hint: "lib.conversationsPresentation.weight.bandHint", min: -100, max: 100 },
+  { key: "followers_min", label: "lib.conversationsPresentation.weight.followersMin", hint: "lib.conversationsPresentation.weight.followersHint", min: 0, max: 10_000_000 },
+  { key: "followers_max", label: "lib.conversationsPresentation.weight.followersMax", hint: "lib.conversationsPresentation.weight.followersHint", min: 0, max: 10_000_000 },
+  { key: "spam", label: "lib.conversationsPresentation.weight.spam", hint: "lib.conversationsPresentation.weight.spamHint", min: -100, max: 100 },
+  { key: "reply", label: "lib.conversationsPresentation.weight.reply", hint: "lib.conversationsPresentation.weight.replyHint", min: -100, max: 100 },
+  { key: "decay_hours", label: "lib.conversationsPresentation.weight.decayHours", hint: "lib.conversationsPresentation.weight.decayHoursHint", min: 1, max: 168 },
 ];
 
 /// Merge stored overrides over the defaults for display.
@@ -145,10 +154,10 @@ export function weightOverrides(values: Record<string, number>): Record<string, 
 export function weightsProblem(values: Record<string, number>): string | null {
   for (const f of WEIGHT_FIELDS) {
     const v = values[f.key];
-    if (!Number.isInteger(v)) return `${f.label} must be a whole number`;
-    if (v < f.min || v > f.max) return `${f.label} must be between ${f.min} and ${f.max}`;
+    if (!Number.isInteger(v)) return tr("lib.conversationsPresentation.notWhole", { label: tr(f.label) });
+    if (v < f.min || v > f.max) return tr("lib.conversationsPresentation.outOfRange", { label: tr(f.label), min: f.min, max: f.max });
   }
-  if (values.followers_min > values.followers_max) return "Band from must not exceed Band to";
+  if (values.followers_min > values.followers_max) return tr("lib.conversationsPresentation.bandInverted");
   return null;
 }
 
@@ -160,15 +169,15 @@ export function normalizePgTimestamp(value: string): string {
 
 /// "2 min ago" style for the catalog's last-run column; null → "never".
 export function lastRunLabel(iso: string | null | undefined, postsRead: number | null | undefined, now = Date.now()): string {
-  if (!iso) return "never";
+  if (!iso) return tr("lib.conversationsPresentation.never");
   const t = Date.parse(normalizePgTimestamp(iso));
   if (Number.isNaN(t)) return "—";
   const mins = Math.max(0, Math.round((now - t) / 60_000));
-  const when = mins < 1 ? "just now"
-    : mins < 60 ? `${mins} min ago`
-    : mins < 60 * 48 ? `${Math.round(mins / 60)} h ago`
-    : `${Math.round(mins / 1440)} d ago`;
-  return postsRead === null || postsRead === undefined ? when : `${when} · ${postsRead} read`;
+  const when = mins < 1 ? tr("lib.conversationsPresentation.justNow")
+    : mins < 60 ? tr("lib.conversationsPresentation.minAgo", { n: mins })
+    : mins < 60 * 48 ? tr("lib.conversationsPresentation.hAgo", { n: Math.round(mins / 60) })
+    : tr("lib.conversationsPresentation.dAgo", { n: Math.round(mins / 1440) });
+  return postsRead === null || postsRead === undefined ? when : tr("lib.conversationsPresentation.whenRead", { when, n: postsRead });
 }
 
 /// The one-line summary shown after a run.
@@ -178,8 +187,8 @@ export function runSummary(r: {
   const read = r.posts_read ?? 0;
   const fresh = r.new ?? 0;
   const seen = r.refreshed ?? 0;
-  let s = `${read} read · ${fresh} new · ${seen} refreshed`;
-  if (r.truncated_reason === "rate_limited") s += " · X paused us";
-  else if (r.truncated_reason === "max_posts") s += " · more available";
+  let s = tr("lib.conversationsPresentation.runSummary", { read, fresh, seen });
+  if (r.truncated_reason === "rate_limited") s += tr("lib.conversationsPresentation.rateLimited");
+  else if (r.truncated_reason === "max_posts") s += tr("lib.conversationsPresentation.maxPosts");
   return s;
 }

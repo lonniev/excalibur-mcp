@@ -22,15 +22,16 @@ import {
   type PostPerformanceResult,
 } from "../lib/mcp";
 import {
-  PERF_SORT_COLUMNS,
   formatLinkClicks,
   formatLinkPlacement,
   nextPerfSort,
+  perfSortColumn,
   sortPerformancePosts,
   type PerfSortDir,
   type PerfSortKey,
 } from "../lib/performanceTable";
-import { formatHourLabel } from "@tollbooth-dpyc/web";
+import { formatHourLabel, languageLocale } from "@tollbooth-dpyc/web";
+import { tr, useT } from "../i18n";
 import { formatPostedShort, postsHrefForLocalHour, timeOfDayCohortInZone } from "../lib/timezone";
 import { QuoteScroller, useTimezone } from "@tollbooth-dpyc/web/react";
 import { QUOTES } from "../lib/quotes";
@@ -40,35 +41,23 @@ import { refreshStyles } from "../lib/packageStyles";
 
 const card = "rounded-xl border border-stone-200 dark:border-zinc-800 bg-white dark:bg-zinc-900";
 
-// Plain-language definitions — sourced from metrics_harvest.py, not paraphrased
+// Plain-language definitions (catalog keys) — sourced from metrics_harvest.py, not paraphrased
 // from the labels. One Tip treatment is used on summary widgets, table headers,
 // and cells so the reader never has to re-learn where the explanation lives.
 const TIPS = {
-  posts: "How many of your posts have at least one harvested metrics reading.",
-  snapshots:
-    "A snapshot is one reading of a post's metrics at a cadence step (t+15m, +1h, +6h, +24h, +72h, +7d, +28d). Whatever is not snapshotted inside that 28-day window is gone — X stops exposing the private metrics after ~30 days.",
-  medianT15:
-    "Your personal baseline: the rolling median of impressions in the first 15 minutes across your harvested posts. This is the denominator of escape velocity — why the number is on the page at all. Unit: impressions.",
-  followers:
-    "Your current X follower count (best-effort from the account lookup). Context only — not used in escape velocity or breakout ratio, which both compare a post to your own rolling median.",
-  escapeVelocity:
-    "How this post's first 15 minutes compared to your own typical post: impressions at t+15m ÷ your rolling median t+15m. Above 1× means faster than your normal.",
-  breakoutRatio:
-    "How this post's final reach compared to your own typical post: impressions at the latest reading (preferring t+28d) ÷ your rolling median final impressions. Above 1× outpaced your baseline; below 1× under-reached. Empty until at least five posts have a final reading — a thinner sample is too noisy to trust.",
-  trend:
-    "Impressions at each snapshot for this post, oldest to newest (t+15m through +28d). The line shows the shape of the climb; the Impr. column carries the latest number.",
-  linkPlacement:
-    "Median impressions grouped by where the link sat — in the body, in the first reply, or no link at all. Only the groups your corpus actually contains appear, and the panel stays hidden until there are two of them, because one median compares to nothing. Sample size (n) is shown so a one-post group is not mistaken for a solid median.",
-  profileClicks:
-    "How many readers opened your profile from this post. Strongest free intent proxy on X: the post made someone want to find out who wrote it. The rate is profile clicks ÷ impressions.",
-  bookmarks:
-    "Saves for later. X weights bookmarks heavily in ranking; bookmark rate (bookmarks ÷ impressions) separates evergreen reference posts from ephemeral ones.",
-  replyRate:
-    "Replies ÷ impressions, kept separate from the blended engagement mix. Author-reply chains carry heavy ranking weight, so this predicts next-post reach better than aggregates.",
-  quoteToRepost:
-    "Quotes ÷ reposts. Quotes recruit the quoter's out-of-network audience with commentary; plain reposts do neither to the same degree. High ratio means the post provoked response, not mere agreement.",
-  timeOfDay:
-    "Median impressions for posts sent in each hour, shown on a continuous 24-hour local-time axis. Gaps mean that hour has never been tried. Bars with n<3 are dimmed as provisional — a median of one post is that post wearing a statistical label.",
+  posts: "ui.performancePage.tipPosts",
+  snapshots: "ui.performancePage.tipSnapshots",
+  medianT15: "ui.performancePage.tipMedianT15",
+  followers: "ui.performancePage.tipFollowers",
+  escapeVelocity: "ui.performancePage.tipEscapeVelocity",
+  breakoutRatio: "ui.performancePage.tipBreakoutRatio",
+  trend: "ui.performancePage.tipTrend",
+  linkPlacement: "ui.performancePage.tipLinkPlacement",
+  profileClicks: "ui.performancePage.tipProfileClicks",
+  bookmarks: "ui.performancePage.tipBookmarks",
+  replyRate: "ui.performancePage.tipReplyRate",
+  quoteToRepost: "ui.performancePage.tipQuoteToRepost",
+  timeOfDay: "ui.performancePage.tipTimeOfDay",
 } as const;
 
 const TIP_W = 256; // px — must match the w-64 on the panel
@@ -233,7 +222,7 @@ function Sparkline({ points }: { points: { impressions?: number | null }[] }) {
     const v = vals[0];
     return (
       <span className="text-[11px] tabular-nums text-stone-400 dark:text-zinc-500">
-        {v != null ? v.toLocaleString() : "—"}
+        {v != null ? v.toLocaleString(languageLocale()) : "—"}
       </span>
     );
   }
@@ -271,7 +260,7 @@ function fmtRatio(n: number | null | undefined): string {
 
 function fmtInt(n: number | null | undefined): string {
   if (n == null || Number.isNaN(n)) return "—";
-  return n.toLocaleString();
+  return n.toLocaleString(languageLocale());
 }
 
 /** Fraction as a percentage with one decimal (0.053 → "5.3%"). */
@@ -288,7 +277,7 @@ function postLabel(p: PerformancePost): string {
   if (excerpt) {
     return excerpt.length > 72 ? `${excerpt.slice(0, 72).trimEnd()}…` : excerpt;
   }
-  return "Untitled post";
+  return tr("ui.performancePage.untitledPost");
 }
 
 type TodBar = { localHour: number; median: number; n: number };
@@ -310,6 +299,7 @@ function TimeOfDayChart({
   buckets: Record<string, CohortBucket | number>;
   timeZone: string;
 }) {
+  const t = useT();
   const nav = useNavigate();
   const bars: TodBar[] = useMemo(() => {
     const byLocal = new Map<number, TodBar>();
@@ -337,7 +327,7 @@ function TimeOfDayChart({
       <div
         className="flex items-end gap-px sm:gap-0.5 h-[120px]"
         role="list"
-        aria-label="Median impressions by local send hour across a full day. Click a bar to open posts sent in that hour."
+        aria-label={t("ui.performancePage.todAria")}
       >
         {bars.map((b) => {
           const has = b.n > 0;
@@ -347,8 +337,12 @@ function TimeOfDayChart({
           const opacity = !has ? 0 : provisional ? 0.35 + 0.15 * b.n : Math.min(1, 0.55 + 0.15 * Math.min(b.n, 4));
           const label = formatHourLabel(b.localHour, timeZone);
           const title = has
-            ? `${label} · median ${Math.round(b.median).toLocaleString()} impr. · n=${b.n}${provisional ? " (provisional)" : ""} — open posts`
-            : `${label} · no posts yet`;
+            ? t(provisional ? "ui.performancePage.todBarProvisional" : "ui.performancePage.todBar", {
+                hour: label,
+                median: Math.round(b.median).toLocaleString(languageLocale()),
+                n: b.n,
+              })
+            : t("ui.performancePage.todBarEmpty", { hour: label });
           const barClass = `w-full max-w-[18px] mx-auto rounded-t-sm ${
             provisional
               ? "bg-amber-400/80 dark:bg-amber-500/70"
@@ -382,7 +376,7 @@ function TimeOfDayChart({
                 <button
                   type="button"
                   data-testid={`tod-bar-${b.localHour}`}
-                  aria-label={`Open posts sent around ${label}`}
+                  aria-label={t("ui.performancePage.todBarOpen", { hour: label })}
                   onClick={() => nav(postsHrefForLocalHour(b.localHour))}
                   className={`${barClass} cursor-pointer transition-opacity hover:opacity-100 focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-1 dark:focus-visible:ring-offset-zinc-900`}
                   style={barStyle}
@@ -406,7 +400,7 @@ function TimeOfDayChart({
         ))}
       </div>
       <p className="mt-2 text-[10px] text-center text-stone-400 dark:text-zinc-500">
-        {`Local time (${timeZone}). Bars with n<3 are provisional. Click a bar to open those posts.`}
+        {t("ui.performancePage.todFooter", { zone: timeZone })}
       </p>
     </div>
   );
@@ -435,14 +429,15 @@ function PerfSortHeader({
   icon?: ReactNode;
   className?: string;
 }) {
+  const t = useT();
   const active = sortKey === activeKey;
-  const { short, full } = PERF_SORT_COLUMNS[sortKey];
+  const { short, full } = perfSortColumn(sortKey);
   const btn = (
     <button
       type="button"
       onClick={() => onSort(sortKey)}
       title={full}
-      aria-label={active ? `${full}, sorted ${dir === "desc" ? "descending" : "ascending"}` : `Sort by ${full}`}
+      aria-label={active ? t(dir === "desc" ? "ui.performancePage.sortedDesc" : "ui.performancePage.sortedAsc", { column: full }) : t("ui.performancePage.sortBy", { column: full })}
       className={`inline-flex max-w-full min-w-0 items-center gap-0.5 hover:text-amber-600 dark:hover:text-amber-400 transition-colors ${
         active ? "text-amber-600 dark:text-amber-400" : ""
       }`}
@@ -460,6 +455,7 @@ function PerfSortHeader({
 }
 
 export default function PerformancePage() {
+  const t = useT();
   const [data, setData] = useState<PostPerformanceResult | null>(null);
   const [, timeZone] = useTimezone();
   const [loading, setLoading] = useState(false);
@@ -522,15 +518,13 @@ export default function PerformancePage() {
     <div className="max-w-5xl mx-auto px-4 py-6 space-y-5">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-lg font-semibold">Performance</h1>
+          <h1 className="text-lg font-semibold">{t("ui.performancePage.title")}</h1>
           <p className="text-sm text-stone-500 dark:text-zinc-400 mt-0.5">
-            How your recent posts are travelling — early momentum versus your own baseline,
-            final reach versus that same baseline, and where a link helped. Metrics are read
-            at set intervals for 28 days after each send; after that X stops exposing them.
+            {t("ui.performancePage.intro")}
           </p>
         </div>
         <div className="shrink-0 ml-auto">
-          <RefreshButton onRefresh={refresh} busy={loading} label="Refresh performance" classNames={refreshStyles.header} />
+          <RefreshButton onRefresh={refresh} busy={loading} label={t("ui.performancePage.refresh")} classNames={refreshStyles.header} />
         </div>
       </div>
 
@@ -542,35 +536,35 @@ export default function PerformancePage() {
 
       {initialLoading ? (
         <div className="py-16">
-          <QuoteScroller quotes={QUOTES} spinner heading="Loading performance…" classNames={quoteStyles} />
+          <QuoteScroller quotes={QUOTES} spinner heading={t("ui.performancePage.loading")} classNames={quoteStyles} />
         </div>
       ) : (
         <>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <StatCard
           icon={<FileText className="h-4 w-4" />}
-          label="Posts"
+          label={t("ui.performancePage.statPosts")}
           value={fmtInt(corpus?.post_count ?? posts.length)}
-          tip={TIPS.posts}
+          tip={t(TIPS.posts)}
         />
         <StatCard
           icon={<Camera className="h-4 w-4" />}
-          label="Snapshots"
+          label={t("ui.performancePage.statSnapshots")}
           value={fmtInt(corpus?.snapshot_count)}
-          tip={TIPS.snapshots}
+          tip={t(TIPS.snapshots)}
         />
         <StatCard
           icon={<TrendingUp className="h-4 w-4" />}
-          label="Median t+15m"
+          label={t("ui.performancePage.statMedianT15")}
           value={fmtInt(corpus?.rolling_median_t15 ?? null)}
-          unit="impr."
-          tip={TIPS.medianT15}
+          unit={t("ui.performancePage.unitImpr")}
+          tip={t(TIPS.medianT15)}
         />
         <StatCard
           icon={<Users className="h-4 w-4" />}
-          label="Followers"
+          label={t("ui.performancePage.statFollowers")}
           value={fmtInt(followers)}
-          tip={TIPS.followers}
+          tip={t(TIPS.followers)}
         />
       </div>
 
@@ -578,20 +572,19 @@ export default function PerformancePage() {
         <div className={`${card} p-4`}>
           <div className="flex items-center justify-center gap-2 mb-1">
             <Link2 className="h-4 w-4 text-amber-600 dark:text-amber-400" aria-hidden />
-            <Tip label={TIPS.linkPlacement}>
-              <h2 className="text-sm font-medium">Link placement and reach</h2>
+            <Tip label={t(TIPS.linkPlacement)}>
+              <h2 className="text-sm font-medium">{t("ui.performancePage.linkTitle")}</h2>
             </Tip>
           </div>
           <p className="text-xs text-stone-500 dark:text-zinc-400 mb-3 text-center">
-            Median impressions grouped by where the link sat — grounded in your corpus, not
-            third-party claims. n is the sample behind each median.
+            {t("ui.performancePage.linkIntro")}
           </p>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-xs text-stone-400 dark:text-zinc-500 border-b border-stone-100 dark:border-zinc-800">
-                  <th className="py-1.5 pr-3 font-medium">Placement</th>
-                  <th className="py-1.5 pr-3 font-medium">Median impressions</th>
+                  <th className="py-1.5 pr-3 font-medium">{t("ui.performancePage.colPlacement")}</th>
+                  <th className="py-1.5 pr-3 font-medium">{t("ui.performancePage.colMedianImpressions")}</th>
                   <th className="py-1.5 font-medium">n</th>
                 </tr>
               </thead>
@@ -609,7 +602,7 @@ export default function PerformancePage() {
                       <td className="py-2 pr-3 tabular-nums">
                         {fmtInt(b.median)}
                         {provisional ? (
-                          <span className="ml-1.5 text-[10px] uppercase tracking-wide">provisional</span>
+                          <span className="ml-1.5 text-[10px] uppercase tracking-wide">{t("ui.performancePage.provisional")}</span>
                         ) : null}
                       </td>
                       <td className="py-2 tabular-nums">{b.n > 0 ? b.n : "—"}</td>
@@ -626,13 +619,12 @@ export default function PerformancePage() {
         <div className={`${card} p-4`}>
           <div className="flex items-center justify-center gap-2 mb-1">
             <Clock className="h-4 w-4 text-amber-600 dark:text-amber-400" aria-hidden />
-            <Tip label={TIPS.timeOfDay}>
-              <h2 className="text-sm font-medium">Time of day</h2>
+            <Tip label={t(TIPS.timeOfDay)}>
+              <h2 className="text-sm font-medium">{t("ui.performancePage.todTitle")}</h2>
             </Tip>
           </div>
           <p className="text-xs text-stone-500 dark:text-zinc-400 mb-3 text-center">
-            Median impressions by the local hour the post went out — continuous 24-hour axis so
-            untried hours stay visible.
+            {t("ui.performancePage.todIntro")}
           </p>
           <TimeOfDayChart buckets={todCohorts} timeZone={timeZone} />
         </div>
@@ -640,20 +632,19 @@ export default function PerformancePage() {
 
       <div className={`${card} overflow-hidden`}>
         <div className="px-4 py-3 border-b border-stone-100 dark:border-zinc-800">
-          <h2 className="text-sm font-medium">Posts by reach</h2>
+          <h2 className="text-sm font-medium">{t("ui.performancePage.reachTitle")}</h2>
         </div>
         {posts.length === 0 ? (
           <div className="px-4 py-10 text-center text-sm text-stone-500 dark:text-zinc-400">
             {loading ? (
               <div className="py-6">
-                <QuoteScroller quotes={QUOTES} spinner heading="Loading performance…" classNames={quoteStyles} />
+                <QuoteScroller quotes={QUOTES} spinner heading={t("ui.performancePage.loading")} classNames={quoteStyles} />
               </div>
             ) : (
               <>
-                No harvested metrics yet. After a post is sent, snapshots land at t+15m, +1h, +6h,
-                +24h, +72h, +7d, and +28d.{" "}
+                {t("ui.performancePage.empty")}{" "}
                 <Link to="/" className="text-amber-600 dark:text-amber-400 hover:underline">
-                  Back to posts →
+                  {t("ui.performancePage.backToPosts")} →
                 </Link>
               </>
             )}
@@ -676,7 +667,7 @@ export default function PerformancePage() {
               </colgroup>
               <thead>
                 <tr className="text-left text-xs text-stone-400 dark:text-zinc-500 border-b border-stone-100 dark:border-zinc-800">
-                  <th className="px-3 py-2 font-medium">Post</th>
+                  <th className="px-3 py-2 font-medium">{t("ui.performancePage.colPost")}</th>
                   <PerfSortHeader
                     sortKey="posted"
                     activeKey={sortCol}
@@ -685,8 +676,8 @@ export default function PerformancePage() {
                     className="text-left"
                   />
                   <th className="px-1.5 py-2 font-medium min-w-0 overflow-hidden">
-                    <Tip label={TIPS.trend}>
-                      <span title="Trend">Trend</span>
+                    <Tip label={t(TIPS.trend)}>
+                      <span title={t("ui.performancePage.colTrend")}>{t("ui.performancePage.colTrend")}</span>
                     </Tip>
                   </th>
                   <PerfSortHeader
@@ -701,7 +692,7 @@ export default function PerformancePage() {
                     activeKey={sortCol}
                     dir={sortDir}
                     onSort={onSort}
-                    tip={TIPS.escapeVelocity}
+                    tip={t(TIPS.escapeVelocity)}
                     icon={<Rocket className="h-3 w-3" aria-hidden />}
                     className="text-right"
                   />
@@ -710,7 +701,7 @@ export default function PerformancePage() {
                     activeKey={sortCol}
                     dir={sortDir}
                     onSort={onSort}
-                    tip={TIPS.breakoutRatio}
+                    tip={t(TIPS.breakoutRatio)}
                     icon={<TrendingUp className="h-3 w-3" aria-hidden />}
                     className="text-right"
                   />
@@ -726,7 +717,7 @@ export default function PerformancePage() {
                     activeKey={sortCol}
                     dir={sortDir}
                     onSort={onSort}
-                    tip={TIPS.profileClicks}
+                    tip={t(TIPS.profileClicks)}
                     icon={<UserRound className="h-3 w-3" aria-hidden />}
                     className="text-right"
                   />
@@ -735,7 +726,7 @@ export default function PerformancePage() {
                     activeKey={sortCol}
                     dir={sortDir}
                     onSort={onSort}
-                    tip={TIPS.bookmarks}
+                    tip={t(TIPS.bookmarks)}
                     icon={<Bookmark className="h-3 w-3" aria-hidden />}
                     className="text-right"
                   />
@@ -744,7 +735,7 @@ export default function PerformancePage() {
                     activeKey={sortCol}
                     dir={sortDir}
                     onSort={onSort}
-                    tip={TIPS.replyRate}
+                    tip={t(TIPS.replyRate)}
                     icon={<MessageCircle className="h-3 w-3" aria-hidden />}
                     className="text-right"
                   />
@@ -753,7 +744,7 @@ export default function PerformancePage() {
                     activeKey={sortCol}
                     dir={sortDir}
                     onSort={onSort}
-                    tip={TIPS.quoteToRepost}
+                    tip={t(TIPS.quoteToRepost)}
                     icon={<Quote className="h-3 w-3" aria-hidden />}
                     className="text-right"
                   />
@@ -798,7 +789,7 @@ export default function PerformancePage() {
                             : ""
                         }`}
                       >
-                        <Tip label={TIPS.escapeVelocity}>
+                        <Tip label={t(TIPS.escapeVelocity)}>
                           <span>{fmtRatio(p.escape_velocity)}</span>
                         </Tip>
                       </td>
@@ -812,8 +803,8 @@ export default function PerformancePage() {
                         <Tip
                           label={
                             brThin
-                              ? `Breakout ratio needs at least ${brMin} posts with a final reading before the baseline is trustworthy — ${brSample} so far. Cells stay empty rather than guessing.`
-                              : TIPS.breakoutRatio
+                              ? t("ui.performancePage.breakoutThin", { min: brMin, sample: brSample })
+                              : t(TIPS.breakoutRatio)
                           }
                         >
                           <span>{fmtRatio(p.breakout_ratio)}</span>
@@ -823,7 +814,7 @@ export default function PerformancePage() {
                         {formatLinkClicks(p.url_link_clicks, p.link_placement)}
                       </td>
                       <td className="px-2 py-2.5 text-right tabular-nums">
-                        <Tip label={TIPS.profileClicks}>
+                        <Tip label={t(TIPS.profileClicks)}>
                           <span className="inline-flex flex-col items-end leading-tight">
                             <span>{fmtInt(p.user_profile_clicks)}</span>
                             <span className="text-[10px] text-stone-400 dark:text-zinc-500">
@@ -833,7 +824,7 @@ export default function PerformancePage() {
                         </Tip>
                       </td>
                       <td className="px-2 py-2.5 text-right tabular-nums">
-                        <Tip label={TIPS.bookmarks}>
+                        <Tip label={t(TIPS.bookmarks)}>
                           <span className="inline-flex flex-col items-end leading-tight">
                             <span>{fmtInt(p.bookmarks)}</span>
                             <span className="text-[10px] text-stone-400 dark:text-zinc-500">
@@ -843,12 +834,12 @@ export default function PerformancePage() {
                         </Tip>
                       </td>
                       <td className="px-2 py-2.5 text-right tabular-nums">
-                        <Tip label={TIPS.replyRate}>
+                        <Tip label={t(TIPS.replyRate)}>
                           <span>{fmtPct(p.reply_rate)}</span>
                         </Tip>
                       </td>
                       <td className="px-2 py-2.5 text-right tabular-nums">
-                        <Tip label={TIPS.quoteToRepost}>
+                        <Tip label={t(TIPS.quoteToRepost)}>
                           <span>{fmtRatio(p.quote_to_repost_ratio)}</span>
                         </Tip>
                       </td>

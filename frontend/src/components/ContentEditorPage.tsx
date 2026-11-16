@@ -9,7 +9,9 @@ import {
   CopyPlus, X,
 } from "lucide-react";
 import { getResolveBudgets } from "../lib/mcp";
-import { Avatar, useAppShell, useTimezone } from "@tollbooth-dpyc/web/react";
+import { Avatar, Tx, useAppShell, useLanguageLocale, useTimezone } from "@tollbooth-dpyc/web/react";
+import { tr, useT, WORDS } from "../i18n";
+import type { MessageKey } from "../i18n/en";
 import { avatarFor, datetimeLocalValueToIso, debugPush, isoToDatetimeLocalValue } from "@tollbooth-dpyc/web";
 import { cachedXProfile, ensureXProfile } from "../lib/xProfile";
 import type { XProfile } from "../lib/mcp";
@@ -25,16 +27,16 @@ import { quoteStyles } from "../lib/quoteStyles";
 // Categorized symbols + emoji for the picker. X renders the full Unicode/Twemoji
 // set, so this is a broad curated palette (authors shouldn't memorize code
 // points). Insertion is plain text, so everything posts as-is.
-const EMOJI_GROUPS: { label: string; emojis: string[] }[] = [
-  { label: "Typographic", emojis: ["™", "©", "®", "→", "←", "↑", "↓", "•", "★", "☆", "✓", "✗", "—", "–", "…", "₿", "§", "¶", "°", "×", "÷", "±", "≈", "≠", "™", "✦", "✧", "✶", "❝", "❞"] },
-  { label: "Smileys", emojis: ["😀", "😁", "😂", "🤣", "😅", "😊", "😍", "😎", "🤩", "😏", "😉", "🙃", "😴", "🤔", "🧐", "🤨", "😬", "😅", "😭", "😤", "😡", "🥳", "🥺", "😱", "🤯", "🙄", "😇", "🤗", "🫡", "🫠"] },
-  { label: "Gestures & People", emojis: ["👍", "👎", "👏", "🙌", "🙏", "🤝", "👇", "👆", "👉", "👈", "✊", "✌️", "🤞", "🤙", "💪", "🫵", "👀", "🧠", "🗣️", "👤", "👥", "🧑‍💻", "🦸", "🫶", "👋"] },
-  { label: "Nature", emojis: ["🔥", "⚡", "🌟", "✨", "💥", "☀️", "🌈", "🌊", "🌍", "🌙", "⭐", "❄️", "🍀", "🌱", "🌹", "🌸", "🌳", "🐝", "🦋", "🐢"] },
-  { label: "Food & Drink", emojis: ["☕", "🍵", "🍺", "🍷", "🥂", "🍾", "🍕", "🍔", "🌮", "🍩", "🍪", "🎂", "🍎", "🍊", "🍓", "🥑", "🧂", "🍫", "🍿", "🧊"] },
-  { label: "Activity & Objects", emojis: ["🚀", "🎯", "💡", "🔑", "🗝️", "🔒", "🔓", "📌", "📎", "✂️", "🛠️", "⚙️", "🧰", "🔧", "🔨", "⚔️", "🛡️", "🏆", "🎖️", "🥇", "🎁", "🎉", "🎊", "🔔", "📣", "📢", "🔍", "🔎", "💼", "📚"] },
-  { label: "Travel & Places", emojis: ["✈️", "🚗", "🚢", "🚆", "🗺️", "🧭", "🏔️", "🏝️", "🏛️", "🏗️", "🏠", "🌆", "🗽", "⛩️", "🚦", "⚓", "🛰️", "🛸", "🧳", "🪧"] },
-  { label: "Symbols", emojis: ["✅", "❌", "⭕", "❗", "❓", "⚠️", "♻️", "✳️", "❇️", "🔆", "🆕", "🆗", "🔝", "🔚", "©️", "®️", "™️", "💯", "🚫", "⛔", "🔴", "🟢", "🟡", "🔵", "⚫", "⚪", "🟠", "🟣", "🔺", "🔻"] },
-  { label: "Money & Crypto", emojis: ["₿", "💰", "💸", "💵", "💴", "💶", "💷", "🪙", "💳", "📈", "📉", "📊", "💹", "🧾", "🏦", "⚖️", "🤑", "💲", "🏧", "💎"] },
+const EMOJI_GROUPS: { label: MessageKey; emojis: string[] }[] = [
+  { label: "ui.contentEditorPage.emoji.typographic", emojis: ["™", "©", "®", "→", "←", "↑", "↓", "•", "★", "☆", "✓", "✗", "—", "–", "…", "₿", "§", "¶", "°", "×", "÷", "±", "≈", "≠", "™", "✦", "✧", "✶", "❝", "❞"] },
+  { label: "ui.contentEditorPage.emoji.smileys", emojis: ["😀", "😁", "😂", "🤣", "😅", "😊", "😍", "😎", "🤩", "😏", "😉", "🙃", "😴", "🤔", "🧐", "🤨", "😬", "😅", "😭", "😤", "😡", "🥳", "🥺", "😱", "🤯", "🙄", "😇", "🤗", "🫡", "🫠"] },
+  { label: "ui.contentEditorPage.emoji.people", emojis: ["👍", "👎", "👏", "🙌", "🙏", "🤝", "👇", "👆", "👉", "👈", "✊", "✌️", "🤞", "🤙", "💪", "🫵", "👀", "🧠", "🗣️", "👤", "👥", "🧑‍💻", "🦸", "🫶", "👋"] },
+  { label: "ui.contentEditorPage.emoji.nature", emojis: ["🔥", "⚡", "🌟", "✨", "💥", "☀️", "🌈", "🌊", "🌍", "🌙", "⭐", "❄️", "🍀", "🌱", "🌹", "🌸", "🌳", "🐝", "🦋", "🐢"] },
+  { label: "ui.contentEditorPage.emoji.food", emojis: ["☕", "🍵", "🍺", "🍷", "🥂", "🍾", "🍕", "🍔", "🌮", "🍩", "🍪", "🎂", "🍎", "🍊", "🍓", "🥑", "🧂", "🍫", "🍿", "🧊"] },
+  { label: "ui.contentEditorPage.emoji.objects", emojis: ["🚀", "🎯", "💡", "🔑", "🗝️", "🔒", "🔓", "📌", "📎", "✂️", "🛠️", "⚙️", "🧰", "🔧", "🔨", "⚔️", "🛡️", "🏆", "🎖️", "🥇", "🎁", "🎉", "🎊", "🔔", "📣", "📢", "🔍", "🔎", "💼", "📚"] },
+  { label: "ui.contentEditorPage.emoji.travel", emojis: ["✈️", "🚗", "🚢", "🚆", "🗺️", "🧭", "🏔️", "🏝️", "🏛️", "🏗️", "🏠", "🌆", "🗽", "⛩️", "🚦", "⚓", "🛰️", "🛸", "🧳", "🪧"] },
+  { label: "ui.contentEditorPage.emoji.symbols", emojis: ["✅", "❌", "⭕", "❗", "❓", "⚠️", "♻️", "✳️", "❇️", "🔆", "🆕", "🆗", "🔝", "🔚", "©️", "®️", "™️", "💯", "🚫", "⛔", "🔴", "🟢", "🟡", "🔵", "⚫", "⚪", "🟠", "🟣", "🔺", "🔻"] },
+  { label: "ui.contentEditorPage.emoji.money", emojis: ["₿", "💰", "💸", "💵", "💴", "💶", "💷", "🪙", "💳", "📈", "📉", "📊", "💹", "🧾", "🏦", "⚖️", "🤑", "💲", "🏧", "💎"] },
 ];
 import {
   createPost, deletePost, getPost, getSnippet, getVoice, listPosts, postNostrMessage, postTweet, refinePostRegion,
@@ -89,6 +91,8 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   const nav = useNavigate();
   const { npub } = useAppShell().session;
   const [, timeZone] = useTimezone();
+  const t = useT();
+  const locale = useLanguageLocale();
   // When the Profile zone changes, re-express wall datetime-local values so the
   // underlying UTC instant stays put (acceptance: live update, no reload).
   const prevTimeZone = useRef(timeZone);
@@ -246,7 +250,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
       getSnippet(id!)
         .then((row) => {
           if (!live) return;
-          if (!row) { setError("Snippet not found."); finishLoad(); return; }
+          if (!row) { setError(tr("ui.contentEditorPage.snippetNotFound")); finishLoad(); return; }
           setBlocks(parsePostDoc(row.doc, row.text));
           setName(row.name ?? "");
           finishLoad();
@@ -343,7 +347,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
       setVoiceDirty(false);
       setVoiceSaved(true);
     } catch (e) {
-      setVoiceError((e as Error).message || "Could not save Voice");
+      setVoiceError((e as Error).message || tr("ui.contentEditorPage.voiceSaveFailed"));
     } finally {
       setVoiceSaving(false);
     }
@@ -434,7 +438,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     if (isSnippet || curIndex < 0) return;
     const target = curIndex + dir;
     if (target < 0 || target >= neighbors.length) return;
-    if (dirty && !window.confirm("Discard unsaved changes and move to the adjacent post?")) return;
+    if (dirty && !window.confirm(tr("ui.contentEditorPage.discardAndMove"))) return;
     nav(`/post/${neighbors[target].post_id}`);
   }, [isSnippet, curIndex, neighbors, dirty, nav]);
 
@@ -547,7 +551,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
       });
     });
     if (firstMade) { setActiveFlag(firstMade); setTab("flags"); }
-    if (anyOverlap) setHint(firstMade ? "Skipped part of the selection that overlapped an existing flag." : "That overlaps an existing flag.");
+    if (anyOverlap) setHint(firstMade ? t("ui.contentEditorPage.flagSkippedOverlap") : t("ui.contentEditorPage.flagOverlaps"));
     window.getSelection()?.removeAllRanges();
     setSel(null);
   }
@@ -560,10 +564,10 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
       return prev.map((b) => {
         if (b.id !== blockId) return b;
         const end = b.text.length;
-        if (end === 0) { setHint("Nothing to flag — this block is empty."); return b; }
+        if (end === 0) { setHint(t("ui.contentEditorPage.flagEmptyBlock")); return b; }
         const candidate = { start: 0, end };
         if (b.flags.some((f) => overlaps(f, candidate))) {
-          setHint("That overlaps an existing flag — clear it first.");
+          setHint(t("ui.contentEditorPage.flagOverlapsClear"));
           return b;
         }
         const flag: FlagT = { id: uid(), start: 0, end, note: "", suggestions: [], loading: false, error: "", colorIdx: total };
@@ -619,13 +623,13 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
       if (!r.success) {
         updateFlag(blockId, flag.id, {
           loading: false,
-          error: r.message || r.error || "Refine is unavailable right now.",
+          error: r.message || r.error || t("ui.contentEditorPage.refineUnavailable"),
         });
         return;
       }
       // Dedup identical suggestions (the model sometimes repeats), keep order.
       const suggestions = [...new Set((r.suggestions ?? []).map((s) => s.trim()).filter(Boolean))];
-      if (!suggestions.length) throw new Error("No suggestions returned.");
+      if (!suggestions.length) throw new Error(t("ui.contentEditorPage.noSuggestions"));
       updateFlag(blockId, flag.id, { loading: false, suggestions });
     } catch (e) {
       updateFlag(blockId, flag.id, { loading: false, error: (e as Error).message });
@@ -645,7 +649,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
         return { ...b, text: newText, flags };
       }));
       setActiveFlag((a) => (a && a.flagId === flag.id ? null : a));
-      setHint("Region updated.");
+      setHint(t("ui.contentEditorPage.regionUpdated"));
       return;
     }
     // Multi-block region: the revision replaces the WHOLE span as one piece.
@@ -672,7 +676,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
       return [...prev.slice(0, first.i), merged, ...prev.slice(last.i + 1)];
     });
     setActiveFlag((a) => (a && a.flagId === flag.id ? null : a));
-    setHint("Region updated across blocks.");
+    setHint(t("ui.contentEditorPage.regionUpdatedAcross"));
   }
 
   // ── blocks: edit / reorder / add / delete ────────────────────────────────
@@ -715,8 +719,8 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     const inserted = parsePostDoc(s.doc, s.text);
     setBlocks((prev) => [...prev, ...inserted]);
     setHint(inserted.some((b) => b.dynamic)
-      ? "Dynamic snippet added — its prompt runs at post time."
-      : "Snippet added as a block — drag it where you want.");
+      ? t("ui.contentEditorPage.snippetAddedDynamic")
+      : t("ui.contentEditorPage.snippetAdded"));
   };
 
   // Flip a block between static text and a dynamic prompt, in place. Turning it
@@ -735,8 +739,8 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     }));
     setResolved((r) => { const { [blockId]: _drop, ...rest } = r; return rest; });
     setHint(nowDynamic
-      ? "Now a dynamic prompt — it runs at post time. Edit the prompt and fallback below, then Run to preview."
-      : "Back to a static text block.");
+      ? tr("ui.contentEditorPage.nowDynamic")
+      : tr("ui.contentEditorPage.backToStatic"));
   }, []);
 
   // Flip a block between static text and a Nostr companion note. Turning it on
@@ -753,8 +757,8 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     }));
     setResolved((r) => { const { [blockId]: _drop, ...rest } = r; return rest; });
     setHint(nowNostr
-      ? "Nostr note — posts after the tweet lands. Use {{tweet_url}} to embed the live X link."
-      : "Back to a static text block.");
+      ? tr("ui.contentEditorPage.nowNostr", { token: TWEET_URL_TOKEN })
+      : tr("ui.contentEditorPage.backToStatic"));
   }, []);
 
   // Edit a dynamic block's fallback (posted if resolution fails) inline.
@@ -804,7 +808,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
       if (!res.success) {
         setResolved((r) => ({ ...r, [block.id]: {
           promptKey, text: block.fallback ?? "", loading: false,
-          error: res.message || res.error || "Couldn't resolve this prompt.",
+          error: res.message || res.error || tr("ui.contentEditorPage.resolveFailed"),
         } }));
         return;
       }
@@ -820,7 +824,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   const DIVIDER = "─".repeat(20);
   const insertDivider = () => {
     setBlocks((prev) => [...prev, { id: uid(), text: DIVIDER, flags: [] }]);
-    setHint("Divider added — X left-aligns text, so it sits at the line start.");
+    setHint(t("ui.contentEditorPage.dividerAdded"));
   };
   const deleteBlock = (blockId: string) =>
     setBlocks((prev) => (prev.length > 1 ? prev.filter((b) => b.id !== blockId) : prev));
@@ -851,7 +855,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     setIntervalN(d.interval && d.interval > 0 ? d.interval : 1);
     setCeaseAt(d.ceaseAt ?? "");
     setPendingDraft(null);
-    setHint("Restored your unsaved edits — Save when ready.");
+    setHint(tr("ui.contentEditorPage.draftRestored"));
   }, []);
 
   const discardDraft = useCallback(() => {
@@ -875,8 +879,8 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   const inQueue = shownStatus === "scheduled" || shownStatus === "resolving" || shownStatus === "resolved";
 
   async function persist() {
-    if (!composed.trim()) { setError("Write something first."); return; }
-    if (inQueue && !publishAt) { setError("Set a publish time."); setTab("schedule"); return; }
+    if (!composed.trim()) { setError(t("ui.contentEditorPage.writeFirst")); return; }
+    if (inQueue && !publishAt) { setError(t("ui.contentEditorPage.setPublishTime")); setTab("schedule"); return; }
     setSaving(true);
     setError(null);
     const docPayload = serializeBlocks(blocks);
@@ -891,8 +895,8 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     // scheduler tick. Say so, so the post isn't perceived as "not scheduled".
     const pastTime = inQueue && !!publishIso && new Date(publishIso).getTime() < Date.now();
     const savedHint = inQueue
-      ? (pastTime ? "Saved — Ready; its time has passed, so it posts on the next scheduler run." : "Saved — Ready.")
-      : "Saved.";
+      ? (pastTime ? t("ui.contentEditorPage.savedReadyPast") : t("ui.contentEditorPage.savedReady"))
+      : t("ui.contentEditorPage.savedHint");
     try {
       if (isNew) {
         const status: Flip = wanted ?? "draft";
@@ -938,8 +942,8 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
 
   // Save the document as a named snippet (snippet kind's primary action).
   async function persistSnippet() {
-    if (!name.trim()) { setError("Name your snippet first."); return; }
-    if (!composed.trim()) { setError("Write something first."); return; }
+    if (!name.trim()) { setError(t("ui.contentEditorPage.nameSnippetFirst")); return; }
+    if (!composed.trim()) { setError(t("ui.contentEditorPage.writeFirst")); return; }
     setSaving(true);
     setError(null);
     try {
@@ -949,9 +953,9 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
         text: composed,
         doc: serializeBlocks(blocks),
       });
-      if (!row) { setError("Couldn't save the snippet."); return; }
+      if (!row) { setError(t("ui.contentEditorPage.snippetSaveFailed")); return; }
       if (isNew) nav(`/snippet/${row.id}`, { replace: true });
-      else setHint("Saved.");
+      else setHint(t("ui.contentEditorPage.savedHint"));
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -963,17 +967,17 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   // leaving the original untouched. A post copy is a fresh draft (title
   // optional); a snippet copy needs a name. Lands in the new item's editor.
   async function saveAsCopy() {
-    if (!composed.trim()) { setError("Write something first."); return; }
+    if (!composed.trim()) { setError(t("ui.contentEditorPage.writeFirst")); return; }
     const docPayload = serializeBlocks(blocks);
     if (isSnippet) {
-      const newName = window.prompt("Save as a new snippet named:", `${name.trim() || "Snippet"} copy`);
+      const newName = window.prompt(t("ui.contentEditorPage.saveAsSnippetPrompt"), t("ui.contentEditorPage.copyName", { name: name.trim() || t("ui.contentEditorPage.defaultSnippetName") }));
       if (newName === null) return; // cancelled
-      if (!newName.trim()) { setError("Name your snippet copy."); return; }
+      if (!newName.trim()) { setError(t("ui.contentEditorPage.nameSnippetCopy")); return; }
       setSaving(true);
       setError(null);
       try {
         const row = await saveSnippet({ name: newName.trim(), text: composed, doc: docPayload });
-        if (!row) { setError("Couldn't save the copy."); return; }
+        if (!row) { setError(t("ui.contentEditorPage.copySaveFailed")); return; }
         nav(`/snippet/${row.id}`);
       } catch (e) {
         setError((e as Error).message);
@@ -981,7 +985,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
         setSaving(false);
       }
     } else {
-      const newTitle = window.prompt("Save as a new draft post titled:", `${title.trim() || "Untitled"} copy`);
+      const newTitle = window.prompt(t("ui.contentEditorPage.saveAsPostPrompt"), t("ui.contentEditorPage.copyName", { name: title.trim() || t("ui.contentEditorPage.untitled") }));
       if (newTitle === null) return; // cancelled
       setSaving(true);
       setError(null);
@@ -1003,7 +1007,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   async function handleDiscard() {
     if (isSnippet) {
       if (isNew) { nav(listPath); return; }
-      if (!window.confirm("Delete this snippet?")) return;
+      if (!window.confirm(t("ui.contentEditorPage.deleteSnippetConfirm"))) return;
       try { await removeSnippet(id!); nav(listPath); } catch (e) { setError((e as Error).message); }
       return;
     }
@@ -1048,7 +1052,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     }));
 
     if (rendered.some((v) => v === null)) {
-      return { text: "", error: "A dynamic block couldn't be resolved and has no fallback." };
+      return { text: "", error: t("ui.contentEditorPage.dynamicNoFallback") };
     }
     return { text: rendered.filter(Boolean).join("\n\n").trim() };
   }
@@ -1056,7 +1060,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
   // Post to X now (paid), then save the post as sent so it lands in the list.
   async function handlePostNow() {
     debugPush("info", `Post It clicked (${composed.trim().length} chars)`);
-    if (!composed.trim()) { setError("Write something first."); return; }
+    if (!composed.trim()) { setError(t("ui.contentEditorPage.writeFirst")); return; }
     setSaving(true);
     setError(null);
     setNeedsXConnect(false);
@@ -1082,13 +1086,13 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
               textCache: composed, clientReqId: uid(),
             });
         if (!saved.post_id || saved.success === false || saved.error) {
-          const why = saved.error_code || saved.error || saved.message || "unknown error";
+          const why = saved.error_code || saved.error || saved.message || t("ui.contentEditorPage.unknownError");
           debugPush("error", `schedule-for-resolve failed: ${why}`);
-          setError(`Couldn't schedule the post (${why}).`);
+          setError(t("ui.contentEditorPage.scheduleFailed", { why }));
           return;
         }
         debugPush("info", `Deferred to scheduler (budget ${maxBudget}s) — due ~now+10s`);
-        setHint("Ready — its blocks resolve in the background and it posts shortly.");
+        setHint(t("ui.contentEditorPage.deferredHint"));
         setLoadedStatus("scheduled");
         setWanted(null);
         baseline.current = sigOf(blocks, publishAt, freq, interval, ceaseAt, title);
@@ -1099,15 +1103,15 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
 
       const { text: finalText, error: buildErr } = await buildFinalText();
       if (buildErr) { setError(buildErr); return; }
-      if (!finalText.trim()) { setError("Nothing to post after resolving the dynamic blocks."); return; }
+      if (!finalText.trim()) { setError(t("ui.contentEditorPage.nothingAfterResolve")); return; }
       const r = await postTweet(finalText);
       if (r.error || r.success === false) {
         if (r.error_code && OAUTH_NEEDED_CODES.has(r.error_code)) {
           debugPush("info", `post_tweet needs X connect (${r.error_code})`);
           setNeedsXConnect(true);
-          setError("Connect your X account before posting.");
+          setError(t("ui.contentEditorPage.connectXFirst"));
         } else {
-          setError(r.message || r.error || "Couldn't post to X.");
+          setError(r.message || r.error || t("ui.contentEditorPage.postFailed"));
         }
         return;
       }
@@ -1123,16 +1127,16 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
           try {
             const note = await postNostrMessage(withTweetUrl(nb.text, tweetUrl));
             if (note.error || note.success === false) {
-              const why = note.message || note.error || note.error_code || "relay rejected";
+              const why = note.message || note.error || note.error_code || t("ui.contentEditorPage.relayRejected");
               debugPush("error", `post_nostr_message failed: ${why}`);
-              nostrHint = nostrHint || `Posted to X; Nostr note didn't land (${why}).`;
+              nostrHint = nostrHint || t("ui.contentEditorPage.nostrDidntLand", { why });
             } else {
               debugPush("info", `post_nostr_message ok → ${note.event_id || note.note_id || "ok"}`);
             }
           } catch (e) {
             const why = (e as Error).message;
             debugPush("error", `post_nostr_message threw: ${why}`);
-            nostrHint = nostrHint || `Posted to X; Nostr note didn't land (${why}).`;
+            nostrHint = nostrHint || t("ui.contentEditorPage.nostrDidntLand", { why });
           }
         }
       }
@@ -1155,12 +1159,12 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
       setTweetUrl(tweetUrl);
       setPostedUrl(tweetUrl);
       if (!saved.post_id || saved.success === false || saved.error) {
-        const why = saved.error_code || saved.error || saved.message || "unknown error";
+        const why = saved.error_code || saved.error || saved.message || t("ui.contentEditorPage.unknownError");
         debugPush("error", `${isNew ? "create_post" : "update_post"} after send failed: ${why}`);
-        setError(`Posted to X, but couldn't record it as Sent (${why}). The tweet is live — try Save again to record it.`);
+        setError(t("ui.contentEditorPage.recordSentFailed", { why }));
         return;
       }
-      setHint(nostrHint || "Posted to X.");
+      setHint(nostrHint || t("ui.contentEditorPage.postedToX"));
       setLoadedStatus("sent");
       baseline.current = sigOf(blocks, publishAt, freq, interval, ceaseAt, title);
       clearDraft(id ?? "new");
@@ -1176,7 +1180,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     return (
       // Always dark: `dark` here turns on the dark: utilities inside, whatever the site theme.
       <div className="dark min-h-screen bg-zinc-950 flex items-center justify-center">
-        <QuoteScroller quotes={QUOTES} spinner heading={isSnippet ? "Opening the snippet…" : "Opening the editor…"} classNames={quoteStyles} />
+        <QuoteScroller quotes={QUOTES} spinner heading={isSnippet ? t("ui.contentEditorPage.openingSnippet") : t("ui.contentEditorPage.openingEditor")} classNames={quoteStyles} />
       </div>
     );
   }
@@ -1187,9 +1191,10 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
     : npub ? `@${npub.slice(4, 13)}…` : "@excalibur";
   const displayName = xProfile?.name || "eXcalibur";
   const cardAvatar = xProfile?.profile_image_url || avatarFor(npub);
+  const flagsTab = openFlagCount ? t("ui.contentEditorPage.tabFlagsCount", { n: openFlagCount }) : t("ui.contentEditorPage.tabFlags");
   const railTabs = isSnippet
-    ? ([["flags", `Flags ${openFlagCount ? `(${openFlagCount})` : ""}`], ["voice", "Voice"], ["snippets", "Snippets"]] as const)
-    : ([["flags", `Flags ${openFlagCount ? `(${openFlagCount})` : ""}`], ["voice", "Voice"], ["snippets", "Snippets"], ["schedule", "Schedule"]] as const);
+    ? ([["flags", flagsTab], ["voice", t("ui.contentEditorPage.tabVoice")], ["snippets", t("ui.contentEditorPage.tabSnippets")]] as const)
+    : ([["flags", flagsTab], ["voice", t("ui.contentEditorPage.tabVoice")], ["snippets", t("ui.contentEditorPage.tabSnippets")], ["schedule", t("ui.contentEditorPage.tabSchedule")]] as const);
 
   return (
     <div className="min-h-screen w-full bg-zinc-950 text-zinc-200 flex flex-col">
@@ -1227,12 +1232,12 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
           >
             <button onClick={flagSelection} className="flex min-w-0 items-center gap-2 text-sm font-semibold text-zinc-950">
               <Flag className="h-4 w-4 flex-none" />
-              <span className="flex-none">Flag {sel.parts.length > 1 ? `${sel.parts.length} blocks` : "selection"}</span>
-              {shown && <span className="min-w-0 truncate font-normal text-zinc-800/80">— "{shown}"</span>}
+              <span className="flex-none">{sel.parts.length > 1 ? t("ui.contentEditorPage.flagBlocks", { count: sel.parts.length }) : t("ui.contentEditorPage.flagSelection")}</span>
+              {shown && <span className="min-w-0 truncate font-normal text-zinc-800/80">{t("ui.contentEditorPage.selectionQuote", { text: shown })}</span>}
             </button>
             <button
               onClick={() => setSel(null)}
-              title="Cancel — don't flag this"
+              title={t("ui.contentEditorPage.cancelFlag")}
               className="flex h-7 w-7 flex-none items-center justify-center rounded-full text-zinc-800 hover:bg-amber-300"
             >
               <X className="h-4 w-4" />
@@ -1246,22 +1251,22 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
           style={{ position: "fixed", left: clearPill.x, top: clearPill.y - 44, transform: "translateX(-50%)", zIndex: 50 }}
           className="flex items-center gap-1.5 rounded-full bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white shadow-xl ring-1 ring-zinc-700 hover:bg-zinc-800 transition-colors"
         >
-          <Trash2 className="h-3.5 w-3.5" /> Clear flag
+          <Trash2 className="h-3.5 w-3.5" /> {t("ui.contentEditorPage.clearFlag")}
         </button>
       )}
 
       {/* top bar */}
       <header className="flex items-center justify-between gap-4 border-b border-zinc-800 px-5 py-3">
         <div className="flex items-center gap-3">
-          <button onClick={() => nav(listPath)} className="flex h-8 w-8 items-center justify-center rounded-md bg-amber-400 text-zinc-950" title={isSnippet ? "Back to snippets" : "Back to posts"}>
+          <button onClick={() => nav(listPath)} className="flex h-8 w-8 items-center justify-center rounded-md bg-amber-400 text-zinc-950" title={isSnippet ? t("ui.contentEditorPage.backToSnippets") : t("ui.contentEditorPage.backToPosts")}>
             <Swords className="h-5 w-5" />
           </button>
           <div className="leading-tight">
             <div className="font-serif text-lg text-zinc-50">
-              {isSnippet ? "eXcalibur Snippet" : "eXcalibur Posts Manager"}
+              {isSnippet ? t("ui.contentEditorPage.headerSnippet") : t("ui.contentEditorPage.headerPosts")}
             </div>
             <div className="font-mono text-[11px] uppercase tracking-widest text-zinc-500">
-              {isSnippet ? "reusable content" : "draft → refine → ready"}
+              {isSnippet ? t("ui.contentEditorPage.subSnippet") : t("ui.contentEditorPage.subPosts")}
             </div>
           </div>
           {!isSnippet && curIndex >= 0 && neighbors.length > 1 && (
@@ -1269,7 +1274,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
               <button
                 onClick={() => goToNeighbor(-1)}
                 disabled={curIndex <= 0}
-                title="Previous post (← arrow or swipe left)"
+                title={t("ui.contentEditorPage.prevPost")}
                 className="rounded-sm px-1.5 py-0.5 text-base leading-none hover:text-amber-300 disabled:opacity-30"
               >
                 ‹
@@ -1281,7 +1286,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
               <button
                 onClick={() => goToNeighbor(1)}
                 disabled={curIndex >= neighbors.length - 1}
-                title="Next post (→ arrow or swipe right)"
+                title={t("ui.contentEditorPage.nextPost")}
                 className="rounded-sm px-1.5 py-0.5 text-base leading-none hover:text-amber-300 disabled:opacity-30"
               >
                 ›
@@ -1291,7 +1296,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
         </div>
         <div className="flex items-center gap-3">
           <div className="font-mono text-sm tabular-nums text-zinc-400">
-            {charCount.toLocaleString()}<span className="ml-1 text-zinc-600">chars</span>
+            {charCount.toLocaleString(locale)}<span className="ml-1 text-zinc-600">{t("ui.contentEditorPage.chars")}</span>
           </div>
           {isSnippet ? (
             <button
@@ -1299,7 +1304,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
               disabled={saving}
               className="flex items-center gap-1.5 rounded-md bg-amber-400 px-3 py-1.5 text-sm font-medium text-zinc-950 hover:bg-amber-300 disabled:opacity-40 transition-colors"
             >
-              <Save className="h-4 w-4" /> {saving ? "Saving…" : "Save snippet"}
+              <Save className="h-4 w-4" /> {saving ? t("ui.contentEditorPage.saving") : t("ui.contentEditorPage.saveSnippet")}
             </button>
           ) : (
             <>
@@ -1307,35 +1312,35 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
               <button
                 onClick={() => void persist()}
                 disabled={saving}
-                title="Save your edits and the badge"
+                title={t("ui.contentEditorPage.saveTitle")}
                 className="flex items-center gap-1.5 rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:border-zinc-500 hover:text-zinc-100 disabled:opacity-40 transition-colors"
               >
-                <Save className="h-4 w-4" /> {saving ? "Saving…" : "Save"}
+                <Save className="h-4 w-4" /> {saving ? t("ui.contentEditorPage.saving") : t("ui.contentEditorPage.save")}
               </button>
               <button
                 onClick={() => void handlePostNow()}
                 disabled={saving}
-                title="Post to X now and mark this post sent"
+                title={t("ui.contentEditorPage.postNowTitle")}
                 className="flex items-center gap-1.5 rounded-md bg-amber-400 px-3 py-1.5 text-sm font-medium text-zinc-950 hover:bg-amber-300 disabled:opacity-40 transition-colors"
               >
-                <Share className="h-4 w-4" /> Post now
+                <Share className="h-4 w-4" /> {t("ui.contentEditorPage.postNow")}
               </button>
             </>
           )}
           <button
             onClick={() => void saveAsCopy()}
             disabled={saving}
-            title={isSnippet ? "Save the current body as a new snippet" : "Save the current body as a new draft post"}
+            title={isSnippet ? t("ui.contentEditorPage.saveAsTitleSnippet") : t("ui.contentEditorPage.saveAsTitlePost")}
             className="flex items-center gap-1.5 rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:border-zinc-500 hover:text-zinc-100 disabled:opacity-40 transition-colors"
           >
-            <CopyPlus className="h-4 w-4" /> Save as…
+            <CopyPlus className="h-4 w-4" /> {t("ui.contentEditorPage.saveAs")}
           </button>
           <button
             onClick={() => { setPreview((p) => !p); setSel(null); setClearPill(null); }}
             className="flex items-center gap-1.5 rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:border-zinc-500 hover:text-zinc-100 transition-colors"
           >
             {preview ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-            {preview ? "Edit" : "Preview"}
+            {preview ? t("ui.contentEditorPage.edit") : t("ui.contentEditorPage.preview")}
           </button>
         </div>
       </header>
@@ -1345,23 +1350,23 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
       {pendingDraft && !isSnippet && (
         <div className="flex flex-wrap items-center gap-3 border-b border-amber-500/30 bg-amber-500/10 px-5 py-2.5 text-sm text-amber-200">
           <span className="min-w-0 flex-1">
-            You have unsaved edits from{" "}
-            {pendingDraft.savedAt
-              ? new Date(pendingDraft.savedAt).toLocaleString(undefined, { timeZone })
-              : "earlier"}{" "}
-            that never finished saving.
+            {t("ui.contentEditorPage.unsavedBanner", {
+              when: pendingDraft.savedAt
+                ? new Date(pendingDraft.savedAt).toLocaleString(locale, { timeZone })
+                : t("ui.contentEditorPage.earlier"),
+            })}
           </span>
           <button
             onClick={() => restoreDraft(pendingDraft)}
             className="rounded-md bg-amber-400 px-3 py-1 text-xs font-medium text-zinc-950 hover:bg-amber-300"
           >
-            Restore
+            {t("ui.contentEditorPage.restore")}
           </button>
           <button
             onClick={discardDraft}
             className="rounded-md border border-amber-500/40 px-3 py-1 text-xs text-amber-200 hover:border-amber-400"
           >
-            Discard
+            {t("ui.contentEditorPage.discard")}
           </button>
         </div>
       )}
@@ -1371,11 +1376,11 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
       {!isSnippet && tweetUrl && (
         <div className="flex items-center gap-2 border-b border-zinc-800 bg-green-500/10 px-5 py-2 text-sm">
           <Check className="h-4 w-4 shrink-0 text-green-400" />
-          <span className="text-green-400">Posted to X:</span>
+          <span className="text-green-400">{t("ui.contentEditorPage.postedToXLabel")}</span>
           <button
             onClick={() => setPeekUrl(tweetUrl)}
             className="inline-flex items-center gap-1 truncate font-mono text-xs text-sky-400 hover:text-sky-300 hover:underline"
-            title={`Peek at ${tweetUrl}`}
+            title={t("ui.contentEditorPage.peekAt", { url: tweetUrl })}
           >
             {tweetUrl} <Eye className="h-3.5 w-3.5 shrink-0" />
           </button>
@@ -1386,12 +1391,12 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
           editing THIS frozen record won't change future postings. */}
       {!isSnippet && templateId && (
         <div className="flex flex-wrap items-center gap-2 border-b border-zinc-800 bg-violet-500/10 px-5 py-2 text-sm text-violet-300">
-          <span>↻ This is a published record. To change future postings, edit the recurring template.</span>
+          <span>{t("ui.contentEditorPage.publishedRecord")}</span>
           <button
             onClick={() => nav(`/post/${templateId}`)}
             className="ml-auto rounded-sm bg-violet-400 px-2.5 py-1 font-medium text-zinc-950 hover:bg-violet-300"
           >
-            Edit the template →
+            {t("ui.contentEditorPage.editTemplate")}
           </button>
         </div>
       )}
@@ -1399,12 +1404,12 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
       {/* A live recurring template links to its published postings history. */}
       {!isSnippet && !isNew && !templateId && freq !== "none" && (
         <div className="flex flex-wrap items-center gap-2 border-b border-zinc-800 bg-zinc-900/60 px-5 py-2 text-sm text-zinc-400">
-          <span>↻ This recurring post resolves fresh each time it fires.</span>
+          <span>{t("ui.contentEditorPage.recurringFresh")}</span>
           <button
             onClick={() => nav(`/?template=${id}`)}
             className="ml-auto rounded-sm bg-zinc-700 px-2.5 py-1 font-medium text-zinc-100 hover:bg-zinc-600"
           >
-            View published postings →
+            {t("ui.contentEditorPage.viewPostings")}
           </button>
         </div>
       )}
@@ -1420,34 +1425,34 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
           <div className="relative w-full max-w-xl">
             {isSnippet && !preview && (
               <div className="mb-3">
-                <label className="mb-1.5 block font-mono text-[11px] uppercase tracking-widest text-zinc-500">Snippet name</label>
+                <label className="mb-1.5 block font-mono text-[11px] uppercase tracking-widest text-zinc-500">{t("ui.contentEditorPage.snippetName")}</label>
                 <input
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="My CTA Footer"
+                  placeholder={t("ui.contentEditorPage.snippetNamePlaceholder")}
                   className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-hidden focus:border-amber-400"
                 />
               </div>
             )}
             {!isSnippet && !preview && (
               <div className="mb-3">
-                <label className="mb-1.5 block font-mono text-[11px] uppercase tracking-widest text-zinc-500">Title <span className="text-zinc-600">(optional)</span></label>
+                <label className="mb-1.5 block font-mono text-[11px] uppercase tracking-widest text-zinc-500"><Tx ns={WORDS} k="ui.contentEditorPage.titleLabel" components={{ muted: <span className="text-zinc-600" /> }} /></label>
                 <input
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
                   maxLength={200}
-                  placeholder="Untitled — the list shows the first line"
+                  placeholder={t("ui.contentEditorPage.titlePlaceholder")}
                   className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 outline-hidden focus:border-amber-400"
                 />
               </div>
             )}
             <div className="mb-3 flex items-center justify-between">
               <span className="font-mono text-[11px] uppercase tracking-widest text-zinc-500">
-                {preview ? "as it appears on X" : "editing stage"}
+                {preview ? t("ui.contentEditorPage.asOnX") : t("ui.contentEditorPage.editingStage")}
               </span>
               {!preview && (
                 <span className="font-mono text-[11px] text-zinc-600">
-                  {openFlagCount} flag{openFlagCount === 1 ? "" : "s"} · drag to reorder
+                  {t("ui.contentEditorPage.flagsReorder", { count: openFlagCount })}
                 </span>
               )}
             </div>
@@ -1459,7 +1464,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
                   <div className="flex items-center gap-1 text-[15px]">
                     <span className="truncate font-bold text-zinc-900">{displayName}</span>
                     <BadgeCheck className="h-4 w-4 flex-none text-amber-500" />
-                    <span className="truncate text-zinc-500">{handle} · now</span>
+                    <span className="truncate text-zinc-500">{handle} · {t("ui.contentEditorPage.now")}</span>
                   </div>
                   <div className="mt-1 space-y-3">
                     {/* Tweet body: nostr blocks never appear inside the X card. */}
@@ -1522,11 +1527,11 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
                 the X card. {{tweet_url}} shows as a placeholder pill. Never hits a relay. */}
             {preview && blocks.some((b) => b.nostr) && (
               <div className="mt-4 space-y-2">
-                <div className="font-mono text-[11px] uppercase tracking-widest text-sky-400/80">companion Nostr notes · after the tweet lands</div>
+                <div className="font-mono text-[11px] uppercase tracking-widest text-sky-400/80">{t("ui.contentEditorPage.companionNotes")}</div>
                 {blocks.filter((b) => b.nostr).map((b) => (
                   <div key={b.id} className="rounded-xl border border-sky-500/40 bg-sky-950/40 p-3 text-sm text-sky-100">
                     <div className="mb-1.5 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-sky-400">
-                      <Share className="h-3 w-3" /> nostr note
+                      <Share className="h-3 w-3" /> {t("ui.contentEditorPage.nostrNote")}
                     </div>
                     <p className="whitespace-pre-wrap wrap-break-word leading-normal">
                       {b.text
@@ -1540,7 +1545,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
                               )}
                             </span>
                           ))
-                        : <span className="italic text-sky-400/60">(empty note)</span>}
+                        : <span className="italic text-sky-400/60">{t("ui.contentEditorPage.emptyNote")}</span>}
                     </p>
                   </div>
                 ))}
@@ -1550,20 +1555,20 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
             {!preview && (
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <button onClick={addBlock} className="flex items-center gap-1.5 rounded-md border border-dashed border-zinc-700 px-3 py-1.5 text-sm text-zinc-400 hover:border-amber-400 hover:text-amber-300 transition-colors">
-                  <Plus className="h-4 w-4" /> Add text block
+                  <Plus className="h-4 w-4" /> {t("ui.contentEditorPage.addTextBlock")}
                 </button>
                 <button
                   onClick={insertDivider}
-                  title="Insert a 20-char divider (────────────────────) as a block"
+                  title={t("ui.contentEditorPage.dividerTitle")}
                   className="flex items-center gap-1.5 rounded-md border border-dashed border-zinc-700 px-3 py-1.5 text-sm text-zinc-400 hover:border-amber-400 hover:text-amber-300 transition-colors"
                 >
-                  <Minus className="h-4 w-4" /> Divider
+                  <Minus className="h-4 w-4" /> {t("ui.contentEditorPage.divider")}
                 </button>
                 {snippets.filter((s) => s.favorite).map((s) => (
                   <button
                     key={s.id}
                     onClick={() => insertSnippetRow(s)}
-                    title={`Insert "${s.name}"${snippetIsDynamic(s) ? " (dynamic prompt)" : ""}`}
+                    title={snippetIsDynamic(s) ? t("ui.contentEditorPage.insertSnippetDynamic", { name: s.name }) : t("ui.contentEditorPage.insertSnippet", { name: s.name })}
                     className="flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-400/10 px-3 py-1.5 text-sm text-amber-300 hover:bg-amber-400/20 transition-colors"
                   >
                     {snippetIsDynamic(s) ? <Wand2 className="h-3 w-3" /> : <Star className="h-3 w-3 fill-current" />} {s.name}
@@ -1576,7 +1581,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
                 onClick={handleDiscard}
                 className="mt-3 text-xs text-zinc-600 hover:text-rose-400 transition-colors"
               >
-                {isNew ? "Discard" : "Delete snippet"}
+                {isNew ? t("ui.contentEditorPage.discard") : t("ui.contentEditorPage.deleteSnippet")}
               </button>
             )}
             {hint && <div className="mt-3 font-mono text-xs text-amber-300">{hint}</div>}
@@ -1588,7 +1593,7 @@ export default function ContentEditorPage({ kind }: { kind: Kind }) {
                     onClick={() => nav("/profile")}
                     className="ml-auto rounded-sm bg-amber-400 px-2.5 py-1 font-medium text-zinc-950 hover:bg-amber-300"
                   >
-                    Connect X →
+                    {t("ui.contentEditorPage.connectX")}
                   </button>
                 )}
               </div>
@@ -1670,6 +1675,7 @@ function BlockView({
   const ref = useRef<HTMLParagraphElement>(null);
   const editRef = useRef<HTMLTextAreaElement>(null);
   const [showEmoji, setShowEmoji] = useState(false);
+  const t = useT();
   // The time-budget ceiling is the SERVER's, fetched once and shared. Hardcoding it
   // here is what made the editor quietly refuse budgets the operator had already
   // raised — the input said 900 because this file said 900.
@@ -1693,7 +1699,7 @@ function BlockView({
       if (resolved?.loading) {
         return (
           <p className="flex items-center gap-1.5 text-[15px] italic leading-normal text-zinc-400">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" /> resolving… (up to {block.runtimeLimit ?? 210}s)
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> {t("ui.contentEditorPage.resolvingUpTo", { s: block.runtimeLimit ?? 210 })}
           </p>
         );
       }
@@ -1704,14 +1710,13 @@ function BlockView({
           {shown ? (
             <p className="whitespace-pre-wrap wrap-break-word text-[15px] leading-normal text-zinc-900">{shown}</p>
           ) : !failed ? (
-            <p className="text-[15px] italic leading-normal text-zinc-400">(dynamic block — no preview yet)</p>
+            <p className="text-[15px] italic leading-normal text-zinc-400">{t("ui.contentEditorPage.noPreviewYet")}</p>
           ) : null}
           {failed && (
             <p className="mt-1 flex items-start gap-1.5 text-[12px] leading-snug text-amber-600" title={resolved!.error}>
               <span aria-hidden className="mt-px flex-none">⚠</span>
               <span>
-                {shown ? "Showing fallback — the dynamic prompt didn’t resolve: " : "The dynamic prompt didn’t resolve: "}
-                {resolved!.error}
+                {shown ? t("ui.contentEditorPage.showingFallback", { error: resolved!.error }) : t("ui.contentEditorPage.didntResolve", { error: resolved!.error })}
               </span>
             </p>
           )}
@@ -1736,34 +1741,34 @@ function BlockView({
         <div className="rounded-md border border-dashed border-violet-400 bg-violet-50 p-2">
           <div className="mb-1.5 flex items-center justify-between gap-2">
             <span className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-violet-600">
-              <Wand2 className="h-3 w-3" /> dynamic prompt · runs at post time
+              <Wand2 className="h-3 w-3" /> {t("ui.contentEditorPage.dynamicHeader")}
             </span>
             <button
               onClick={onToggleDynamic}
-              title="Turn this back into a normal text block"
+              title={t("ui.contentEditorPage.makeStaticNormalTitle")}
               className="font-mono text-[10px] uppercase tracking-widest text-violet-400 hover:text-violet-700"
             >
-              make static
+              {t("ui.contentEditorPage.makeStaticLower")}
             </button>
           </div>
           <textarea
             value={block.text}
             onChange={(e) => onChange(e.target.value)}
-            placeholder="Write the prompt to run, e.g. 'the current BTC price in USD, one short sentence'"
+            placeholder={t("ui.contentEditorPage.promptPlaceholder")}
             rows={Math.max(2, Math.ceil(block.text.length / 42))}
             className="w-full resize-none rounded-sm border border-violet-300 bg-white p-2 text-[13px] leading-snug text-violet-900 placeholder:text-violet-300 outline-hidden focus:border-violet-500"
           />
           <input
             value={block.fallback ?? ""}
             onChange={(e) => onChangeFallback(e.target.value)}
-            placeholder="Fallback text if it can't resolve (optional)"
+            placeholder={t("ui.contentEditorPage.fallbackPlaceholder")}
             className="mt-1.5 w-full rounded-sm border border-violet-200 bg-white px-2 py-1 text-[12px] text-violet-800 placeholder:text-violet-300 outline-hidden focus:border-violet-400"
           />
           <div className="mt-1.5 flex items-center gap-1.5">
             <input
               value={block.domains ?? ""}
               onChange={(e) => onChangeDomains(e.target.value)}
-              placeholder="Allowed web domains, comma-separated (blank = any)"
+              placeholder={t("ui.contentEditorPage.domainsPlaceholder")}
               className="min-w-0 flex-1 rounded-sm border border-violet-200 bg-white px-2 py-1 text-[12px] text-violet-800 placeholder:text-violet-300 outline-hidden focus:border-violet-400"
             />
             <input
@@ -1772,7 +1777,7 @@ function BlockView({
               max={25}
               value={block.maxFetches ?? 5}
               onChange={(e) => onChangeMaxFetches(Number(e.target.value) || 0)}
-              title="Max web lookups (search + fetch) for this prompt"
+              title={t("ui.contentEditorPage.maxFetchesTitle")}
               className="w-16 flex-none rounded-sm border border-violet-200 bg-white px-2 py-1 text-[12px] text-violet-800 outline-hidden focus:border-violet-400"
             />
             <input
@@ -1782,10 +1787,10 @@ function BlockView({
               step={30}
               value={block.runtimeLimit ?? 210}
               onChange={(e) => onChangeRuntimeLimit(Number(e.target.value) || 0)}
-              title={`Time budget in seconds (60${budgetMax ? `–${budgetMax}` : ""}). Bounds runtime and may affect the fare.`}
+              title={t("ui.contentEditorPage.budgetTitle", { range: `60${budgetMax ? `–${budgetMax}` : ""}` })}
               className="w-16 flex-none rounded-sm border border-violet-200 bg-white px-2 py-1 text-[12px] text-violet-800 outline-hidden focus:border-violet-400"
             />
-            <span className="flex-none text-[10px] text-violet-400">sec</span>
+            <span className="flex-none text-[10px] text-violet-400">{t("ui.contentEditorPage.sec")}</span>
           </div>
           <div className="mt-1.5 flex flex-wrap items-center gap-2">
             <button
@@ -1794,12 +1799,12 @@ function BlockView({
               className="flex items-center gap-1 rounded-md bg-violet-500 px-3 py-2 text-[12px] font-medium text-white hover:bg-violet-400 disabled:opacity-40"
             >
               {resolved?.loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-              {resolved?.loading ? "Running…" : "Run"}
+              {resolved?.loading ? t("ui.contentEditorPage.running") : t("ui.contentEditorPage.run")}
             </button>
-            <span className="font-mono text-[10px] text-violet-400">preview the result here</span>
+            <span className="font-mono text-[10px] text-violet-400">{t("ui.contentEditorPage.previewHere")}</span>
             <span className="flex-1" />
-            <button onClick={onToggleDynamic} title="Turn this back into a plain text block" className="flex items-center gap-1.5 rounded-md px-2.5 py-2 text-[13px] font-medium text-violet-500 hover:bg-violet-100 transition-colors"><Wand2 className="h-4 w-4" /> Make static</button>
-            {canDelete && <button onClick={onDelete} title="Delete block" className="flex items-center gap-1.5 rounded-md px-2.5 py-2 text-[13px] font-medium text-zinc-500 hover:bg-rose-50 hover:text-rose-600 transition-colors"><Trash2 className="h-4 w-4" /> Delete</button>}
+            <button onClick={onToggleDynamic} title={t("ui.contentEditorPage.makeStaticPlainTitle")} className="flex items-center gap-1.5 rounded-md px-2.5 py-2 text-[13px] font-medium text-violet-500 hover:bg-violet-100 transition-colors"><Wand2 className="h-4 w-4" /> {t("ui.contentEditorPage.makeStatic")}</button>
+            {canDelete && <button onClick={onDelete} title={t("ui.contentEditorPage.deleteBlock")} className="flex items-center gap-1.5 rounded-md px-2.5 py-2 text-[13px] font-medium text-zinc-500 hover:bg-rose-50 hover:text-rose-600 transition-colors"><Trash2 className="h-4 w-4" /> {t("ui.contentEditorPage.delete")}</button>}
           </div>
           {result && (
             <p className="mt-1.5 rounded-sm bg-white p-1.5 text-[13px] leading-snug text-zinc-900 ring-1 ring-emerald-200">
@@ -1837,36 +1842,36 @@ function BlockView({
         <div className="rounded-md border border-dashed border-sky-400 bg-sky-50 p-2">
           <div className="mb-1.5 flex items-center justify-between gap-2">
             <span className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-sky-700">
-              <Share className="h-3 w-3" /> nostr note · posts after the tweet lands
+              <Share className="h-3 w-3" /> {t("ui.contentEditorPage.nostrHeader")}
             </span>
             <button
               onClick={onToggleNostr}
-              title="Turn this back into a normal text block"
+              title={t("ui.contentEditorPage.makeStaticNormalTitle")}
               className="font-mono text-[10px] uppercase tracking-widest text-sky-400 hover:text-sky-700"
             >
-              make static
+              {t("ui.contentEditorPage.makeStaticLower")}
             </button>
           </div>
           <textarea
             id={`nostr-ta-${block.id}`}
             value={block.text}
             onChange={(e) => onChange(e.target.value)}
-            placeholder="Companion note text. Use {{tweet_url}} for the live X link."
+            placeholder={t("ui.contentEditorPage.nostrPlaceholder", { token: TWEET_URL_TOKEN })}
             rows={Math.max(2, Math.ceil(block.text.length / 42))}
             className="w-full resize-none rounded-sm border border-sky-300 bg-white p-2 text-[13px] leading-snug text-sky-900 placeholder:text-sky-300 outline-hidden focus:border-sky-500"
           />
           <div className="mt-1.5 flex flex-wrap items-center gap-2">
             <button
               onClick={insertTweetUrl}
-              title={`Insert ${TWEET_URL_TOKEN} at the cursor`}
+              title={t("ui.contentEditorPage.insertTokenTitle", { token: TWEET_URL_TOKEN })}
               className="rounded-md bg-sky-500 px-3 py-2 font-mono text-[11px] font-medium text-white hover:bg-sky-400"
             >
               {TWEET_URL_TOKEN}
             </button>
-            <span className="font-mono text-[10px] text-sky-500">never enters the tweet</span>
+            <span className="font-mono text-[10px] text-sky-500">{t("ui.contentEditorPage.neverEnters")}</span>
             <span className="flex-1" />
-            <button onClick={onToggleNostr} title="Turn this back into a plain text block" className="flex items-center gap-1.5 rounded-md px-2.5 py-2 text-[13px] font-medium text-sky-600 hover:bg-sky-100 transition-colors"><Share className="h-4 w-4" /> Make static</button>
-            {canDelete && <button onClick={onDelete} title="Delete block" className="flex items-center gap-1.5 rounded-md px-2.5 py-2 text-[13px] font-medium text-zinc-500 hover:bg-rose-50 hover:text-rose-600 transition-colors"><Trash2 className="h-4 w-4" /> Delete</button>}
+            <button onClick={onToggleNostr} title={t("ui.contentEditorPage.makeStaticPlainTitle")} className="flex items-center gap-1.5 rounded-md px-2.5 py-2 text-[13px] font-medium text-sky-600 hover:bg-sky-100 transition-colors"><Share className="h-4 w-4" /> {t("ui.contentEditorPage.makeStatic")}</button>
+            {canDelete && <button onClick={onDelete} title={t("ui.contentEditorPage.deleteBlock")} className="flex items-center gap-1.5 rounded-md px-2.5 py-2 text-[13px] font-medium text-zinc-500 hover:bg-rose-50 hover:text-rose-600 transition-colors"><Trash2 className="h-4 w-4" /> {t("ui.contentEditorPage.delete")}</button>}
           </div>
         </div>
       </div>
@@ -1900,24 +1905,24 @@ function BlockView({
     return (
       <div className="rounded-md ring-1 ring-amber-400">
         <div className="relative flex items-center gap-1 rounded-t-md bg-amber-100 px-2 py-1">
-          {fmtBtn(<Bold className="h-3.5 w-3.5" />, "bold", "Bold (Unicode)")}
-          {fmtBtn(<Italic className="h-3.5 w-3.5" />, "italic", "Italic (Unicode)")}
-          {fmtBtn(<Code className="h-3.5 w-3.5" />, "mono", "Monospace (Unicode)")}
+          {fmtBtn(<Bold className="h-3.5 w-3.5" />, "bold", t("ui.contentEditorPage.bold"))}
+          {fmtBtn(<Italic className="h-3.5 w-3.5" />, "italic", t("ui.contentEditorPage.italic"))}
+          {fmtBtn(<Code className="h-3.5 w-3.5" />, "mono", t("ui.contentEditorPage.mono"))}
           <button
             onMouseDown={(ev) => ev.preventDefault()}
             onClick={() => setShowEmoji((v) => !v)}
-            title="Insert emoji or symbol"
+            title={t("ui.contentEditorPage.insertEmoji")}
             className="rounded-sm px-1.5 py-0.5 text-zinc-700 hover:bg-amber-200"
           >
             <Smile className="h-3.5 w-3.5" />
           </button>
-          <span className="ml-2 text-[10px] text-amber-700">select text to style; ☺ inserts a symbol</span>
+          <span className="ml-2 text-[10px] text-amber-700">{t("ui.contentEditorPage.styleHint")}</span>
           {showEmoji && (
             <div className="absolute left-0 top-full z-30 mt-1 max-h-72 w-80 overflow-y-auto rounded-md border border-zinc-300 bg-white p-2 shadow-xl">
               {EMOJI_GROUPS.map((group) => (
                 <div key={group.label}>
                   <div className="sticky top-0 bg-white px-1 py-0.5 text-[10px] font-mono uppercase tracking-widest text-zinc-400">
-                    {group.label}
+                    {t(group.label)}
                   </div>
                   <div className="grid grid-cols-10 gap-0.5">
                     {group.emojis.map((em, i) => (
@@ -1944,9 +1949,9 @@ function BlockView({
         />
         <div className="flex items-center justify-between rounded-b-md bg-amber-100 px-2 py-1">
           <span className="font-mono text-[10px] text-amber-700">
-            {block.dynamic ? "this is a dynamic prompt — it runs at post time" : "editing clears this block's flags"}
+            {block.dynamic ? t("ui.contentEditorPage.dynamicEditing") : t("ui.contentEditorPage.editingClears")}
           </span>
-          <button onClick={onDoneEdit} className="rounded-sm bg-zinc-900 px-2 py-0.5 text-xs text-white hover:bg-zinc-700">Done</button>
+          <button onClick={onDoneEdit} className="rounded-sm bg-zinc-900 px-2 py-0.5 text-xs text-white hover:bg-zinc-700">{t("ui.contentEditorPage.done")}</button>
         </div>
       </div>
     );
@@ -1977,15 +1982,15 @@ function BlockView({
       </p>
       {/* Always-visible action bar BELOW the text — never covers it; touch-sized targets. */}
       <div className="flex flex-wrap items-center gap-0.5 border-t border-zinc-100 pt-1">
-        <button onClick={onEdit} title="Edit text" className={tBtn}><Pencil className="h-4 w-4" /> Edit</button>
-        <button onClick={onToggleDynamic} title="Make dynamic — turn this block's text into a prompt that runs at post time" className={`${tBtn} hover:text-violet-600`}><Wand2 className="h-4 w-4" /> Dynamic</button>
-        <button onClick={onToggleNostr} title="Make Nostr — companion note that posts after the tweet lands" className={`${tBtn} hover:text-sky-600`}><Share className="h-4 w-4" /> Nostr</button>
-        <button onClick={onFlagBlock} title="Flag this whole block for AI review" className={`${tBtn} hover:text-amber-600`}><Flag className="h-4 w-4" /> Flag</button>
-        {canDelete && <button onClick={onDelete} title="Delete block" className={`${tBtn} hover:text-rose-600`}><Trash2 className="h-4 w-4" /> Delete</button>}
+        <button onClick={onEdit} title={t("ui.contentEditorPage.editText")} className={tBtn}><Pencil className="h-4 w-4" /> {t("ui.contentEditorPage.edit")}</button>
+        <button onClick={onToggleDynamic} title={t("ui.contentEditorPage.makeDynamicTitle")} className={`${tBtn} hover:text-violet-600`}><Wand2 className="h-4 w-4" /> {t("ui.contentEditorPage.dynamic")}</button>
+        <button onClick={onToggleNostr} title={t("ui.contentEditorPage.makeNostrTitle")} className={`${tBtn} hover:text-sky-600`}><Share className="h-4 w-4" /> {t("ui.contentEditorPage.nostr")}</button>
+        <button onClick={onFlagBlock} title={t("ui.contentEditorPage.flagBlockTitle")} className={`${tBtn} hover:text-amber-600`}><Flag className="h-4 w-4" /> {t("ui.contentEditorPage.flag")}</button>
+        {canDelete && <button onClick={onDelete} title={t("ui.contentEditorPage.deleteBlock")} className={`${tBtn} hover:text-rose-600`}><Trash2 className="h-4 w-4" /> {t("ui.contentEditorPage.delete")}</button>}
         <span className="flex-1" />
-        <button onClick={onMoveUp} title="Move up" className={tIcon}><ChevronUp className="h-5 w-5" /></button>
-        <button onClick={onMoveDown} title="Move down" className={tIcon}><ChevronDown className="h-5 w-5" /></button>
-        <span className="cursor-grab p-2 text-zinc-300" title="Drag to reorder"><GripVertical className="h-4 w-4" /></span>
+        <button onClick={onMoveUp} title={t("ui.contentEditorPage.moveUp")} className={tIcon}><ChevronUp className="h-5 w-5" /></button>
+        <button onClick={onMoveDown} title={t("ui.contentEditorPage.moveDown")} className={tIcon}><ChevronDown className="h-5 w-5" /></button>
+        <span className="cursor-grab p-2 text-zinc-300" title={t("ui.contentEditorPage.dragReorder")}><GripVertical className="h-4 w-4" /></span>
       </div>
     </div>
   );
@@ -2011,12 +2016,13 @@ function FlagsTab({
   onApply: (blockId: string, flag: FlagT, text: string) => void;
   onRemove: (blockId: string, flagId: string) => void;
 }) {
+  const t = useT();
   if (!allFlags.length) {
     return (
       <div className="rounded-lg border border-dashed border-zinc-800 p-6 text-center">
         <Flag className="mx-auto mb-2 h-5 w-5 text-zinc-600" />
-        <p className="text-sm text-zinc-400">Select any text in the tweet and tap <span className="text-amber-300">Flag for AI</span> to start a refinement.</p>
-        <p className="mt-2 font-mono text-[11px] text-zinc-600">swipe-select works on touch too</p>
+        <p className="text-sm text-zinc-400"><Tx ns={WORDS} k="ui.contentEditorPage.flagsEmpty" components={{ hl: <span className="text-amber-300" /> }} /></p>
+        <p className="mt-2 font-mono text-[11px] text-zinc-600">{t("ui.contentEditorPage.swipeSelect")}</p>
       </div>
     );
   }
@@ -2036,29 +2042,29 @@ function FlagsTab({
                   <p className={`whitespace-pre-wrap rounded-sm ${c.mark} px-1.5 py-0.5 text-[13px] text-zinc-900`}>"{region}"</p>
                 </div>
                 {spanCount > 1 && (
-                  <span className="ml-4 font-mono text-[10px] uppercase tracking-wider text-zinc-500">one region · spans {spanCount} blocks</span>
+                  <span className="ml-4 font-mono text-[10px] uppercase tracking-wider text-zinc-500">{t("ui.contentEditorPage.spansBlocks", { count: spanCount })}</span>
                 )}
               </div>
-              <button onClick={(e) => { e.stopPropagation(); onRemove(f.blockId, f.id); }} title="Clear flag" className="flex flex-none items-center gap-1 rounded-sm text-zinc-500 hover:text-rose-400"><Trash2 className="h-4 w-4" /></button>
+              <button onClick={(e) => { e.stopPropagation(); onRemove(f.blockId, f.id); }} title={t("ui.contentEditorPage.clearFlag")} className="flex flex-none items-center gap-1 rounded-sm text-zinc-500 hover:text-rose-400"><Trash2 className="h-4 w-4" /></button>
             </div>
             <textarea
               value={f.note} onChange={(e) => onNote(f.blockId, f.id, e.target.value)} onClick={(e) => e.stopPropagation()}
-              placeholder="What should change here? (optional)" rows={2}
+              placeholder={t("ui.contentEditorPage.notePlaceholder")} rows={2}
               className="w-full resize-none rounded-md border border-zinc-700 bg-zinc-950 p-2 text-sm text-zinc-200 placeholder:text-zinc-600 outline-hidden focus:border-amber-400"
             />
             <button onClick={(e) => { e.stopPropagation(); onRefine(f.blockId, f); }} disabled={f.loading}
               className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-md bg-amber-400 px-3 py-1.5 text-sm font-medium text-zinc-950 hover:bg-amber-300 disabled:opacity-60 transition-colors">
               {f.loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
-              {f.loading ? "Refining…" : "Refine"}
+              {f.loading ? t("ui.contentEditorPage.refining") : t("ui.contentEditorPage.refine")}
             </button>
             {f.error && <p className="mt-2 text-xs text-rose-400">{f.error}</p>}
             {f.suggestions.length > 0 && (
               <div className="mt-3 space-y-2">
-                <div className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-widest text-zinc-500"><Sparkles className="h-3 w-3" /> suggestions</div>
+                <div className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-widest text-zinc-500"><Sparkles className="h-3 w-3" /> {t("ui.contentEditorPage.suggestions")}</div>
                 {f.suggestions.map((s, i) => (
                   <div key={i} className="rounded-md border border-zinc-700 bg-zinc-950 p-2">
                     <p className="text-sm text-zinc-200">{s}</p>
-                    <button onClick={(e) => { e.stopPropagation(); onApply(f.blockId, f, s); }} className="mt-1.5 flex items-center gap-1 text-xs text-amber-300 hover:text-amber-200"><Check className="h-3.5 w-3.5" /> Use this</button>
+                    <button onClick={(e) => { e.stopPropagation(); onApply(f.blockId, f, s); }} className="mt-1.5 flex items-center gap-1 text-xs text-amber-300 hover:text-amber-200"><Check className="h-3.5 w-3.5" /> {t("ui.contentEditorPage.useThis")}</button>
                   </div>
                 ))}
               </div>
@@ -2082,6 +2088,7 @@ function SnippetsTab({
 }) {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
+  const t = useT();
 
   // Save the focused block as a reusable snippet. If it's dynamic, serialize the
   // whole block into the snippet doc so its prompt + fallback + domains +
@@ -2103,12 +2110,12 @@ function SnippetsTab({
   return (
     <div className="space-y-4">
       <div>
-        <div className="text-xs uppercase tracking-widest text-zinc-500 mb-1">Save the focused block</div>
+        <div className="text-xs uppercase tracking-widest text-zinc-500 mb-1">{t("ui.contentEditorPage.saveFocused")}</div>
         <div className="flex gap-2">
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="My CTA Footer 26jun2026"
+            placeholder={t("ui.contentEditorPage.snippetPlaceholder")}
             className="flex-1 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-600 outline-hidden focus:border-amber-400"
           />
           <button
@@ -2116,21 +2123,21 @@ function SnippetsTab({
             disabled={busy || !name.trim() || !currentText.trim()}
             className="rounded-md bg-amber-400 px-3 py-1.5 text-sm font-medium text-zinc-950 hover:bg-amber-300 disabled:opacity-40 transition-colors"
           >
-            {busy ? "…" : "Save"}
+            {busy ? "…" : t("ui.contentEditorPage.save")}
           </button>
         </div>
         <p className="mt-1 text-[11px] text-zinc-500 line-clamp-2">
           {currentText.trim()
-            ? `Saves: "${currentText.trim().slice(0, 80)}${currentText.trim().length > 80 ? "…" : ""}"`
-            : "Click into a block first, then save its text as a reusable snippet."}
+            ? t("ui.contentEditorPage.savesPreview", { text: `${currentText.trim().slice(0, 80)}${currentText.trim().length > 80 ? "…" : ""}` })
+            : t("ui.contentEditorPage.clickBlockFirst")}
         </p>
       </div>
 
       <div>
-        <div className="text-xs uppercase tracking-widest text-zinc-500 mb-2">Library</div>
+        <div className="text-xs uppercase tracking-widest text-zinc-500 mb-2">{t("ui.contentEditorPage.library")}</div>
         {snippets.length === 0 ? (
           <p className="text-xs text-zinc-500">
-            No snippets yet — save common openings and footers here, then click to drop them into any post.
+            {t("ui.contentEditorPage.noSnippets")}
           </p>
         ) : (
           <div className="space-y-2">
@@ -2141,23 +2148,23 @@ function SnippetsTab({
                 <div className="flex items-center gap-2">
                   <button
                     onClick={async () => setSnippets(await toggleFavorite(s.id, !s.favorite))}
-                    title={s.favorite ? "Unfavorite" : "Favorite — adds a one-click chiclet by Add text block"}
+                    title={s.favorite ? t("ui.contentEditorPage.unfavorite") : t("ui.contentEditorPage.favoriteTitle")}
                     className={s.favorite ? "text-amber-400" : "text-zinc-600 hover:text-amber-400"}
                   >
                     <Star className={`h-3.5 w-3.5 ${s.favorite ? "fill-current" : ""}`} />
                   </button>
                   <button
                     onClick={async () => setSnippets(await toggleDynamic(s, !dyn))}
-                    title={dyn ? "Dynamic — its text is a prompt run at post time. Click to make static." : "Make dynamic — treat its text as a prompt run at post time"}
+                    title={dyn ? t("ui.contentEditorPage.dynamicSnippetTitle") : t("ui.contentEditorPage.makeDynamicSnippetTitle")}
                     className={`flex-none ${dyn ? "text-violet-400" : "text-zinc-600 hover:text-violet-400"}`}
                   >
                     <Wand2 className="h-3.5 w-3.5" />
                   </button>
                   <span className="flex-1 min-w-0 truncate text-sm text-zinc-200">{s.name}</span>
-                  <button onClick={() => onInsert(s)} className="text-xs text-amber-300 hover:text-amber-200" title={dyn ? "Add as a dynamic block" : "Add as a block"}>
-                    + Insert
+                  <button onClick={() => onInsert(s)} className="text-xs text-amber-300 hover:text-amber-200" title={dyn ? t("ui.contentEditorPage.addAsDynamic") : t("ui.contentEditorPage.addAsBlock")}>
+                    {t("ui.contentEditorPage.insert")}
                   </button>
-                  <button onClick={async () => setSnippets(await removeSnippet(s.id))} className="text-zinc-500 hover:text-rose-400" title="Delete snippet">
+                  <button onClick={async () => setSnippets(await removeSnippet(s.id))} className="text-zinc-500 hover:text-rose-400" title={t("ui.contentEditorPage.deleteSnippet")}>
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </div>
@@ -2182,6 +2189,7 @@ function VoiceTab({
   const [editing, setEditing] = useState<number | null>(null);
   const [draft, setDraft] = useState("");
   const [adding, setAdding] = useState("");
+  const t = useT();
 
   const toggle = (i: number) => setBans((prev) => prev.map((b, j) => (j === i ? { ...b, on: !b.on } : b)));
   const remove = (i: number) => setBans((prev) => prev.filter((_, j) => j !== i));
@@ -2205,14 +2213,14 @@ function VoiceTab({
   return (
     <div className="space-y-5">
       <div>
-        <label className="mb-1.5 block font-mono text-[11px] uppercase tracking-widest text-zinc-500">Voice profile</label>
+        <label className="mb-1.5 block font-mono text-[11px] uppercase tracking-widest text-zinc-500">{t("ui.contentEditorPage.voiceProfile")}</label>
         <textarea value={voice} onChange={(e) => setVoice(e.target.value)} rows={5} disabled={!loaded}
           className="w-full resize-none rounded-md border border-zinc-700 bg-zinc-900 p-2 text-sm text-zinc-200 outline-hidden focus:border-amber-400 disabled:opacity-50"
-          placeholder="Paste a few sentences in your own voice…" />
-        <p className="mt-1.5 text-xs text-zinc-500">Sent with every refinement so rewrites sound like you, not like a model.</p>
+          placeholder={t("ui.contentEditorPage.voicePlaceholder")} />
+        <p className="mt-1.5 text-xs text-zinc-500">{t("ui.contentEditorPage.voiceHelp")}</p>
       </div>
       <div>
-        <label className="mb-2 block font-mono text-[11px] uppercase tracking-widest text-zinc-500">Banned constructions</label>
+        <label className="mb-2 block font-mono text-[11px] uppercase tracking-widest text-zinc-500">{t("ui.contentEditorPage.bannedConstructions")}</label>
         <div className="flex flex-wrap gap-2">
           {bans.map((b, i) => (
             editing === i ? (
@@ -2220,18 +2228,18 @@ function VoiceTab({
                 <input autoFocus value={draft} onChange={(e) => setDraft(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") { setEditing(null); setDraft(""); } }}
                   className="w-32 bg-transparent text-xs text-zinc-100 outline-hidden" />
-                <button onClick={commitEdit} title="Save chip" className="rounded-full p-0.5 text-amber-300 hover:text-amber-200">
+                <button onClick={commitEdit} title={t("ui.contentEditorPage.saveChip")} className="rounded-full p-0.5 text-amber-300 hover:text-amber-200">
                   <Check className="h-3 w-3" />
                 </button>
               </span>
             ) : (
               <span key={i}
                 className={`flex items-center gap-1 rounded-full border pl-2.5 pr-1 py-1 text-xs transition-colors ${b.on ? "border-amber-400 bg-amber-400 text-zinc-950" : "border-zinc-700 text-zinc-500 line-through"}`}>
-                <button onClick={() => toggle(i)} title="Toggle constraint" className="max-w-48 truncate">{b.text}</button>
-                <button onClick={() => startEdit(i)} title="Edit" className={`rounded-full p-0.5 ${b.on ? "hover:bg-amber-500/40" : "hover:bg-zinc-700"}`}>
+                <button onClick={() => toggle(i)} title={t("ui.contentEditorPage.toggleConstraint")} className="max-w-48 truncate">{b.text}</button>
+                <button onClick={() => startEdit(i)} title={t("ui.contentEditorPage.edit")} className={`rounded-full p-0.5 ${b.on ? "hover:bg-amber-500/40" : "hover:bg-zinc-700"}`}>
                   <Pencil className="h-2.5 w-2.5" />
                 </button>
-                <button onClick={() => remove(i)} title="Remove" className={`rounded-full p-0.5 ${b.on ? "hover:bg-amber-500/40" : "hover:bg-zinc-700"}`}>
+                <button onClick={() => remove(i)} title={t("ui.contentEditorPage.remove")} className={`rounded-full p-0.5 ${b.on ? "hover:bg-amber-500/40" : "hover:bg-zinc-700"}`}>
                   <Minus className="h-2.5 w-2.5" />
                 </button>
               </span>
@@ -2241,27 +2249,27 @@ function VoiceTab({
         <div className="mt-2 flex items-center gap-1.5">
           <input value={adding} onChange={(e) => setAdding(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") addBan(); }}
-            placeholder="Add a construction to avoid…"
+            placeholder={t("ui.contentEditorPage.addBanPlaceholder")}
             className="flex-1 rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-200 outline-hidden focus:border-amber-400" />
-          <button onClick={addBan} disabled={!adding.trim()} title="Add"
+          <button onClick={addBan} disabled={!adding.trim()} title={t("ui.contentEditorPage.add")}
             className="flex items-center gap-1 rounded-md border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:border-amber-400 hover:text-amber-300 disabled:opacity-40">
-            <Plus className="h-3 w-3" /> Add
+            <Plus className="h-3 w-3" /> {t("ui.contentEditorPage.add")}
           </button>
         </div>
-        <p className="mt-2 text-xs text-zinc-500">Active chips are passed as hard constraints. Tap a chip to disable it, the pencil to edit, the minus to remove.</p>
+        <p className="mt-2 text-xs text-zinc-500">{t("ui.contentEditorPage.bansHelp")}</p>
       </div>
       <div className="flex items-center gap-3 border-t border-zinc-800 pt-3">
         <button onClick={onSave} disabled={!loaded || saving || !dirty}
           className="flex items-center gap-1.5 rounded-md bg-amber-400 px-3 py-1.5 text-sm font-medium text-zinc-950 hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-40">
           {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-          {saving ? "Saving…" : "Save Voice"}
+          {saving ? t("ui.contentEditorPage.saving") : t("ui.contentEditorPage.saveVoice")}
         </button>
         {error
           ? <span className="text-xs text-red-400">{error}</span>
           : saved && !dirty
-            ? <span className="flex items-center gap-1 text-xs text-emerald-400"><Check className="h-3.5 w-3.5" /> Saved</span>
+            ? <span className="flex items-center gap-1 text-xs text-emerald-400"><Check className="h-3.5 w-3.5" /> {t("ui.contentEditorPage.savedBadge")}</span>
             : dirty
-              ? <span className="text-xs text-zinc-500">Unsaved changes</span>
+              ? <span className="text-xs text-zinc-500">{t("ui.contentEditorPage.unsavedChanges")}</span>
               : null}
       </div>
     </div>
@@ -2281,32 +2289,38 @@ function ScheduleTab({
   timeZone: string;
   onDiscard: () => void; isNew: boolean;
 }) {
+  const t = useT();
   const field = "w-full rounded-md border border-zinc-700 bg-zinc-900 p-2 text-sm text-zinc-200 outline-hidden focus:border-amber-400";
   return (
     <div className="space-y-5">
       <div>
-        <label className="mb-1.5 flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-widest text-zinc-500"><Calendar className="h-3.5 w-3.5" /> Publish at</label>
+        <label className="mb-1.5 flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-widest text-zinc-500"><Calendar className="h-3.5 w-3.5" /> {t("ui.contentEditorPage.publishAt")}</label>
         <input type="datetime-local" value={publishAt} onChange={(e) => setPublishAt(e.target.value)} className={field} />
         <p className="mt-1.5 text-xs text-zinc-500">
-          Times are in <span className="text-zinc-300">{timeZone}</span>. The scheduler sweeps on the hour and
-          the half hour, so a post goes out at the next :00 or :30 after its publish time — once
-          its badge says <span className="text-amber-400">Ready</span>. Need it out this instant?
-          Use <span className="text-amber-400">Post now</span>.
+          <Tx
+            ns={WORDS}
+            k="ui.contentEditorPage.scheduleHelp"
+            components={{
+              zone: <span className="text-zinc-300">{timeZone}</span>,
+              ready: <span className="text-amber-400" />,
+              postNow: <span className="text-amber-400" />,
+            }}
+          />
         </p>
       </div>
       <div>
-        <label className="mb-1.5 flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-widest text-zinc-500"><Repeat className="h-3.5 w-3.5" /> Republish</label>
+        <label className="mb-1.5 flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-widest text-zinc-500"><Repeat className="h-3.5 w-3.5" /> {t("ui.contentEditorPage.republish")}</label>
         <div className="flex gap-2">
           <select value={freq} onChange={(e) => setFreq(e.target.value as Freq)} className={field}>
-            <option value="none">Once, no repeat</option>
-            <option value="daily">Daily</option>
-            <option value="weekdays">Business Days (Mon–Fri)</option>
-            <option value="weekly">Weekly</option>
-            <option value="monthly">Monthly</option>
+            <option value="none">{t("ui.contentEditorPage.freqNone")}</option>
+            <option value="daily">{t("ui.contentEditorPage.freqDaily")}</option>
+            <option value="weekdays">{t("ui.contentEditorPage.freqWeekdays")}</option>
+            <option value="weekly">{t("ui.contentEditorPage.freqWeekly")}</option>
+            <option value="monthly">{t("ui.contentEditorPage.freqMonthly")}</option>
           </select>
           {freq !== "none" && (
             <div className="flex flex-none items-center gap-1.5">
-              <span className="text-xs text-zinc-500">every</span>
+              <span className="text-xs text-zinc-500">{t("ui.contentEditorPage.every")}</span>
               <input type="number" min={1} value={interval} onChange={(e) => setInterval(Math.max(1, Number(e.target.value) || 1))}
                 className="w-14 rounded-md border border-zinc-700 bg-zinc-900 p-2 text-center text-sm text-zinc-200 outline-hidden focus:border-amber-400" />
             </div>
@@ -2314,14 +2328,14 @@ function ScheduleTab({
         </div>
       </div>
       <div>
-        <label className="mb-1.5 flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-widest text-zinc-500"><Octagon className="h-3.5 w-3.5" /> Cease republication</label>
+        <label className="mb-1.5 flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-widest text-zinc-500"><Octagon className="h-3.5 w-3.5" /> {t("ui.contentEditorPage.cease")}</label>
         <input type="datetime-local" value={ceaseAt} onChange={(e) => setCeaseAt(e.target.value)} disabled={freq === "none"} className={`${field} disabled:opacity-40`} />
       </div>
 
       <CalendarPreview publishAt={publishAt} freq={freq} interval={interval} ceaseAt={ceaseAt} />
 
       <button onClick={onDiscard} className="w-full text-center text-xs text-zinc-600 hover:text-rose-400 transition-colors">
-        {isNew ? "Discard draft" : "Archive post"}
+        {isNew ? t("ui.contentEditorPage.discardDraft") : t("ui.contentEditorPage.archivePost")}
       </button>
     </div>
   );
@@ -2368,6 +2382,8 @@ function wallYmd(value: string): { y: number; m: number; d: number } | null {
 function CalendarPreview({ publishAt, freq, interval, ceaseAt }: {
   publishAt: string; freq: Freq; interval: number; ceaseAt: string;
 }) {
+  const t = useT();
+  const locale = useLanguageLocale();
   const startYmd = publishAt ? wallYmd(publishAt) : null;
   const valid = !!startYmd;
   const ceaseYmd = ceaseAt ? wallYmd(ceaseAt) : null;
@@ -2411,7 +2427,7 @@ function CalendarPreview({ publishAt, freq, interval, ceaseAt }: {
   }, [publishAt, freq, interval, ceaseAt]);
 
   if (!valid) {
-    return <p className="text-xs text-zinc-500">Set a publish time to preview the schedule.</p>;
+    return <p className="text-xs text-zinc-500">{t("ui.contentEditorPage.setTimeToPreview")}</p>;
   }
 
   const startKey = dayKey(start!.getFullYear(), start!.getMonth(), start!.getDate());
@@ -2423,19 +2439,19 @@ function CalendarPreview({ publishAt, freq, interval, ceaseAt }: {
     ...Array(lead).fill(null),
     ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
   ];
-  const monthLabel = first.toLocaleString(undefined, { month: "long", year: "numeric" });
+  const monthLabel = first.toLocaleString(locale, { month: "long", year: "numeric" });
   const prev = () => setView((v) => (v.m === 0 ? { y: v.y - 1, m: 11 } : { y: v.y, m: v.m - 1 }));
   const next = () => setView((v) => (v.m === 11 ? { y: v.y + 1, m: 0 } : { y: v.y, m: v.m + 1 }));
 
   return (
     <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-3">
       <div className="mb-2 flex items-center justify-between">
-        <button onClick={prev} title="Previous month" className="rounded-sm px-2 text-zinc-500 hover:text-amber-300">‹</button>
+        <button onClick={prev} title={t("ui.contentEditorPage.prevMonth")} className="rounded-sm px-2 text-zinc-500 hover:text-amber-300">‹</button>
         <span className="font-mono text-[11px] uppercase tracking-widest text-zinc-400">{monthLabel}</span>
-        <button onClick={next} title="Next month" className="rounded-sm px-2 text-zinc-500 hover:text-amber-300">›</button>
+        <button onClick={next} title={t("ui.contentEditorPage.nextMonth")} className="rounded-sm px-2 text-zinc-500 hover:text-amber-300">›</button>
       </div>
       <div className="grid grid-cols-7 gap-0.5 text-center">
-        {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
+        {Array.from({ length: 7 }, (_, i) => new Date(2023, 0, 1 + i).toLocaleString(locale, { weekday: "narrow" })).map((d, i) => (
           <div key={i} className="pb-1 font-mono text-[9px] uppercase text-zinc-600">{d}</div>
         ))}
         {cells.map((day, i) => {
@@ -2456,9 +2472,9 @@ function CalendarPreview({ publishAt, freq, interval, ceaseAt }: {
         })}
       </div>
       <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-zinc-500">
-        <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-xs bg-amber-400" /> start</span>
-        {freq !== "none" && <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-xs bg-amber-400/30" /> repeats</span>}
-        {ceaseKey && <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-xs ring-1 ring-rose-400" /> cease</span>}
+        <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-xs bg-amber-400" /> {t("ui.contentEditorPage.legendStart")}</span>
+        {freq !== "none" && <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-xs bg-amber-400/30" /> {t("ui.contentEditorPage.legendRepeats")}</span>}
+        {ceaseKey && <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-xs ring-1 ring-rose-400" /> {t("ui.contentEditorPage.legendCease")}</span>}
       </div>
     </div>
   );

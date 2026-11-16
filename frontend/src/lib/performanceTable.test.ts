@@ -7,18 +7,21 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { registerExcalibur } from "../i18n/index.ts";
 import {
   PERF_HEADER_SHORT_MAX,
-  PERF_SORT_COLUMNS,
+  PERF_SORT_KEYS,
   formatLinkClicks,
   formatLinkPlacement,
   nextPerfSort,
   normalizeLinkPlacement,
+  perfSortColumn,
   sortPerformancePosts,
   sortValue,
-  type PerfSortKey,
 } from "./performanceTable.ts";
 import type { PerformancePost } from "./mcp.ts";
+
+await registerExcalibur();
 
 function post(partial: Partial<PerformancePost> & { post_id: string }): PerformancePost {
   return partial;
@@ -144,7 +147,7 @@ describe("link placement three-state + clicks (#360)", () => {
   });
 });
 
-describe("PERF_SORT_COLUMNS — short labels fit fixed-width cols (#373)", () => {
+describe("perfSortColumn — short labels fit fixed-width cols (#373)", () => {
   // The field report's overlapping headers used these full phrases as the
   // visible label. They must not reappear as `short`.
   const FORBIDDEN_VISIBLE = [
@@ -156,7 +159,8 @@ describe("PERF_SORT_COLUMNS — short labels fit fixed-width cols (#373)", () =>
   ];
 
   it("every short label is at most PERF_HEADER_SHORT_MAX chars", () => {
-    for (const [key, { short }] of Object.entries(PERF_SORT_COLUMNS)) {
+    for (const key of PERF_SORT_KEYS) {
+      const { short } = perfSortColumn(key);
       assert.ok(
         short.length <= PERF_HEADER_SHORT_MAX,
         `${key} short label "${short}" is ${short.length} chars (max ${PERF_HEADER_SHORT_MAX})`,
@@ -165,21 +169,19 @@ describe("PERF_SORT_COLUMNS — short labels fit fixed-width cols (#373)", () =>
   });
 
   it("does not use the long phrases that overflowed adjacent headers", () => {
-    const shorts = Object.values(PERF_SORT_COLUMNS).map((c) => c.short);
+    const shorts = PERF_SORT_KEYS.map((k) => perfSortColumn(k).short);
     for (const bad of FORBIDDEN_VISIBLE) {
       assert.ok(!shorts.includes(bad), `visible short label must not be "${bad}"`);
     }
   });
 
   it("keeps the full plain-language name for title/tooltip", () => {
-    assert.equal(PERF_SORT_COLUMNS.escape_velocity.full, "Escape velocity");
-    assert.equal(PERF_SORT_COLUMNS.breakout_ratio.full, "Breakout ratio");
-    assert.equal(PERF_SORT_COLUMNS.quote_to_repost.full, "Quote / repost ratio");
+    assert.equal(perfSortColumn("escape_velocity").full, "Escape velocity");
+    assert.equal(perfSortColumn("breakout_ratio").full, "Breakout ratio");
+    assert.equal(perfSortColumn("quote_to_repost").full, "Quote / repost ratio");
     // Every column exposes a non-empty full label.
-    for (const [key, { full }] of Object.entries(PERF_SORT_COLUMNS) as [
-      PerfSortKey,
-      { short: string; full: string },
-    ][]) {
+    for (const key of PERF_SORT_KEYS) {
+      const { full } = perfSortColumn(key);
       assert.ok(full.length > 0, `${key} missing full label`);
     }
   });

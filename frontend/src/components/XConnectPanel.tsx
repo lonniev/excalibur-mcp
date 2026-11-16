@@ -19,6 +19,7 @@ import { getStoredNpub } from "@tollbooth-dpyc/web";
 import { beginOauth, checkOauthStatus, getXConnection } from "../lib/mcp";
 import { ensureXProfile } from "../lib/xProfile";
 import { presentXConnectedCard } from "../lib/xConnectPresentation";
+import { useT } from "../i18n";
 
 const card = "rounded-xl border border-stone-200 dark:border-zinc-800 bg-white dark:bg-zinc-900";
 
@@ -39,6 +40,7 @@ const BADGE_STYLES = {
 } as const;
 
 export default function XConnectPanel() {
+  const t = useT();
   const [stage, setStage] = useState<Stage>("loading");
   const [authorizeUrl, setAuthorizeUrl] = useState("");
   const [expiresInSec, setExpiresInSec] = useState<number | null>(null);
@@ -100,7 +102,7 @@ export default function XConnectPanel() {
       const r = await beginOauth();
       if (r.error || r.success === false || !r.authorize_url) {
         popup?.close();
-        setError(r.error || r.message || "Couldn't start the X authorization.");
+        setError(r.error || r.message || t("ui.xConnectPanel.startFailed"));
         return;
       }
       setAuthorizeUrl(r.authorize_url);
@@ -109,7 +111,7 @@ export default function XConnectPanel() {
         popup.location.href = r.authorize_url; // drive the already-open popup
       } else {
         // Popup was blocked anyway — the authorizing stage shows a click-through link.
-        setNote("Popup blocked — use the “Open X authorization” button below.");
+        setNote(t("ui.xConnectPanel.popupBlocked"));
       }
     } catch (e) {
       popup?.close();
@@ -127,14 +129,14 @@ export default function XConnectPanel() {
       const r = await checkOauthStatus();
       if (r.status === "completed") {
         await refreshConnection();
-        setNote("X account connected.");
+        setNote(t("ui.xConnectPanel.connectedNote"));
         return;
       }
       if (r.error || r.success === false) {
-        setError(r.error || "Couldn't check authorization status.");
+        setError(r.error || t("ui.xConnectPanel.checkFailed"));
         return;
       }
-      setNote(r.message || "Still waiting — finish authorizing in the X tab, then check again.");
+      setNote(r.message || t("ui.xConnectPanel.stillWaiting"));
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -155,7 +157,7 @@ export default function XConnectPanel() {
     <div className={`${card} p-5`}>
       <div className="mb-1 flex items-center gap-2">
         <AtSign className="h-4 w-4 text-amber-500" />
-        <span className="text-sm font-medium">X account</span>
+        <span className="text-sm font-medium">{t("ui.xConnectPanel.title")}</span>
         {connectedView && (
           <span
             className={`ml-auto inline-flex items-center gap-1 text-xs ${BADGE_STYLES[connectedView.level]}`}
@@ -166,14 +168,13 @@ export default function XConnectPanel() {
       </div>
 
       {stage === "loading" && (
-        <p className="flex items-center gap-1.5 text-xs text-stone-400 dark:text-zinc-500"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Checking connection…</p>
+        <p className="flex items-center gap-1.5 text-xs text-stone-400 dark:text-zinc-500"><Loader2 className="h-3.5 w-3.5 animate-spin" /> {t("ui.xConnectPanel.checking")}</p>
       )}
 
       {stage === "indeterminate" && (
         <>
           <p className="mb-3 text-xs leading-relaxed text-stone-500 dark:text-zinc-400">
-            Couldn't read your X connection status — the service may be waking up.
-            This doesn't mean you're disconnected; if you connected before, you still are.
+            {t("ui.xConnectPanel.indeterminate")}
           </p>
           <div className="flex flex-wrap gap-2">
             <button
@@ -181,15 +182,15 @@ export default function XConnectPanel() {
               disabled={busy}
               className="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 px-4 py-2 text-sm text-stone-600 transition-colors hover:bg-stone-100 disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
             >
-              <RefreshCw className="h-4 w-4" /> Check again
+              <RefreshCw className="h-4 w-4" /> {t("ui.xConnectPanel.checkAgain")}
             </button>
             <button
               onClick={connect}
               disabled={busy}
               className="inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm text-stone-500 transition-colors hover:bg-stone-100 disabled:opacity-40 dark:text-zinc-400 dark:hover:bg-zinc-800"
-              title="Only if you've never linked an X account"
+              title={t("ui.xConnectPanel.setUpTitle")}
             >
-              <ExternalLink className="h-4 w-4" /> Set up X
+              <ExternalLink className="h-4 w-4" /> {t("ui.xConnectPanel.setUp")}
             </button>
           </div>
         </>
@@ -198,9 +199,7 @@ export default function XConnectPanel() {
       {stage === "disconnected" && (
         <>
           <p className="mb-3 text-xs leading-relaxed text-stone-500 dark:text-zinc-400">
-            Connect your X account so eXcalibur can post on your behalf. You'll authorize on X in a
-            new tab; the callback returns through the Tollbooth OAuth2 collector — eXcalibur never
-            sees your X password.
+            {t("ui.xConnectPanel.disconnected")}
           </p>
           <button
             onClick={connect}
@@ -208,7 +207,7 @@ export default function XConnectPanel() {
             className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-sm text-white transition-colors hover:bg-amber-500 disabled:opacity-40"
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ExternalLink className="h-4 w-4" />}
-            Connect X
+            {t("ui.xConnectPanel.connect")}
           </button>
         </>
       )}
@@ -216,8 +215,7 @@ export default function XConnectPanel() {
       {stage === "authorizing" && (
         <>
           <p className="mb-3 text-xs leading-relaxed text-stone-500 dark:text-zinc-400">
-            Authorize eXcalibur on X, then come back and verify. If the popup didn't open,
-            use the button below — it opens X in a new tab.
+            {t("ui.xConnectPanel.authorizing")}
           </p>
           <div className="flex flex-wrap gap-2">
             <a
@@ -226,7 +224,7 @@ export default function XConnectPanel() {
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-sm text-white transition-colors hover:bg-amber-500"
             >
-              <ExternalLink className="h-4 w-4" /> Open X authorization
+              <ExternalLink className="h-4 w-4" /> {t("ui.xConnectPanel.openAuthorization")}
             </a>
             <button
               onClick={verify}
@@ -234,14 +232,14 @@ export default function XConnectPanel() {
               className="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 px-4 py-2 text-sm text-stone-600 transition-colors hover:bg-stone-100 disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
             >
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-              I've authorized — verify
+              {t("ui.xConnectPanel.verify")}
             </button>
             <button
               onClick={() => setStage("disconnected")}
               disabled={busy}
               className="rounded-lg border border-stone-300 px-3 py-2 text-sm text-stone-600 transition-colors hover:bg-stone-100 disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
             >
-              Cancel
+              {t("ui.xConnectPanel.cancel")}
             </button>
           </div>
         </>
@@ -262,7 +260,7 @@ export default function XConnectPanel() {
             }
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            {connectedView.level === "blocked" ? "Reconnect to keep posting" : "Reconnect"}
+            {connectedView.level === "blocked" ? t("ui.xConnectPanel.reconnectToPost") : t("ui.xConnectPanel.reconnect")}
           </button>
         </>
       )}

@@ -11,6 +11,8 @@
 // Retrying are excluded too). No post is ever counted twice.
 
 import type { SchedulerState } from "../lib/schedulerState";
+import { useT } from "../i18n";
+import type { MessageKey } from "../i18n/en";
 
 const DOT: Record<SchedulerState["health"], string> = {
   loading: "bg-zinc-400",
@@ -24,14 +26,14 @@ const DOT: Record<SchedulerState["health"], string> = {
   unknown: "bg-zinc-400",
 };
 
-const LABEL: Record<SchedulerState["health"], string> = {
-  loading: "Scheduler…",
-  healthy: "Scheduler healthy",
-  cutoff: "Scheduler cut off",
-  quiet: "Scheduler quiet",
-  stalled: "Scheduler stalled",
-  unauthorized: "Scheduler awaiting approval",
-  unknown: "Scheduler status unknown",
+const LABEL: Record<SchedulerState["health"], MessageKey> = {
+  loading: "ui.schedulerStatusLine.label.loading",
+  healthy: "ui.schedulerStatusLine.label.healthy",
+  cutoff: "ui.schedulerStatusLine.label.cutoff",
+  quiet: "ui.schedulerStatusLine.label.quiet",
+  stalled: "ui.schedulerStatusLine.label.stalled",
+  unauthorized: "ui.schedulerStatusLine.label.unauthorized",
+  unknown: "ui.schedulerStatusLine.label.unknown",
 };
 
 const CHIP = "rounded-full px-1.5 text-[10px]";
@@ -44,6 +46,7 @@ export default function SchedulerStatusLine({
   state: SchedulerState;
   collapseLabel?: boolean;
 }) {
+  const t = useT();
   const { health, resolving, stuck, soon } = state;
   const pulse = health === "healthy" || health === "quiet" || health === "unauthorized";
   // Every badge must name a real Post status and land you on that Posts filter —
@@ -69,25 +72,25 @@ export default function SchedulerStatusLine({
   return (
     <>
       <span className={`inline-block h-2 w-2 rounded-full ${DOT[health]} ${pulse ? "animate-pulse" : ""}`} />
-      <span className={collapseLabel ? "hidden sm:inline" : undefined}>{LABEL[health]}</span>
+      <span className={collapseLabel ? "hidden sm:inline" : undefined}>{t(LABEL[health])}</span>
 
       {resolving.length > 0 && (
         <span
           className={`${CHIP} bg-sky-500/15 text-sky-600 dark:text-sky-400`}
-          title={`A worker is building the body of ${resolving.join(", ")} right now. Filter Posts by Resolving to see it.`}
+          title={t("ui.schedulerStatusLine.resolvingTitle", { ids: resolving.join(", ") })}
         >
-          {resolving.length} Resolving
+          {t("ui.schedulerStatusLine.resolving", { n: resolving.length })}
         </span>
       )}
 
       {held.length > 0 && (
         <span
           className={`${CHIP} bg-amber-500/15 text-amber-700 dark:text-amber-400`}
-          title={`Held on the last run, still Scheduled and due to retry: ${held
-            .map((p) => `${p.id} (${p.reason})`)
-            .join("; ")}. Filter Posts by Scheduled — each one carries the same ⚠ marker.`}
+          title={t("ui.schedulerStatusLine.heldTitle", {
+            list: held.map((p) => `${p.id} (${p.reason})`).join("; "),
+          })}
         >
-          ⚠ Retrying {held.length}
+          ⚠ {t("ui.schedulerStatusLine.held", { n: held.length })}
         </span>
       )}
 
@@ -99,20 +102,20 @@ export default function SchedulerStatusLine({
       {health === "healthy" && soon > 0 && (
         <span
           className={`${CHIP} bg-stone-500/10 text-stone-600 dark:bg-zinc-400/15 dark:text-zinc-300`}
-          title={`${soon} post${soon === 1 ? "" : "s"} queued ahead, as of the last tick. Filter Posts by Scheduled to see them.`}
+          title={t("ui.schedulerStatusLine.soonTitle", { count: soon })}
         >
-          ⓘ {soon} Soon
+          ⓘ {t("ui.schedulerStatusLine.soon", { n: soon })}
         </span>
       )}
 
       {paused.length > 0 && (
         <span
           className={`${CHIP} bg-rose-500/15 text-rose-600 dark:text-rose-400`}
-          title={`Stopped until you resume them: ${paused
-            .map((p) => `${p.id} (${p.reason})`)
-            .join("; ")}. Filter Posts by Paused.`}
+          title={t("ui.schedulerStatusLine.pausedTitle", {
+            list: paused.map((p) => `${p.id} (${p.reason})`).join("; "),
+          })}
         >
-          ⏸ {paused.length} Paused
+          ⏸ {t("ui.schedulerStatusLine.paused", { n: paused.length })}
         </span>
       )}
     </>

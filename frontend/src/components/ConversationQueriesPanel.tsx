@@ -1,6 +1,7 @@
 import { Eraser, Loader2, Pencil, Plus, Radar, Shield, ShieldOff, Trash2 } from "lucide-react";
 import type { ConversationQueryRow } from "../lib/mcp";
 import { lastRunLabel } from "../lib/conversationsPresentation";
+import { useT } from "../i18n";
 
 /// The patron's saved-query catalog: one row each, with Search again / Edit /
 /// Purge / Delete. Selecting a row shows every lead that query has found.
@@ -17,21 +18,22 @@ export default function ConversationQueriesPanel({
   onPurge: (q: ConversationQueryRow) => void;
   onNew: () => void;
 }) {
+  const t = useT();
   return (
     <div className="mb-4 rounded-lg border border-stone-200 dark:border-zinc-800">
       <div className="flex items-center border-b border-stone-200 px-3 py-2 dark:border-zinc-800">
-        <h2 className="text-sm font-medium text-stone-700 dark:text-zinc-300">Saved queries</h2>
+        <h2 className="text-sm font-medium text-stone-700 dark:text-zinc-300">{t("ui.conversationQueriesPanel.title")}</h2>
         <span className="ml-2 text-xs text-stone-400 dark:text-zinc-500">{queries.length}/50</span>
         <button
           onClick={onNew}
           className="ml-auto inline-flex items-center gap-1 text-xs text-amber-600 hover:underline dark:text-amber-400"
         >
-          <Plus className="h-3.5 w-3.5" /> New
+          <Plus className="h-3.5 w-3.5" /> {t("ui.conversationQueriesPanel.new")}
         </button>
       </div>
       {queries.length === 0 ? (
         <p className="px-3 py-4 text-xs text-stone-400 dark:text-zinc-500">
-          No saved queries yet — save one to re-run it and read only what's new.
+          {t("ui.conversationQueriesPanel.empty")}
         </p>
       ) : (
         <table className="w-full text-sm">
@@ -53,14 +55,14 @@ export default function ConversationQueriesPanel({
                     {q.name}
                     {tuned > 0 && (
                       <span className="ml-1.5 rounded-full bg-amber-100 px-1.5 text-[10px] text-amber-800 dark:bg-amber-500/20 dark:text-amber-200">
-                        {tuned} tuned
+                        {t("ui.conversationQueriesPanel.tuned", { n: tuned })}
                       </span>
                     )}
                   </td>
                   <td className="px-3 py-2 align-top max-w-xl">
                     <code className="block truncate text-xs text-stone-500 dark:text-zinc-400">{q.query}</code>
                   </td>
-                  <td className="px-3 py-2 align-top text-stone-400 dark:text-zinc-500" title={q.safe_defaults ? "Safe defaults on" : "Safe defaults off"}>
+                  <td className="px-3 py-2 align-top text-stone-400 dark:text-zinc-500" title={q.safe_defaults ? t("ui.conversationQueriesPanel.safeOn") : t("ui.conversationQueriesPanel.safeOff")}>
                     {q.safe_defaults ? <Shield className="h-3.5 w-3.5" /> : <ShieldOff className="h-3.5 w-3.5" />}
                   </td>
                   <td className="px-3 py-2 align-top text-xs whitespace-nowrap text-stone-400 dark:text-zinc-500">
@@ -71,18 +73,18 @@ export default function ConversationQueriesPanel({
                       <button
                         onClick={(e) => { e.stopPropagation(); onRun(q); }}
                         disabled={runningId !== null}
-                        title="Search again — adds X posts newer than the last run"
+                        title={t("ui.conversationQueriesPanel.runAgain")}
                         className="hover:text-amber-600 disabled:opacity-40 dark:hover:text-amber-400"
                       >
                         {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Radar className="h-4 w-4" />}
                       </button>
-                      <button onClick={(e) => { e.stopPropagation(); onEdit(q); }} title="Edit" className="hover:text-amber-600 dark:hover:text-amber-400">
+                      <button onClick={(e) => { e.stopPropagation(); onEdit(q); }} title={t("ui.conversationQueriesPanel.edit")} className="hover:text-amber-600 dark:hover:text-amber-400">
                         <Pencil className="h-4 w-4" />
                       </button>
-                      <button onClick={(e) => { e.stopPropagation(); onPurge(q); }} title="Purge leads X no longer shows (engaged leads are kept)" className="hover:text-amber-600 dark:hover:text-amber-400">
+                      <button onClick={(e) => { e.stopPropagation(); onPurge(q); }} title={t("ui.conversationQueriesPanel.purge")} className="hover:text-amber-600 dark:hover:text-amber-400">
                         <Eraser className="h-4 w-4" />
                       </button>
-                      <button onClick={(e) => { e.stopPropagation(); onDelete(q); }} title="Delete (its leads are kept)" className="hover:text-red-500">
+                      <button onClick={(e) => { e.stopPropagation(); onDelete(q); }} title={t("ui.conversationQueriesPanel.delete")} className="hover:text-red-500">
                         <Trash2 className="h-4 w-4" />
                       </button>
                     </span>
