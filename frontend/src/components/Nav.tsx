@@ -5,25 +5,27 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { checkBalance } from "@tollbooth-dpyc/web";
-import { SiteNav, matchesPath, useAppShell, type SiteNavItem } from "@tollbooth-dpyc/web/react";
+import { SiteNav, matchesPath, useAppShell, useLanguageLocale, type SiteNavItem } from "@tollbooth-dpyc/web/react";
 import { balanceChip, navStyles } from "../lib/packageStyles";
-
-const PAGES: readonly SiteNavItem[] = [
-  { href: "/", label: "Posts", end: true },
-  { href: "/snippets", label: "Snippets" },
-  { href: "/new", label: "Compose" },
-  { href: "/performance", label: "Performance" },
-  { href: "/conversations", label: "Leads" },
-  { href: "/scheduler", label: "Scheduler" },
-  { href: "/wallet", label: "Wallet" },
-];
-
-const ACCOUNT_LINKS: readonly SiteNavItem[] = [
-  { href: "/profile", label: "Profile & theme" },
-  { href: "/wallet", label: "Wallet" },
-];
+import { useT } from "../i18n";
 
 export default function Nav() {
+  const t = useT();
+  const locale = useLanguageLocale();
+  // Built at render, so the words follow a language change.
+  const pages: readonly SiteNavItem[] = [
+    { href: "/", label: t("ui.nav.posts"), end: true },
+    { href: "/snippets", label: t("ui.nav.snippets") },
+    { href: "/new", label: t("ui.nav.compose") },
+    { href: "/performance", label: t("ui.nav.performance") },
+    { href: "/conversations", label: t("ui.nav.leads") },
+    { href: "/scheduler", label: t("ui.nav.scheduler") },
+    { href: "/wallet", label: t("ui.nav.wallet") },
+  ];
+  const accountLinks: readonly SiteNavItem[] = [
+    { href: "/profile", label: t("ui.nav.profileTheme") },
+    { href: "/wallet", label: t("ui.nav.wallet") },
+  ];
   const { session } = useAppShell();
   const { pathname } = useLocation();
   const [balance, setBalance] = useState<number | null>(null);
@@ -46,7 +48,7 @@ export default function Nav() {
           <span className="font-semibold tracking-wide">eXcalibur</span>
         </Link>
       }
-      items={PAGES}
+      items={pages}
       isActive={(href, item) => matchesPath(pathname, href, item.end)}
       renderLink={({ href, children, ...rest }) => (
         <Link to={href} {...rest}>
@@ -54,11 +56,11 @@ export default function Nav() {
         </Link>
       )}
       trailing={
-        <Link to="/wallet" className={balanceChip} title="Credit balance">
-          {balance === null ? "— sats" : `${balance.toLocaleString()} sats`}
+        <Link to="/wallet" className={balanceChip} title={t("ui.nav.creditBalance")}>
+          {balance === null ? t("ui.nav.balanceUnknown") : t("ui.nav.balance", { sats: balance.toLocaleString(locale) })}
         </Link>
       }
-      account={{ npub: session.npub, links: ACCOUNT_LINKS, onSignOut: session.signOut }}
+      account={{ npub: session.npub, links: accountLinks, onSignOut: session.signOut }}
       classNames={navStyles}
     />
   );

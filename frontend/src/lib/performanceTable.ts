@@ -10,6 +10,9 @@
 // Never render a missing placement as "Body"; never show 0 clicks for a
 // post with no link (that conflates null with zero).
 
+import { languageLocale } from "@tollbooth-dpyc/web";
+import { tr } from "../i18n/index.ts";
+import type { MessageKey } from "../i18n/en.ts";
 import type { PerformancePost } from "./mcp.ts";
 
 export type PerfSortKey =
@@ -28,34 +31,51 @@ export type PerfSortDir = "asc" | "desc";
 /** Canonical three-state link placement (#360). */
 export type LinkPlacement = "none" | "body" | "first_reply";
 
+/** Every sortable column, in table order. */
+export const PERF_SORT_KEYS: readonly PerfSortKey[] = [
+  "posted",
+  "impressions",
+  "escape_velocity",
+  "breakout_ratio",
+  "clicks",
+  "profile",
+  "bookmarks",
+  "reply_rate",
+  "quote_to_repost",
+];
+
+/** Catalog keys for each column's `short` and `full` words. */
+const PERF_SORT_WORDS: Record<PerfSortKey, { short: MessageKey; full: MessageKey }> = {
+  posted: { short: "lib.performanceTable.postedShort", full: "lib.performanceTable.postedFull" },
+  impressions: { short: "lib.performanceTable.impressionsShort", full: "lib.performanceTable.impressionsFull" },
+  escape_velocity: { short: "lib.performanceTable.escapeShort", full: "lib.performanceTable.escapeFull" },
+  breakout_ratio: { short: "lib.performanceTable.breakoutShort", full: "lib.performanceTable.breakoutFull" },
+  clicks: { short: "lib.performanceTable.clicksShort", full: "lib.performanceTable.clicksFull" },
+  profile: { short: "lib.performanceTable.profileShort", full: "lib.performanceTable.profileFull" },
+  bookmarks: { short: "lib.performanceTable.bookmarksShort", full: "lib.performanceTable.bookmarksFull" },
+  reply_rate: { short: "lib.performanceTable.replyShort", full: "lib.performanceTable.replyFull" },
+  quote_to_repost: { short: "lib.performanceTable.quoteShort", full: "lib.performanceTable.quoteFull" },
+};
+
 /**
  * Visible header text must fit a ~6–10% table-fixed column (icon + tip +
  * sort chevron share the cell). Keep `short` to one tight token; put the
- * plain-language name in `full` for hover/title.
+ * plain-language name in `full` for hover/title. Words in the language on
+ * screen, so call it at render.
  */
-export const PERF_SORT_COLUMNS: Record<
-  PerfSortKey,
-  { short: string; full: string }
-> = {
-  posted: { short: "Posted", full: "Posted" },
-  impressions: { short: "Impr.", full: "Impressions" },
-  escape_velocity: { short: "Escape", full: "Escape velocity" },
-  breakout_ratio: { short: "Breakout", full: "Breakout ratio" },
-  clicks: { short: "Clicks", full: "Link clicks" },
-  profile: { short: "Profile", full: "Profile clicks" },
-  bookmarks: { short: "Saves", full: "Bookmarks" },
-  reply_rate: { short: "Reply", full: "Reply rate" },
-  quote_to_repost: { short: "Q/R", full: "Quote / repost ratio" },
-};
+export function perfSortColumn(key: PerfSortKey): { short: string; full: string } {
+  const w = PERF_SORT_WORDS[key];
+  return { short: tr(w.short), full: tr(w.full) };
+}
 
 /** Hard cap on visible short labels — guards against regressing to #373 overflow. */
 export const PERF_HEADER_SHORT_MAX = 8;
 
 /** Human labels for the three placement states — never invent "Body" for null. */
-export const LINK_PLACEMENT_LABELS: Record<LinkPlacement, string> = {
-  none: "None",
-  body: "Body",
-  first_reply: "First reply",
+const LINK_PLACEMENT_LABELS: Record<LinkPlacement, MessageKey> = {
+  none: "lib.performanceTable.placementNone",
+  body: "lib.performanceTable.placementBody",
+  first_reply: "lib.performanceTable.placementFirstReply",
 };
 
 /**
@@ -88,7 +108,7 @@ export function normalizeLinkPlacement(
 export function formatLinkPlacement(
   value: string | null | undefined,
 ): string {
-  return LINK_PLACEMENT_LABELS[normalizeLinkPlacement(value)];
+  return tr(LINK_PLACEMENT_LABELS[normalizeLinkPlacement(value)]);
 }
 
 /**
@@ -101,7 +121,7 @@ export function formatLinkClicks(
 ): string {
   if (normalizeLinkPlacement(placement) === "none") return "—";
   if (clicks == null || Number.isNaN(clicks)) return "—";
-  return Number(clicks).toLocaleString();
+  return Number(clicks).toLocaleString(languageLocale());
 }
 
 export function sortValue(p: PerformancePost, key: PerfSortKey): number {

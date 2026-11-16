@@ -4,7 +4,7 @@
 
 import type { ReactNode } from "react";
 import type { Theme } from "@tollbooth-dpyc/web";
-import { AccountPage, useAppShell } from "@tollbooth-dpyc/web/react";
+import { AccountPage, LanguageChooser, Tx, useAppShell } from "@tollbooth-dpyc/web/react";
 import {
   accountStyles,
   buildInfoStyles,
@@ -14,16 +14,20 @@ import {
 } from "../lib/packageStyles";
 import XConnectPanel from "./XConnectPanel";
 import { PatronFundingStatus, OperatorFundingStatus } from "./FundingStatusPanels";
+import { useT, WORDS, type Translate } from "../i18n";
 
-const THEME_HINTS: Record<Theme, string> = { dark: "Default", light: "", system: "Match OS" };
-const THEME_LABELS: Record<Theme, ReactNode> = {
-  dark: <ThemeChoice theme="dark" label="Dark" />,
-  light: <ThemeChoice theme="light" label="Light" />,
-  system: <ThemeChoice theme="system" label="System" />,
-};
+/** The line under each theme choice; none for light. */
+const themeHint = (theme: Theme, t: Translate): string =>
+  theme === "dark" ? t("ui.profilePage.themeDefault") : theme === "system" ? t("ui.profilePage.themeMatchOs") : "";
 
 export default function ProfilePage() {
+  const t = useT();
   const { session, status } = useAppShell();
+  const themeLabels: Record<Theme, ReactNode> = {
+    dark: <ThemeChoice theme="dark" label={t("ui.profilePage.themeDark")} hint={themeHint("dark", t)} />,
+    light: <ThemeChoice theme="light" label={t("ui.profilePage.themeLight")} hint={themeHint("light", t)} />,
+    system: <ThemeChoice theme="system" label={t("ui.profilePage.themeSystem")} hint={themeHint("system", t)} />,
+  };
   return (
     <AccountPage
       npub={session.npub}
@@ -37,26 +41,31 @@ export default function ProfilePage() {
             <OperatorFundingStatus />
           </>
         ),
+        theme: (
+          <section className={accountStyles.section}>
+            <h2 className={accountStyles.sectionHeading}>{t("ui.profilePage.language")}</h2>
+            <LanguageChooser />
+          </section>
+        ),
       }}
       usage={{ classNames: usageStyles }}
       timezone={{
-        heading: "Display timezone",
-        intro:
-          "All times on Posts, Performance, Scheduler, and Wallet use this zone. Storage stays UTC; only display and filter edges convert. Saved on this device.",
-        label: "Zone",
+        heading: t("ui.profilePage.tzHeading"),
+        intro: t("ui.profilePage.tzIntro"),
+        label: t("ui.profilePage.tzLabel"),
         id: "tz-select",
-        autoLabel: (zone) => `Auto (browser) — ${zone}`,
+        autoLabel: (zone) => t("ui.profilePage.tzAuto", { zone }),
         optionLabel: (o) => `${o.label} — ${o.value}`,
         classNames: timezonePickerStyles,
         note: (pref, zone) =>
           pref === "auto"
-            ? `Currently resolving to ${zone}.`
-            : `Using ${zone}. Historical posts keep the offset that applied when they were sent.`,
+            ? t("ui.profilePage.tzResolving", { zone })
+            : t("ui.profilePage.tzUsing", { zone }),
       }}
       theme={{
-        intro: "eXcalibur defaults to dark. Your choice is saved on this device.",
+        intro: t("ui.profilePage.themeIntro"),
         fallback: "dark",
-        labels: THEME_LABELS,
+        labels: themeLabels,
         classNames: themeToggleStyles,
       }}
       build={{
@@ -67,30 +76,21 @@ export default function ProfilePage() {
           builtAt: __BUILD_TIME__,
           source: "https://github.com/lonniev/excalibur-mcp",
         },
-        intro: (
-          <>
-            eXcalibur and Tollbooth-DPYC<sup>™</sup> ship as open source under the Apache License 2.0 —
-            anyone can read the code, fork it, run their own operator. The <i>services</i> on top are
-            private commerce: each operator sets their own tolls; patrons pre-fund a Lightning balance
-            and pay per call. The protocol is shared; the businesses on it are not.
-          </>
-        ),
+        intro: <Tx ns={WORDS} k="ui.profilePage.buildIntro" components={{ sup: <sup />, i: <i /> }} />,
         classNames: buildInfoStyles,
       }}
     />
   );
 }
 
-function ThemeChoice({ theme, label }: { theme: Theme; label: string }) {
+function ThemeChoice({ theme, label, hint }: { theme: Theme; label: string; hint: string }) {
   return (
     <>
       <span className="flex items-center gap-2">
         <ThemeSwatch theme={theme} />
         <span className="text-sm font-medium">{label}</span>
       </span>
-      {THEME_HINTS[theme] && (
-        <span className="block text-xs text-stone-400 dark:text-zinc-500 mt-1">{THEME_HINTS[theme]}</span>
-      )}
+      {hint && <span className="block text-xs text-stone-400 dark:text-zinc-500 mt-1">{hint}</span>}
     </>
   );
 }

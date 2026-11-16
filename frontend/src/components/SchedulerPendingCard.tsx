@@ -39,6 +39,9 @@ import {
   type SchedulerLastCheck,
 } from "../lib/mcp";
 import { isDead, lastCheckLine, waitingOnLine } from "../lib/schedulerCheck";
+import { agoMs } from "../lib/schedulerState";
+import { Tx } from "@tollbooth-dpyc/web/react";
+import { tr, useT, WORDS } from "../i18n";
 
 // Profile names, looked up once per npub per page load: the card re-polls
 // every few minutes and a name does not change in that time.
@@ -70,17 +73,8 @@ interface Parked {
   waitingOn?: string;
 }
 
-function relative(ms: number): string {
-  const secs = Math.max(0, Math.round((Date.now() - ms) / 1000));
-  if (secs < 90) return `${secs}s ago`;
-  const mins = Math.round(secs / 60);
-  if (mins < 90) return `${mins} min ago`;
-  const hrs = Math.round(mins / 60);
-  if (hrs < 36) return `${hrs} h ago`;
-  return `${Math.round(hrs / 24)} d ago`;
-}
-
 export default function SchedulerPendingCard() {
+  const t = useT();
   const [state, setState] = useState<Parked | null>(null);
   const [busy, setBusy] = useState(false);
   const [poked, setPoked] = useState<string | null>(null);
@@ -139,8 +133,8 @@ export default function SchedulerPendingCard() {
     setBusy(false);
     setReissued(
       r.success
-        ? "A fresh request is on its way. Approve the newest DM in Pricing Studio — the one whose phrase matches the one above — then check now."
-        : `No fresh request was sent: ${r.error ?? "the scheduler didn't answer"}`,
+        ? tr("ui.schedulerPendingCard.reissued")
+        : tr("ui.schedulerPendingCard.reissueFailed", { error: r.error ?? tr("ui.schedulerPendingCard.noAnswer") }),
     );
   }, [refresh]);
 
@@ -153,7 +147,7 @@ export default function SchedulerPendingCard() {
     const { message } = await runSchedulerCheckNow();
     await refresh();
     setBusy(false);
-    setPoked(message || "Still waiting — give the reply a moment to land, then check again.");
+    setPoked(message || tr("ui.schedulerPendingCard.stillWaiting"));
   }, [refresh]);
 
   useEffect(() => {
@@ -195,8 +189,8 @@ export default function SchedulerPendingCard() {
       <div className="flex items-center gap-2 font-medium">
         <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-amber-500" />
         {state.isOperator
-          ? "Your scheduler is waiting for your OK"
-          : "Scheduled posts are paused until the operator approves"}
+          ? t("ui.schedulerPendingCard.headingOperator")
+          : t("ui.schedulerPendingCard.headingPatron")}
       </div>
       <p className="mt-1.5 text-amber-800 dark:text-amber-200/90">{state.reason}</p>
       {state.waitingOn && (
@@ -206,7 +200,7 @@ export default function SchedulerPendingCard() {
       {state.isOperator && (
         <div className="mt-3">
           <div className="text-xs uppercase tracking-wide text-amber-700/80 dark:text-amber-300/70">
-            Confirmation phrase
+            {t("ui.schedulerPendingCard.phrase")}
           </div>
           <div className="mt-0.5 select-all font-mono text-base font-semibold text-amber-950 dark:text-amber-50">
             {state.code}
@@ -216,17 +210,14 @@ export default function SchedulerPendingCard() {
 
       <p className="mt-3 text-xs leading-relaxed text-amber-700 dark:text-amber-300/80">
         {state.isOperator ? (
-          <>
-            Requested {relative(state.requestedAt)}. Approve in <b>Pricing Studio</b> — reply to the
-            proof DM whose phrase matches this one; a reply to any older DM does not count. If you
-            can't find a DM with this exact phrase, don't approve it — send a fresh request instead.
-          </>
+          <Tx
+            ns={WORDS}
+            k="ui.schedulerPendingCard.helpOperator"
+            vars={{ ago: agoMs(state.requestedAt) }}
+            components={{ b: <b /> }}
+          />
         ) : (
-          <>
-            Requested {relative(state.requestedAt)}. Nothing goes out until the operator replies —
-            only they can approve it. If you know they already have, check now and the scheduler
-            picks it up instead of waiting for the next run.
-          </>
+          t("ui.schedulerPendingCard.helpPatron", { ago: agoMs(state.requestedAt) })
         )}
       </p>
 
@@ -234,9 +225,9 @@ export default function SchedulerPendingCard() {
         <p className="mt-2 text-xs leading-relaxed text-amber-800 dark:text-amber-200/90">
           {lastCheckLine(state.lastCheck)}
           {isDead(state.lastCheck) &&
-            (state.isOperator
-              ? " A fresh request goes out on the next check — or send one now."
-              : " A fresh request goes out on the next check.")}
+            ` ${state.isOperator
+              ? t("ui.schedulerPendingCard.deadOperator")
+              : t("ui.schedulerPendingCard.deadPatron")}`}
         </p>
       )}
 
@@ -246,7 +237,11 @@ export default function SchedulerPendingCard() {
           disabled={busy}
           className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-amber-500 disabled:opacity-60"
         >
-          {busy ? "Checking…" : state.isOperator ? "I've approved — check now" : "Check now"}
+          {busy
+            ? t("ui.schedulerPendingCard.checking")
+            : state.isOperator
+              ? t("ui.schedulerPendingCard.checkApproved")
+              : t("ui.schedulerPendingCard.checkNow")}
         </button>
         {state.isOperator && (
           <button
@@ -254,7 +249,7 @@ export default function SchedulerPendingCard() {
             disabled={busy}
             className="rounded-lg border border-amber-600/60 px-3 py-1.5 text-xs font-medium text-amber-800 transition-colors hover:bg-amber-100 disabled:opacity-60 dark:text-amber-200 dark:hover:bg-amber-900/40"
           >
-            Send a fresh request
+            {t("ui.schedulerPendingCard.reissue")}
           </button>
         )}
         {poked && !busy && (

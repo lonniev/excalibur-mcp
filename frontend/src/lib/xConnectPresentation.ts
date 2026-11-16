@@ -7,6 +7,7 @@
 
 import type { StatusLevel } from "@tollbooth-dpyc/web";
 import { composeOauthRow, type OauthInput } from "./fundingStatus.ts";
+import { tr } from "../i18n/index.ts";
 
 export interface XConnectedPresentation {
   level: StatusLevel;
@@ -35,32 +36,32 @@ export function presentXConnectedCard(
     // Linked account exists, but the live token is unusable — never say "Connected".
     return {
       level: "blocked",
-      badge: h ? `Linked · ${h} — token expired` : "Linked — token expired",
-      body: "Access token expired — reconnect to keep posting.",
+      badge: h ? tr("lib.xConnectPresentation.linkedExpiredAs", { handle: h }) : tr("lib.xConnectPresentation.linkedExpired"),
+      body: tr("lib.fundingStatus.expired"),
     };
   }
 
   if (row.state === "warning") {
     return {
       level: "warning",
-      badge: h ? `Connected · ${h}` : "Connected",
+      badge: h ? tr("lib.xConnectPresentation.connectedAs", { handle: h }) : tr("lib.xConnectPresentation.connected"),
       body: h
-        ? `eXcalibur can post to your X account as ${h}. ${row.detail}`
-        : `eXcalibur can post to your X account. ${row.detail}`,
+        ? `${tr("lib.xConnectPresentation.canPostAs", { handle: h })} ${row.detail}`
+        : `${tr("lib.xConnectPresentation.canPost")} ${row.detail}`,
     };
   }
 
   // ok — healthy live token (or unknown expiry; treat as connected without a false renew line)
   const renew =
     expiresInSec != null && expiresInSec > 0
-      ? ` Access renews in about ${fmtDuration(expiresInSec)}.`
+      ? ` ${tr("lib.xConnectPresentation.renews", { duration: fmtDuration(expiresInSec) })}`
       : "";
   return {
     level: "ok",
-    badge: h ? `Connected · ${h}` : "Connected",
+    badge: h ? tr("lib.xConnectPresentation.connectedAs", { handle: h }) : tr("lib.xConnectPresentation.connected"),
     body: h
-      ? `eXcalibur can post to your X account as ${h}.${renew}`
-      : `eXcalibur can post to your X account.${renew}`,
+      ? `${tr("lib.xConnectPresentation.canPostAs", { handle: h })}${renew}`
+      : `${tr("lib.xConnectPresentation.canPost")}${renew}`,
   };
 }
 
@@ -72,7 +73,7 @@ function normalizeHandle(handle: string): string {
 
 function fmtDuration(sec: number): string {
   const h = Math.floor(sec / 3600);
-  if (h >= 24) return `${Math.floor(h / 24)}d`;
-  if (h >= 1) return `${h}h`;
-  return `${Math.max(1, Math.floor(sec / 60))}m`;
+  if (h >= 24) return tr("lib.xConnectPresentation.days", { n: Math.floor(h / 24) });
+  if (h >= 1) return tr("lib.xConnectPresentation.hours", { n: h });
+  return tr("lib.xConnectPresentation.minutes", { n: Math.max(1, Math.floor(sec / 60)) });
 }

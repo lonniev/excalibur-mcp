@@ -3,7 +3,7 @@
 // preference ("excalibur:timezone") and every generic conversion come from
 // @tollbooth-dpyc/web.
 
-import { getZonedParts } from "@tollbooth-dpyc/web";
+import { getZonedParts, languageLocale } from "@tollbooth-dpyc/web";
 
 function pad2(n: number): string {
   return n < 10 ? `0${n}` : String(n);
@@ -14,7 +14,7 @@ export function formatPostedShort(iso: string | null | undefined, timeZone: stri
   if (!iso) return "—";
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return "—";
-  return new Date(t).toLocaleString(undefined, {
+  return new Date(t).toLocaleString(languageLocale(), {
     timeZone,
     month: "short",
     day: "numeric",

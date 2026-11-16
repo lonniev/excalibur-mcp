@@ -23,6 +23,7 @@ import {
   type SortDir,
   type UpstreamOAuth,
 } from "@tollbooth-dpyc/web";
+import { tr } from "../i18n/index.ts";
 
 // ─── Posts CRUD (paid) ───────────────────────────────────────────────────
 
@@ -375,7 +376,7 @@ export async function resolveDynamicBlock(args: {
       // ("…temporarily unavailable. No fare was charged."); append next_steps so
       // the author gets the actionable hint, and pass the structured fields
       // through (error_code/transient) for any UX that wants to branch on them.
-      const base = f.error || f.message || "The resolve failed — your fare was refunded.";
+      const base = f.error || f.message || tr("lib.mcp.resolveFailed");
       return {
         success: false,
         error_code: f.error_code,
@@ -384,8 +385,8 @@ export async function resolveDynamicBlock(args: {
         transient: f.transient,
       };
     }
-    if (f.status === "expired") return { success: false, message: f.next_steps || f.message || "The resolve claim expired — try again." };
-    if (Date.now() > deadline) return { success: false, message: "Timed out waiting for the dynamic block to resolve." };
+    if (f.status === "expired") return { success: false, message: f.next_steps || f.message || tr("lib.mcp.resolveExpired") };
+    if (Date.now() > deadline) return { success: false, message: tr("lib.mcp.resolveTimedOut") };
     // Honor the backend's next-poll advice (its countdown tightens toward done).
     waitMs = (f.poll_after_seconds ?? DEFAULT_POLL_SECONDS) * 1000;
   }
@@ -781,7 +782,7 @@ export async function purgeConversationQuery(id: string): Promise<number> {
   const r = await callTool<{ success?: boolean; purged?: number; message?: string; error?: string }>(
     "purge_conversation_query", { query_id: id },
   );
-  if (r.success === false) throw new Error(r.message || r.error || "Purge failed.");
+  if (r.success === false) throw new Error(r.message || r.error || tr("lib.mcp.purgeFailed"));
   return r.purged ?? 0;
 }
 

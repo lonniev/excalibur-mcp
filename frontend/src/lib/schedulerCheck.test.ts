@@ -4,8 +4,11 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { registerExcalibur } from "../i18n/index.ts";
 import { readFileSync } from "node:fs";
 import { DEAD_CHALLENGE, isDead, lastCheckLine, waitingOnLine, whoIs } from "./schedulerCheck.ts";
+
+await registerExcalibur();
 
 const OP = "npub19gqrkwsssnz5dl6mj54memy65g4lq7qu7efu532nma3p8c6yzugse3f7a2";
 const ME = "npub1d999638gqpn8c594teklxtxva0uvxdng80q3ycyqvldjdl457c7qcrq64z";

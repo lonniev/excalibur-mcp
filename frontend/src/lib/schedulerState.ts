@@ -13,6 +13,7 @@
 // A page supplies rows; it does not get to decide what they mean.
 
 import type { SchedulerRun } from "./mcp";
+import { tr } from "../i18n/index.ts";
 
 // The cron fires ~every 30 min (on the half hour). A gap past ~40 min means the
 // last tick is overdue (quiet); past ~100 min (three missed ticks) it reads as
@@ -89,14 +90,19 @@ export const UNKNOWN_STATE: SchedulerState = {
 
 export function relative(fromIso: string): string {
   const then = new Date(fromIso).getTime();
-  if (isNaN(then)) return "an unknown time ago";
+  if (isNaN(then)) return tr("lib.schedulerState.ago.unknown");
+  return agoMs(then);
+}
+
+/** How long ago an epoch-ms instant was: "45s ago", "12 min ago", "5 h ago", "3 d ago". */
+export function agoMs(then: number): string {
   const secs = Math.max(0, Math.round((Date.now() - then) / 1000));
-  if (secs < 90) return `${secs}s ago`;
+  if (secs < 90) return tr("lib.schedulerState.ago.seconds", { n: secs });
   const mins = Math.round(secs / 60);
-  if (mins < 90) return `${mins} min ago`;
+  if (mins < 90) return tr("lib.schedulerState.ago.minutes", { n: mins });
   const hrs = Math.round(mins / 60);
-  if (hrs < 36) return `${hrs} h ago`;
-  return `${Math.round(hrs / 24)} d ago`;
+  if (hrs < 36) return tr("lib.schedulerState.ago.hours", { n: hrs });
+  return tr("lib.schedulerState.ago.days", { n: Math.round(hrs / 24) });
 }
 
 /** Turn raw log rows into everything any surface needs to describe the scheduler. */
@@ -184,7 +190,7 @@ export function deriveSchedulerState(
           id: e.post_id.slice(0, 8),
           reason: what === "paused_unknown"
             ? "x_post_outcome_unknown" : "sending_orphaned_pre_split",
-          detail: "The publisher never confirmed. Check your X timeline before resuming.",
+          detail: tr("lib.schedulerState.recoveredDetail"),
           paused: true,
         });
       }
@@ -222,22 +228,29 @@ export function schedulerStatusTitle(
   { health, lastRun, stuck }: SchedulerState,
   { clickable = false }: { clickable?: boolean } = {},
 ): string {
-  const stuckNote = stuck.length
-    ? ` · didn't post: ${stuck
-        .map((p) => `${p.id} (${p.reason}${p.paused ? ", Paused" : ", Scheduled — retries next run"})${p.detail ? ` — ${p.detail}` : ""}`)
-        .join("; ")}`
-    : "";
+  const stuckList = stuck
+    .map((p) => {
+      const item = tr(p.paused ? "lib.schedulerState.stuckPaused" : "lib.schedulerState.stuckRetrying",
+        { id: p.id, reason: p.reason });
+      return p.detail ? tr("lib.schedulerState.stuckWithDetail", { item, detail: p.detail }) : item;
+    })
+    .join("; ");
   if (health === "unknown") {
-    return `Couldn't read scheduler status — your sign-in proof may have lapsed.${clickable ? " Click to retry." : ""}`;
+    const title = tr("lib.schedulerState.title.unknown");
+    return clickable ? `${title} ${tr("lib.schedulerState.title.clickToRetry")}` : title;
   }
   if (health === "unauthorized") {
-    return "The scheduler is running, but it's waiting for the operator to approve it before it can post. Nothing goes out until then.";
+    return tr("lib.schedulerState.title.unauthorized");
   }
   if (health === "cutoff") {
-    return `A scheduler run started ${relative(lastRun ?? "")} and never finished — it was cut short before it could post. The next run picks the work back up.`;
+    return tr("lib.schedulerState.title.cutoff", { ago: relative(lastRun ?? "") });
   }
   if (lastRun) {
-    return `Scheduler last ran ${relative(lastRun)}${stuckNote}.${clickable ? " Click to refresh." : ""}`;
+    const ago = relative(lastRun);
+    const title = stuck.length
+      ? tr("lib.schedulerState.title.lastRanStuck", { ago, list: stuckList })
+      : tr("lib.schedulerState.title.lastRan", { ago });
+    return clickable ? `${title} ${tr("lib.schedulerState.title.clickToRefresh")}` : title;
   }
-  return "The scheduler hasn't logged a run yet — it checks for due posts about every half hour.";
+  return tr("lib.schedulerState.title.neverRan");
 }

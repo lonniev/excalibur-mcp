@@ -6,6 +6,10 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { composeModelRouterRow, composeOauthRow } from "./fundingStatus.ts";
 
+import { registerExcalibur } from "../i18n/index.ts";
+
+await registerExcalibur();
+
 const CHECKED = "2026-08-05T12:00:00.000Z";
 
 describe("composeOauthRow", () => {

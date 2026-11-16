@@ -4,6 +4,7 @@ import { saveConversationQuery, type ConversationQueryRow } from "../lib/mcp";
 import {
   DEFAULT_WEIGHTS, MAX_CLAUSE, mergedWeights, weightOverrides, weightsProblem, WEIGHT_FIELDS,
 } from "../lib/conversationsPresentation";
+import { useT } from "../i18n";
 
 /// A blank row for "New saved query".
 export function emptyQuery(): ConversationQueryRow {
@@ -21,6 +22,7 @@ export default function ConversationQueryEditor({ row, onClose, onSaved, onDelet
   onSaved: (saved: ConversationQueryRow) => void;
   onDelete?: (id: string) => void;
 }) {
+  const t = useT();
   const [name, setName] = useState(row.name);
   const [query, setQuery] = useState(row.query);
   const [safe, setSafe] = useState(row.safe_defaults);
@@ -42,7 +44,7 @@ export default function ConversationQueryEditor({ row, onClose, onSaved, onDelet
         weights: weightOverrides(weights),
       });
       if (r.error || r.success === false || !r.query) {
-        setError(r.message || r.error || "Couldn't save the query.");
+        setError(r.message || r.error || t("ui.conversationQueryEditor.failed"));
         return;
       }
       onSaved(r.query);
@@ -59,7 +61,7 @@ export default function ConversationQueryEditor({ row, onClose, onSaved, onDelet
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="Name"
+          placeholder={t("ui.conversationQueryEditor.name")}
           maxLength={120}
           className={`w-48 ${INPUT}`}
           autoFocus={!row.id}
@@ -67,31 +69,31 @@ export default function ConversationQueryEditor({ row, onClose, onSaved, onDelet
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder='X search clause — your own nouns, e.g. ("sound money" OR mises) (recommend OR "what should I read")'
+          placeholder={t("ui.conversationQueryEditor.queryPlaceholder")}
           maxLength={MAX_CLAUSE}
           className={`min-w-72 flex-1 ${INPUT}`}
         />
         <label
           className="inline-flex items-center gap-1.5 text-xs text-stone-500 dark:text-zinc-400"
-          title="Append -is:retweet lang:en"
+          title={t("ui.conversationQueryEditor.safeTitle")}
         >
           <input type="checkbox" checked={safe} onChange={(e) => setSafe(e.target.checked)} />
-          safe defaults
+          {t("ui.conversationQueryEditor.safe")}
         </label>
         <button
           onClick={save}
           disabled={!canSave}
           className="inline-flex items-center gap-1 rounded-lg bg-amber-600 px-3 py-1.5 text-sm text-white hover:bg-amber-500 disabled:opacity-40"
-          title={problem ?? "Save"}
+          title={problem ?? t("ui.conversationQueryEditor.save")}
         >
-          <Save className="h-4 w-4" /> Save
+          <Save className="h-4 w-4" /> {t("ui.conversationQueryEditor.save")}
         </button>
         {row.id && onDelete && (
-          <button onClick={() => onDelete(row.id)} title="Delete saved query (its leads are kept)" className="text-stone-400 hover:text-red-500">
+          <button onClick={() => onDelete(row.id)} title={t("ui.conversationQueryEditor.delete")} className="text-stone-400 hover:text-red-500">
             <Trash2 className="h-4 w-4" />
           </button>
         )}
-        <button onClick={onClose} title="Close" className="text-stone-400 hover:text-stone-600">
+        <button onClick={onClose} title={t("ui.conversationQueryEditor.close")} className="text-stone-400 hover:text-stone-600">
           <X className="h-4 w-4" />
         </button>
       </div>
@@ -101,7 +103,7 @@ export default function ConversationQueryEditor({ row, onClose, onSaved, onDelet
         className="mt-2 inline-flex items-center gap-1 text-xs text-stone-500 hover:text-amber-600 dark:text-zinc-400 dark:hover:text-amber-400"
       >
         {advanced ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-        Scoring{tuned > 0 && <span className="ml-1 rounded-full bg-amber-100 px-1.5 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200">{tuned} tuned</span>}
+        {t("ui.conversationQueryEditor.scoring")}{tuned > 0 && <span className="ml-1 rounded-full bg-amber-100 px-1.5 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200">{t("ui.conversationQueryEditor.tuned", { n: tuned })}</span>}
       </button>
 
       {advanced && (
@@ -109,9 +111,9 @@ export default function ConversationQueryEditor({ row, onClose, onSaved, onDelet
           {WEIGHT_FIELDS.map((f) => {
             const changed = weights[f.key] !== DEFAULT_WEIGHTS[f.key];
             return (
-              <label key={f.key} className="flex items-center justify-between gap-2 text-xs" title={f.hint}>
+              <label key={f.key} className="flex items-center justify-between gap-2 text-xs" title={t(f.hint)}>
                 <span className={changed ? "text-amber-700 dark:text-amber-300" : "text-stone-600 dark:text-zinc-400"}>
-                  {f.label}
+                  {t(f.label)}
                 </span>
                 <span className="inline-flex items-center gap-1">
                   <input
@@ -126,7 +128,7 @@ export default function ConversationQueryEditor({ row, onClose, onSaved, onDelet
                   <button
                     onClick={() => setWeights((w) => ({ ...w, [f.key]: DEFAULT_WEIGHTS[f.key] }))}
                     disabled={!changed}
-                    title={`Reset to ${DEFAULT_WEIGHTS[f.key]}`}
+                    title={t("ui.conversationQueryEditor.resetTo", { n: DEFAULT_WEIGHTS[f.key] })}
                     className="text-stone-300 hover:text-amber-500 disabled:opacity-0 dark:text-zinc-600"
                   >
                     <RotateCcw className="h-3.5 w-3.5" />

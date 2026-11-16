@@ -9,8 +9,11 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { registerExcalibur } from "../i18n/index.ts";
 import { deriveSchedulerState, FRESH_MS, STALE_MS, type AuthPhase } from "./schedulerState.ts";
 import type { SchedulerRun } from "./mcp.ts";
+
+await registerExcalibur();
 
 const tick = (agoMs: number, extra: Record<string, unknown> = {}): SchedulerRun => ({
   run_at: new Date(Date.now() - agoMs).toISOString(),

@@ -16,8 +16,11 @@ import {
   SortHeader,
   TableFilter,
   TableShell,
+  Tx,
   useTimezone,
 } from "@tollbooth-dpyc/web/react";
+import { useT, WORDS } from "../i18n";
+import type { MessageKey } from "../i18n/en";
 import {
   actionsHeaderStyles,
   pageControlsStyles,
@@ -28,16 +31,16 @@ import {
 import { QUOTES } from "../lib/quotes";
 import { quoteStyles } from "../lib/quoteStyles";
 import {
-  ALL_LEADS, compactCount, MAX_CLAUSE, normalizePgTimestamp, runSummary, scoreTone, SIGNAL_TITLES,
+  ALL_LEADS, compactCount, MAX_CLAUSE, normalizePgTimestamp, runSummary, scoreTone, signalTitle,
   sourceNames, STATUSES, viewStatuses, type LeadsView,
 } from "../lib/conversationsPresentation";
 import ConversationQueriesPanel from "./ConversationQueriesPanel";
 import ConversationQueryEditor, { emptyQuery } from "./ConversationQueryEditor";
 import ConversationReplyEditor from "./ConversationReplyEditor";
 
-const DATE_FIELDS = [
-  { value: "found", label: "Found" },
-  { value: "posted", label: "Posted" },
+const DATE_FIELDS: { value: string; label: MessageKey }[] = [
+  { value: "found", label: "ui.conversationsPage.dateFound" },
+  { value: "posted", label: "ui.conversationsPage.datePosted" },
 ];
 const PAGE_SIZE = 25;
 
@@ -47,10 +50,18 @@ const TONE_CLASS = {
   cool: "bg-stone-200 text-stone-600 dark:bg-zinc-800 dark:text-zinc-400",
 } as const;
 
-const STATUS_ACTIONS: { status: ConversationStatus; Icon: typeof Eye; title: string }[] = [
-  { status: "seen", Icon: Eye, title: "Seen" },
-  { status: "engaged", Icon: MessageCircle, title: "Engaged — I replied by hand" },
-  { status: "dismissed", Icon: X, title: "Dismiss" },
+/// A status as shown; the enum itself is what the server stores.
+const STATUS_WORD: Record<ConversationStatus, MessageKey> = {
+  new: "ui.conversationsPage.status.new",
+  seen: "ui.conversationsPage.status.seen",
+  engaged: "ui.conversationsPage.status.engaged",
+  dismissed: "ui.conversationsPage.status.dismissed",
+};
+
+const STATUS_ACTIONS: { status: ConversationStatus; Icon: typeof Eye; title: MessageKey }[] = [
+  { status: "seen", Icon: Eye, title: "ui.conversationsPage.actionSeen" },
+  { status: "engaged", Icon: MessageCircle, title: "ui.conversationsPage.actionEngaged" },
+  { status: "dismissed", Icon: X, title: "ui.conversationsPage.actionDismiss" },
 ];
 
 function when(iso: string | null | undefined, timeZone: string): string {
@@ -58,6 +69,7 @@ function when(iso: string | null | undefined, timeZone: string): string {
 }
 
 export default function ConversationsPage() {
+  const t = useT();
   const nav = useNavigate();
   const [rows, setRows] = useState<ConversationRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -138,9 +150,9 @@ export default function ConversationsPage() {
     if (r.error || r.success === false) {
       if (r.error_code && OAUTH_NEEDED_CODES.has(r.error_code)) {
         setNeedsXConnect(true);
-        setError("Connect your X account before searching.");
+        setError(t("ui.conversationsPage.connectFirst"));
       } else {
-        setError(r.message || r.error || "Search failed.");
+        setError(r.message || r.error || t("ui.conversationsPage.searchFailed"));
       }
       return false;
     }
@@ -194,7 +206,7 @@ export default function ConversationsPage() {
   }
 
   async function removeQuery(q: ConversationQueryRow) {
-    if (!window.confirm(`Delete "${q.name}"? Its leads are kept.`)) return;
+    if (!window.confirm(t("ui.conversationsPage.confirmDelete", { name: q.name }))) return;
     setError(null);
     try {
       await deleteConversationQuery(q.id);
@@ -207,11 +219,11 @@ export default function ConversationsPage() {
   }
 
   async function purgeQuery(q: ConversationQueryRow) {
-    if (!window.confirm(`Forget the leads "${q.name}" found that X no longer shows? Engaged leads are kept.`)) return;
+    if (!window.confirm(t("ui.conversationsPage.confirmPurge", { name: q.name }))) return;
     setError(null);
     try {
       const n = await purgeConversationQuery(q.id);
-      setLastRun(`${n} purged`);
+      setLastRun(t("ui.conversationsPage.purged", { n }));
       await refresh();
     } catch (err) {
       setError((err as Error).message);
@@ -220,18 +232,18 @@ export default function ConversationsPage() {
 
   const running = runningId !== null;
   const viewQuery = view.kind === "query" ? queries.find((q) => q.id === view.queryId) : undefined;
-  const viewLabel = view.kind === "query" ? viewQuery?.name ?? "query" : view.kind === "run" ? `“${view.label}”` : "";
+  const viewLabel = view.kind === "query" ? viewQuery?.name ?? t("ui.conversationsPage.queryFallback") : view.kind === "run" ? t("ui.conversationsPage.runLabel", { label: view.label }) : "";
 
   return (
     <div className="mx-auto w-[90%] max-w-[1600px] px-4 py-6">
       <div className="flex items-center mb-4">
-        <h1 className="text-lg font-semibold">Leads</h1>
+        <h1 className="text-lg font-semibold">{t("ui.conversationsPage.title")}</h1>
         {needsXConnect && (
           <button
             onClick={() => nav("/profile")}
             className="ml-auto rounded-sm bg-amber-400 px-2.5 py-1 text-xs font-medium text-zinc-950 hover:bg-amber-300"
           >
-            Connect X →
+            {t("ui.conversationsPage.connectX")}
           </button>
         )}
       </div>
@@ -270,7 +282,7 @@ export default function ConversationsPage() {
           value={adhoc}
           onChange={(e) => setAdhoc(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && !running && adhoc.trim()) runAdhoc(); }}
-          placeholder='One-off search, e.g. ("MCP server" OR "MCP tool") (monetize OR billing)'
+          placeholder={t("ui.conversationsPage.adhocPlaceholder")}
           maxLength={MAX_CLAUSE}
           className="min-w-72 flex-1 rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
         />
@@ -278,10 +290,10 @@ export default function ConversationsPage() {
           onClick={runAdhoc}
           disabled={running || !adhoc.trim()}
           className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-sm text-white hover:bg-amber-500 disabled:opacity-40"
-          title="Search X's last 7 days without saving the query"
+          title={t("ui.conversationsPage.adhocTitle")}
         >
           {runningId === "adhoc" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Radar className="h-4 w-4" />}
-          Run
+          {t("ui.conversationsPage.run")}
         </button>
         {lastRun && <span className="text-xs text-stone-500 dark:text-zinc-400">{lastRun}</span>}
       </div>
@@ -299,7 +311,7 @@ export default function ConversationsPage() {
                   : "border-stone-300 text-stone-500 dark:border-zinc-700 dark:text-zinc-400"
               }`}
             >
-              {s}
+              {t(STATUS_WORD[s])}
             </button>
           );
         })}
@@ -307,7 +319,7 @@ export default function ConversationsPage() {
           <button
             onClick={() => show(ALL_LEADS)}
             className="ml-2 inline-flex max-w-xs items-center gap-1 rounded-full border border-amber-500 bg-amber-100 px-2.5 py-0.5 text-xs text-amber-900 dark:bg-amber-500/20 dark:text-amber-200"
-            title="All leads"
+            title={t("ui.conversationsPage.allLeads")}
           >
             {view.kind === "query" ? <Radar className="h-3 w-3 shrink-0" /> : <Search className="h-3 w-3 shrink-0" />}
             <span className="truncate">{viewLabel}</span>
@@ -320,8 +332,8 @@ export default function ConversationsPage() {
         search={{
           value: search,
           onSearch: (t) => { setSearch(t); setPage(0); },
-          placeholder: "Search text or @handle (regex)…",
-          title: "Case-insensitive regular expression matched against the post text or author handle",
+          placeholder: t("ui.conversationsPage.searchPlaceholder"),
+          title: t("ui.conversationsPage.searchTitle"),
         }}
         dates={{
           from: dateFrom,
@@ -329,12 +341,12 @@ export default function ConversationsPage() {
           onFrom: (v) => { setDateFrom(v); setPage(0); },
           onTo: (v) => { setDateTo(v); setPage(0); },
           field: dateField,
-          fields: DATE_FIELDS,
+          fields: DATE_FIELDS.map((f) => ({ value: f.value, label: t(f.label) })),
           onField: (v) => { setDateField(v); setPage(0); },
         }}
         onClear={() => { setSearch(""); setDateFrom(""); setDateTo(""); setDateField("found"); setPage(0); }}
         searchIcon={<Search className="h-3.5 w-3.5" />}
-        clearLabel={<><X className="h-3.5 w-3.5" /> Clear</>}
+        clearLabel={<><X className="h-3.5 w-3.5" /> {t("ui.conversationsPage.clear")}</>}
         classNames={tableFilterStyles}
       />
 
@@ -346,16 +358,16 @@ export default function ConversationsPage() {
 
       {loading && rows.length === 0 ? (
         <div className="py-16">
-          <QuoteScroller quotes={QUOTES} spinner heading="Loading your leads…" classNames={quoteStyles} />
+          <QuoteScroller quotes={QUOTES} spinner heading={t("ui.conversationsPage.loading")} classNames={quoteStyles} />
         </div>
       ) : rows.length === 0 ? (
         <div className="text-center py-12">
           <p className="text-sm text-stone-400 dark:text-zinc-500">
             {view.kind === "query" && viewQuery && !viewQuery.last_run_at
-              ? "This query hasn't run yet."
+              ? t("ui.conversationsPage.notRunYet")
               : view.kind === "run" && !search && !dateFrom && !dateTo && statuses.length === STATUSES.length
-                ? "This search found no one."
-                : "No leads match this filter."}
+                ? t("ui.conversationsPage.foundNoOne")
+                : t("ui.conversationsPage.noMatch")}
           </p>
         </div>
       ) : (
@@ -363,11 +375,11 @@ export default function ConversationsPage() {
           <TableShell classNames={tableShellStyles}>
             <thead className="border-b border-stone-200 dark:border-zinc-800">
               <tr>
-                <SortHeader label="Score" col="score" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
-                <SortHeader label="Post" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
-                <SortHeader label="Author" col="followers" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
-                <SortHeader label="Replies" col="replies" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
-                <SortHeader label="Posted" col="posted" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
+                <SortHeader label={t("ui.conversationsPage.colScore")} col="score" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
+                <SortHeader label={t("ui.conversationsPage.colPost")} activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
+                <SortHeader label={t("ui.conversationsPage.colAuthor")} col="followers" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
+                <SortHeader label={t("ui.conversationsPage.colReplies")} col="replies" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
+                <SortHeader label={t("ui.conversationsPage.colPosted")} col="posted" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={sortHeaderStyles} />
                 <SortHeader label="" activeCol={sortCol} dir={sortDir} onSort={onSort} classNames={actionsHeaderStyles} />
               </tr>
             </thead>
@@ -415,6 +427,7 @@ function LeadRow({
   onReplied: () => void;
   onNeedsXConnect: () => void;
 }) {
+  const t = useT();
   const dim = r.status === "dismissed" ? "opacity-50" : "";
   return (
     <>
@@ -430,11 +443,11 @@ function LeadRow({
             {r.score}
           </span>
           <span className="ml-1.5 inline-flex gap-1 align-middle text-stone-400 dark:text-zinc-500">
-            {r.signals.includes("need") && <MessageSquare className="h-3.5 w-3.5" aria-label={SIGNAL_TITLES.need} />}
-            {r.has_media && <Image className="h-3.5 w-3.5" aria-label="Has a photo" />}
+            {r.signals.includes("need") && <MessageSquare className="h-3.5 w-3.5" aria-label={signalTitle("need")} />}
+            {r.has_media && <Image className="h-3.5 w-3.5" aria-label={t("ui.conversationsPage.hasPhoto")} />}
             {r.in_run && (
-              <span title="Found by this run" className="text-amber-500">
-                <Sparkles className="h-3.5 w-3.5" aria-label="Found by this run" />
+              <span title={t("ui.conversationsPage.foundByRun")} className="text-amber-500">
+                <Sparkles className="h-3.5 w-3.5" aria-label={t("ui.conversationsPage.foundByRun")} />
               </span>
             )}
           </span>
@@ -468,7 +481,7 @@ function LeadRow({
           <span className="inline-flex gap-2">
             <button
               onClick={onReply}
-              title={r.reply_tweet_id ? "Reply again" : "Reply — posts to X as you, marks engaged"}
+              title={r.reply_tweet_id ? t("ui.conversationsPage.replyAgain") : t("ui.conversationsPage.replyTitle")}
               className={replying ? "text-amber-500" : "text-stone-300 hover:text-amber-500 dark:text-zinc-600"}
             >
               <Reply className="h-4 w-4" />
@@ -477,7 +490,7 @@ function LeadRow({
               <button
                 key={status}
                 onClick={(e) => onMark(e, r, status)}
-                title={title}
+                title={t(title)}
                 className={r.status === status ? "text-amber-500" : "text-stone-300 hover:text-amber-500 dark:text-zinc-600"}
               >
                 <Icon className="h-4 w-4" />
@@ -491,19 +504,19 @@ function LeadRow({
           <td colSpan={6} className="px-3 pb-3 pt-0">
             <div className="ml-6 grid gap-x-8 gap-y-1 rounded-lg bg-stone-50 p-3 text-xs text-stone-500 dark:bg-zinc-900/60 dark:text-zinc-400 sm:grid-cols-2">
               <div className="flex flex-wrap gap-1.5 sm:col-span-2">
-                {r.signals.length === 0 && <span>no signals fired</span>}
+                {r.signals.length === 0 && <span>{t("ui.conversationsPage.noSignals")}</span>}
                 {r.signals.map((s) => (
-                  <span key={s} className="rounded-full border border-stone-300 px-2 py-0.5 dark:border-zinc-700" title={SIGNAL_TITLES[s] ?? s}>
-                    {SIGNAL_TITLES[s] ?? s}
+                  <span key={s} className="rounded-full border border-stone-300 px-2 py-0.5 dark:border-zinc-700" title={signalTitle(s)}>
+                    {signalTitle(s)}
                   </span>
                 ))}
               </div>
               {r.author_location && (
                 <div className="inline-flex items-center gap-1"><MapPin className="h-3 w-3" /> {r.author_location}</div>
               )}
-              <div>♥ {r.like_count} · {r.is_reply ? "a reply in the thread" : "top of the thread"}</div>
-              <div>Found {when(r.found_at, timeZone)} · last seen {when(r.last_seen_at, timeZone)}</div>
-              <div>From <span className="text-stone-700 dark:text-zinc-300">{sources}</span>{r.status_at && <> · {r.status} {when(r.status_at, timeZone)}</>}</div>
+              <div>♥ {r.like_count} · {r.is_reply ? t("ui.conversationsPage.isReply") : t("ui.conversationsPage.topOfThread")}</div>
+              <div>{t("ui.conversationsPage.foundSeen", { found: when(r.found_at, timeZone), seen: when(r.last_seen_at, timeZone) })}</div>
+              <div><Tx ns={WORDS} k="ui.conversationsPage.from" components={{ sources: <span className="text-stone-700 dark:text-zinc-300">{sources}</span> }} />{r.status_at && <> · {t(STATUS_WORD[r.status])} {when(r.status_at, timeZone)}</>}</div>
               {r.reply_url && (
                 <a
                   href={r.reply_url}
@@ -512,7 +525,7 @@ function LeadRow({
                   onClick={(e) => e.stopPropagation()}
                   className="inline-flex items-center gap-1 text-amber-600 hover:underline dark:text-amber-400"
                 >
-                  <Reply className="h-3 w-3" /> Replied {when(r.replied_at, timeZone)}
+                  <Reply className="h-3 w-3" /> {t("ui.conversationsPage.replied", { when: when(r.replied_at, timeZone) })}
                 </a>
               )}
               <a
@@ -522,7 +535,7 @@ function LeadRow({
                 onClick={(e) => e.stopPropagation()}
                 className="inline-flex items-center gap-1 text-amber-600 hover:underline dark:text-amber-400 sm:col-span-2"
               >
-                Open on X <ExternalLink className="h-3 w-3" />
+                {t("ui.conversationsPage.openOnX")} <ExternalLink className="h-3 w-3" />
               </a>
             </div>
             {replying && (
