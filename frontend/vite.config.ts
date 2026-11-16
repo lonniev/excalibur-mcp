@@ -42,5 +42,23 @@ export default defineConfig({
     __BUILD_COMMIT__: JSON.stringify(resolveCommit()),
     __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
   },
-  build: { outDir: 'dist' },
+  build: {
+    outDir: 'dist',
+    rolldownOptions: {
+      output: {
+        // Left to itself the bundler put the web package and everything under it
+        // (the MCP client with zod and ajv, nostr-tools, the noble crypto,
+        // i18next) into one 515 kB chunk, misnamed after lucide's
+        // createLucideIcon. Every page needs it at sign-in, so it cannot load
+        // later; split it by library instead, each part cached on its own.
+        advancedChunks: {
+          groups: [
+            { name: 'react', test: /node_modules[\\/](react|react-dom|react-router|react-router-dom|scheduler)[\\/]/ },
+            { name: 'mcp', test: /node_modules[\\/](@modelcontextprotocol|zod|ajv|ajv-formats|fast-uri|fast-deep-equal|json-schema-traverse)[\\/]/ },
+            { name: 'nostr', test: /node_modules[\\/](nostr-tools|@noble|@scure)[\\/]/ },
+          ],
+        },
+      },
+    },
+  },
 })
