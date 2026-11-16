@@ -13,7 +13,7 @@ import en, { type MessageKey } from "./en.ts";
 export const WORDS = "excalibur";
 
 /** Hand eXcalibur's English to the package, and say where each translation is fetched from. Once, before render. */
-export function registereXcalibur(): Promise<void> {
+export function registerExcalibur(): Promise<void> {
   return registerNamespace(WORDS, en, {});
 }
 
