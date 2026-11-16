@@ -657,13 +657,21 @@ def _performance_ui_source() -> str:
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1] / "frontend" / "src"
-    return "\n".join(
+    code = "\n".join(
         p.read_text(encoding="utf-8")
         for p in (
             root / "components" / "PerformancePage.tsx",
             root / "lib" / "performanceTable.ts",
         )
     )
+    # The page's English words live in the catalog since it was translated;
+    # the page holds their keys. Only this page's own entries are read.
+    words = "\n".join(
+        line
+        for line in (root / "i18n" / "en.ts").read_text(encoding="utf-8").splitlines()
+        if ".performancePage." in line or ".performanceTable." in line
+    )
+    return code + "\n" + words
 
 
 def test_performance_page_surfaces_tier1_metric_columns():
