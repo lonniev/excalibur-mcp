@@ -10,10 +10,8 @@
     "lint": "eslint src --ext ts,tsx"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.32.1",
     "@tollbooth-dpyc/web": "3.10.0",
     "lucide-react": "^1.59.0",
-    "nostr-tools": "^2.25.2",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-router-dom": "^7.18.4"
