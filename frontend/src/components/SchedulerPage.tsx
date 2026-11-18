@@ -89,7 +89,7 @@ function RunCells({ summary: s }: { summary: SchedulerRun["summary"] }) {
               tell a grant killed by a lost renewal from one that truly aged out
               — so they reconnected X, daily, on advice that fit neither. */}
           {s.detail && (
-            <div className="mt-0.5 max-w-[52ch] text-[11px] leading-snug text-stone-500 dark:text-zinc-400">
+            <div className="mt-0.5 text-[11px] leading-snug text-stone-500 dark:text-zinc-400">
               {s.detail}
             </div>
           )}
@@ -275,7 +275,7 @@ export default function SchedulerPage() {
   const workerDown = status?.worker === "unavailable";
 
   return (
-    <div className="mx-auto w-[90%] max-w-[1000px] px-4 py-6">
+    <div className="mx-auto w-[90%] max-w-[1600px] px-4 py-6">
       <div className="mb-4 flex items-center gap-3">
         <h1 className="text-lg font-semibold">{t("ui.schedulerPage.title")}</h1>
         <span
