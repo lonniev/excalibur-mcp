@@ -177,7 +177,7 @@ export const balanceChip =
 // Profile: every panel in the same card; the time-zone and theme sections are
 // the package's, drawn in that card too.
 export const accountStyles: AccountPageClassNames = {
-  root: "max-w-3xl mx-auto px-4 py-6 space-y-5",
+  root: "max-w-[90rem] mx-auto px-4 py-6 space-y-5",
   heading: "text-lg font-semibold",
   section: `${card} p-5`,
   sectionHeading: "text-sm font-medium mb-1",

@@ -515,7 +515,7 @@ export default function PerformancePage() {
   const initialLoading = loading && data == null && !error;
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-6 space-y-5">
+    <div className="max-w-[90rem] mx-auto px-4 py-6 space-y-5">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h1 className="text-lg font-semibold">{t("ui.performancePage.title")}</h1>

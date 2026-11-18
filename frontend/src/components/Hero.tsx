@@ -23,7 +23,7 @@ export default function Hero() {
         className="pointer-events-none absolute -top-24 -right-24 h-72 w-72 rounded-full bg-amber-400/20 blur-3xl"
       />
 
-      <div className="relative mx-auto max-w-5xl px-6 py-16 sm:py-20">
+      <div className="relative mx-auto max-w-[90rem] px-6 py-16 sm:py-20">
         <div className="mb-6 flex items-center gap-3">
           <span className="grid h-12 w-12 place-items-center rounded-2xl bg-amber-500/15 text-amber-500 ring-1 ring-amber-500/30">
             <Swords className="h-6 w-6" />
@@ -38,10 +38,10 @@ export default function Hero() {
           </div>
         </div>
 
-        <h1 className="max-w-2xl text-3xl font-semibold leading-tight tracking-tight sm:text-4xl">
+        <h1 className="text-3xl font-semibold leading-tight tracking-tight sm:text-4xl">
           {t("ui.hero.headline")}
         </h1>
-        <p className="mt-4 max-w-2xl text-base leading-relaxed text-stone-600 dark:text-zinc-400">
+        <p className="mt-4 text-base leading-relaxed text-stone-600 dark:text-zinc-400">
           <Tx
             ns={WORDS}
             k="ui.hero.intro"
@@ -57,11 +57,11 @@ export default function Hero() {
             }}
           />
         </p>
-        <p className="mt-3 max-w-2xl text-base leading-relaxed text-stone-600 dark:text-zinc-400">
+        <p className="mt-3 text-base leading-relaxed text-stone-600 dark:text-zinc-400">
           {t("ui.hero.more")}
         </p>
 
-        <div className="mt-8 grid max-w-3xl gap-3 sm:grid-cols-3">
+        <div className="mt-8 grid gap-3 sm:grid-cols-3">
           <Feature
             icon={<Feather className="h-5 w-5" />}
             title={t("ui.hero.editorTitle")}
