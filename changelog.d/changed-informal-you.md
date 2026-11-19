@@ -1,0 +1,1 @@
+- Hindi addresses the reader informally (तुम), like Spanish, Chinese and French; quotations keep their own words.
