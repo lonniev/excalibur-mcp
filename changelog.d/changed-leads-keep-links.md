@@ -1,1 +1,0 @@
-- Leads searches keep posts that carry a link or a cashtag such as `$BTC`; the default filter now drops only reposts and non-English posts, and shills rank low on the spam signal.

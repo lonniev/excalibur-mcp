@@ -1,1 +1,0 @@
-- The site no longer ships one 515 kB script. The shared web package and what it brings (the MCP client with zod and ajv, the Nostr crypto, React) are split into separate vendor files, each under 300 kB, fetched together and cached apart. Two dependencies the site never imported are gone.

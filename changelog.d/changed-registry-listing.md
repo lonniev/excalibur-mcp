@@ -1,1 +1,0 @@
-- The MCP Registry listing carries a title (eXcalibur) and a link to https://excalibur.tollbooth-dpyc.com.

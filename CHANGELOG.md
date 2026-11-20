@@ -5,6 +5,43 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 Changes not yet released live in `changelog.d/`, one file per change — see the README there for why, and `scripts/changelog.py` for what folds them in at release time.
 
+## [0.43.1] — 2026-11-19
+
+### Added
+
+- eXcalibur reads in English, French, Spanish, Japanese, Chinese and Hindi. A guest starts in their country's language; the chooser is on Profile. The shared web package does the translating; eXcalibur supplies only its words. Posts, snippets and anything sent to X or the model stay exactly as written.
+
+- Links to your shop in a scheduled post now carry campaign tags when it is sent: `utm_source` (x or nostr), `utm_medium=social`, `utm_campaign` (the post's id, the same on every firing) and `utm_content` (the id of the copy that went out). Your shop's order page can then say which post and which day's tweet brought a buyer in. The sent copy saves the tagged text. Links you tagged yourself, and links to other sites, are left alone.
+- `save_voice` takes `link_tags` (`{"on": bool, "hosts": [...]}`) to turn tagging off or name your own shop hosts; it is on by default for the operator's shop host. One post opts out with `"utm": false` on its doc.
+
+### Changed
+
+- Runs on @tollbooth-dpyc/web 2.6.0, so Pay opens your own Lightning wallet and an open invoice says the page is watching for it.
+
+- Hindi addresses the reader informally (तुम), like Spanish, Chinese and French; quotations keep their own words.
+
+- Leads searches keep posts that carry a link or a cashtag such as `$BTC`; the default filter now drops only reposts and non-English posts, and shills rank low on the spam signal.
+
+- Leads: each search now shows its own results. An ad hoc search lists just what it found. Clicking a saved query lists every lead it has found, including threads another query found first. Searching it again marks what that run found. A search's results show every status, and the All-leads list keeps new and seen.
+- Leads: each saved query has a Purge button (`purge_conversation_query`, free) that forgets its leads X no longer shows. Engaged leads stay, and so does any lead another search also found.
+- `find_conversations` returns `run_id`. `list_conversations` takes `run_id` and `mark_run_id` instead of `query_id="adhoc"`, and each lead carries `query_ids`, the saved queries that found it.
+
+- Each page loads the first time it opens, so the first visit downloads about a fifth less.
+
+- The MCP Registry listing carries a title (eXcalibur) and a link to https://excalibur.tollbooth-dpyc.com.
+
+- `/llms.txt` is built by the shared `@tollbooth-dpyc/web/agent-guide` plugin from this service's own sections, so its connecting, payments, license and links sections match the rest of the fleet.
+
+- The wallet is now the shared one from tollbooth-web 3.0.0, with a QR code on an open invoice, amounts of 100 to 25,000 plus Custom, and coupons and the statement always shown.
+
+### Fixed
+
+- Text uses the width the screen gives it: pages and their text blocks no longer stop partway across a wide screen.
+
+- "Check now" on the Scheduler page now finishes. It looks for the operator's approval while you wait and shows what it found; due posts go out on the next run. Before, Cloudflare cancelled the check about 30 seconds in, so it never completed.
+
+- The site no longer ships one 515 kB script. The shared web package and what it brings (the MCP client with zod and ajv, the Nostr crypto, React) are split into separate vendor files, each under 300 kB, fetched together and cached apart. Two dependencies the site never imported are gone.
+
 ## [0.43.0] — 2026-10-21
 
 ### Changed
