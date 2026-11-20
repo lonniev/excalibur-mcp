@@ -1,1 +1,0 @@
-- Text uses the width the screen gives it: pages and their text blocks no longer stop partway across a wide screen.

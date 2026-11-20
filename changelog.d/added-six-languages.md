@@ -1,1 +1,0 @@
-- eXcalibur reads in English, French, Spanish, Japanese, Chinese and Hindi. A guest starts in their country's language; the chooser is on Profile. The shared web package does the translating; eXcalibur supplies only its words. Posts, snippets and anything sent to X or the model stay exactly as written.
