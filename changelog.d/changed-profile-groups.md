@@ -1,1 +1,0 @@
-- The Profile page now sits in folding groups — You, Money, This site, Operator, About — with each group's panels side by side in a grid.
