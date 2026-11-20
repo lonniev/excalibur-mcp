@@ -1,7 +1,9 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.lonniev/excalibur-mcp",
+  "title": "eXcalibur",
   "description": "FastMCP server for posting formatted content to X (Twitter) — Tollbooth-monetized, DPYC-native",
+  "websiteUrl": "https://excalibur.tollbooth-dpyc.com",
   "version": "0.43.0",
   "repository": {
     "url": "https://github.com/lonniev/excalibur-mcp",
