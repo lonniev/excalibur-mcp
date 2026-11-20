@@ -1,6 +1,6 @@
-// Profile: the package's AccountPage in eXcalibur's look, with the panels only
-// eXcalibur has — the X connection and the account / operator health — right
-// after the session key.
+// Profile: the package's AccountPage in eXcalibur's look, its folding groups
+// carrying the panels only eXcalibur has: your language (You), your account's
+// health (Money), the X connection (This site), the operator's health (Operator).
 
 import type { ReactNode } from "react";
 import type { Theme } from "@tollbooth-dpyc/web";
@@ -33,20 +33,16 @@ export default function ProfilePage() {
       npub={session.npub}
       onSignOut={session.signOut}
       classNames={accountStyles}
-      between={{
-        sessionKey: (
-          <>
-            <XConnectPanel />
-            <PatronFundingStatus />
-            <OperatorFundingStatus />
-          </>
-        ),
-        theme: (
+      panels={{
+        you: (
           <section className={accountStyles.section}>
             <h2 className={accountStyles.sectionHeading}>{t("ui.profilePage.language")}</h2>
             <LanguageChooser />
           </section>
         ),
+        money: <PatronFundingStatus />,
+        site: <XConnectPanel />,
+        operator: <OperatorFundingStatus />,
       }}
       usage={{ classNames: usageStyles }}
       timezone={{

@@ -179,11 +179,14 @@ export const balanceChip =
 export const accountStyles: AccountPageClassNames = {
   root: "max-w-[90rem] mx-auto px-4 py-6 space-y-5",
   heading: "text-lg font-semibold",
+  groupSummary: "text-lg font-semibold cursor-pointer py-1",
+  // A group's panels side by side where they fit; one column on a phone. Never CSS columns: Safari splits cards.
+  groupBody: "mt-3 grid items-start gap-5 grid-cols-[repeat(auto-fit,minmax(min(100%,26rem),1fr))]",
   section: `${card} p-5`,
   sectionHeading: "text-sm font-medium mb-1",
   sectionIntro: "text-xs text-stone-500 dark:text-zinc-400 mb-3",
   sectionNote: "mt-2 text-[11px] text-stone-400 dark:text-zinc-500",
-  actions: "flex justify-end",
+  actions: "col-span-full flex justify-end",
   signOut:
     "text-sm px-4 py-2 rounded-lg text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors",
 };
