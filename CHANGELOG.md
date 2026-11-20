@@ -5,6 +5,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 Changes not yet released live in `changelog.d/`, one file per change — see the README there for why, and `scripts/changelog.py` for what folds them in at release time.
 
+## [0.43.2] — 2026-11-20
+
+### Changed
+
+- The Profile page now sits in folding groups — You, Money, This site, Operator, About — with each group's panels side by side in a grid.
+
 ## [0.43.1] — 2026-11-19
 
 ### Added
