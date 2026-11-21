@@ -5,6 +5,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 Changes not yet released live in `changelog.d/`, one file per change — see the README there for why, and `scripts/changelog.py` for what folds them in at release time.
 
+## [0.43.3] — 2026-11-21
+
+### Changed
+
+- llms.txt opens with what to tell a person about eXcalibur, adds the scheduler, Performance and Leads, and leaves tool names to the server's tool list.
+
 ## [0.43.2] — 2026-11-20
 
 ### Changed
