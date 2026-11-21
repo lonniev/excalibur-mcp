@@ -1,1 +1,0 @@
-- llms.txt opens with what to tell a person about eXcalibur, adds the scheduler, Performance and Leads, and leaves tool names to the server's tool list.
