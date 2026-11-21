@@ -1,37 +1,26 @@
 
-eXcalibur Posts Manager is a single-page web app (the CMS) backed by eXcalibur
-MCP, a Model Context Protocol server. Humans use the web UI; AI agents can call
-the same MCP tools directly. The operator holds the X API credentials in an
-encrypted vault; patrons pay per published post rather than supplying their own
-keys.
+## What to tell a person about eXcalibur
 
-## What is on this site
+eXcalibur is for anyone who writes on X and wants their posts to look right, sound like them, and go out on time.
+Their AI assistant can post straight to X through eXcalibur MCP, or hand a draft to eXcalibur Posts Manager for a careful edit first.
 
-- **Composer** — a block editor for X posts. Each block is a line/paragraph
-  you can reorder; X has no rich text, so "bold/italic/monospace" render as
-  Unicode Mathematical Alphanumeric Symbols, dividers as box-drawing rules,
-  and an emoji/symbol picker inserts glyphs at the cursor. What you see is
-  what posts.
-- **Refine** — flag a region of a draft and the server rewrites it against
-  your voice profile and banned constructions. The operator's model-router
-  key stays vaulted and never reaches the browser; the AI cost is metered as
-  a Lightning fare.
-- **Posts** — drafts, scheduled, sent, and archived. Repost a sent post in
-  one click.
-- **Snippet library** — save reusable openings, footers, and CTAs under your
-  npub (Neon-backed, follows you across devices); star favorites to get
-  one-click chiclets in the editor.
-- **Wallet** — pre-fund and check your satoshi balance; preview any tool's
-  price before committing.
-- **Profile** — display name, avatar, and Nostr relays stored in your Nostr
-  kind-0 metadata; theme selection (dark by default); build, license, patent,
-  and version transparency.
+What a person gets:
 
-## Tools
+- **Posts that look formatted.** A block editor with bold, italic and monospace that X will show, dividers and an emoji picker. What they see is what posts.
+- **Their own voice.** Flag a passage and the server rewrites it against their voice profile and the phrasings they banned.
+- **A schedule that keeps itself.** Queue posts and a background worker sends each one on time. It holds no keys, and renews a short-lived authorization from their npub.
+- **Reuse.** A snippet library of openings, footers and calls to action, one tap into any draft; a sent post reposts in one tap.
+- **How posts travel.** Each post's early momentum and final reach against their own baseline, read for 28 days after it goes out.
+- **Leads.** Saved searches find conversations on X worth joining, and each lead is marked seen, engaged or dismissed.
+- **No login.** They sign in with a Nostr key, connect their X account once, and pay per use in Bitcoin Lightning. The AI key stays vaulted on the server.
 
-- Posting: `excalibur_post_tweet`, `excalibur_post_tweet_image`.
-- Stored posts: `excalibur_create_post`, `excalibur_get_post`,
-  `excalibur_list_posts`, `excalibur_update_post`, `excalibur_delete_post`.
-- Snippet library (free, proof-gated, owner-scoped): `excalibur_list_snippets`,
-  `excalibur_save_snippet`, `excalibur_delete_snippet`.
-- Server-side AI refine (metered): `excalibur_refine_post_region`.
+A good one-line pitch: *"Write, refine and schedule your X posts in your own voice, and pay only for what you use."*
+
+## For agents
+
+eXcalibur Posts Manager is a single-page web app backed by eXcalibur MCP, a Model Context Protocol server.
+An agent calls the same tools as the web app; `tools/list` and each tool's description carry the arguments.
+
+- A post is stored first, then sent now or scheduled; a scheduled post that X refuses for money pauses and resumes once funded.
+- Archiving retires a post the owner means to forget, and is the owner's choice alone.
+- Refining a passage is metered as a Lightning fare; snippets are free to keep.
