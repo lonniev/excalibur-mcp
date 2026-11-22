@@ -50,6 +50,10 @@ export interface PostSummary {
   last_attempt_detail?: string | null;
   // True when the post carries a recurrence cadence (the live recurring template).
   is_recurring?: boolean;
+  // The cadence itself and when it stops: the calendar lays the coming
+  // occurrences on the month from these.
+  recurrence?: Recurrence | null;
+  cease_at?: string | null;
   // True when the post's doc holds at least one dynamic (prompt-driven) block —
   // distinguishes a live template from a frozen static snapshot.
   has_dynamic?: boolean;

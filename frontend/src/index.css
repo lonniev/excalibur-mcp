@@ -74,3 +74,26 @@
   --tb-wallet-gap: 1.25rem;
   --tb-wallet-figure: var(--tb-ink);
 }
+
+/* The Calendar page: the package's MonthCalendar in eXcalibur's look. */
+.posts-calendar .card.panel { border: 1px solid var(--tb-line); border-radius: 0.75rem; background: var(--tb-surface); padding: 1rem; }
+.posts-calendar .muted { color: var(--tb-muted); }
+.posts-calendar .icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 2.25rem; height: 2.25rem;
+  border-radius: 0.5rem; border: 1px solid var(--tb-line); color: var(--tb-ink); }
+.posts-calendar .icon-btn:hover { background: color-mix(in srgb, var(--tb-accent) 10%, var(--tb-surface)); }
+.month-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.month { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0.25rem; }
+.month-weekday { text-align: center; font-weight: 600; color: var(--tb-muted); font-size: 0.8125rem; }
+.month-day {
+  display: grid; align-content: start; justify-items: end; gap: 0.125rem; min-height: 4.5rem; padding: 0.25rem 0.375rem;
+  border-radius: 0.5rem; border: 1px solid var(--tb-line); background: var(--tb-surface); overflow: hidden; cursor: pointer;
+}
+.month-day-out { opacity: 0.4; }
+.month-day-today { border-color: rgb(245 158 11); }
+.month-day-on { border-color: var(--tb-accent); background: color-mix(in srgb, var(--tb-accent) 10%, var(--tb-surface)); }
+.month-day-paused { background: color-mix(in srgb, var(--tb-muted) 12%, var(--tb-surface)); }
+.month-num { font-weight: 600; font-size: 0.875rem; font-variant-numeric: tabular-nums; }
+.month-marks { display: grid; justify-items: end; gap: 0.0625rem; font-size: 0.8125rem; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.month-more { font-size: 0.75rem; font-weight: 600; color: var(--tb-muted); }
+.month-key summary { cursor: pointer; text-align: right; }
+.month-key-list { display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; justify-content: flex-end; padding-top: 0.5rem; }

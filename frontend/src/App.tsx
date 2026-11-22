@@ -17,6 +17,7 @@ const ContentEditorPage = lazy(() => import("./components/ContentEditorPage"));
 const WalletPage = lazy(() => import("./components/WalletPage"));
 const ProfilePage = lazy(() => import("./components/ProfilePage"));
 const SchedulerPage = lazy(() => import("./components/SchedulerPage"));
+const CalendarPage = lazy(() => import("./components/CalendarPage"));
 const PerformancePage = lazy(() => import("./components/PerformancePage"));
 
 // The session, the sign-in gate, the theme, the avatar and the debug log are
@@ -52,6 +53,7 @@ export default function App() {
               <Route path="snippets/new" element={<ContentEditorPage kind="snippet" />} />
               <Route path="snippet/:snippetId" element={<ContentEditorPage kind="snippet" />} />
               <Route path="wallet" element={<WalletPage />} />
+              <Route path="calendar" element={<CalendarPage />} />
               <Route path="scheduler" element={<SchedulerPage />} />
               <Route path="performance" element={<PerformancePage />} />
               <Route path="conversations" element={<ConversationsPage />} />

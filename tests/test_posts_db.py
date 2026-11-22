@@ -650,6 +650,12 @@ async def test_list_posts_surfaces_recurring_dynamic_and_template_id():
              "updated_at": "t", "created_at": "c", "tweet_url": "u", "last_sent_at": None,
              "last_attempt_at": None, "last_attempt_reason": None,
              "template_id": "tmpl1", "is_recurring": False, "has_dynamic": False},
+            {"post_id": "tmpl1", "status": "scheduled", "excerpt": "e",
+             "publish_at": "2026-11-22 12:45:00+00", "updated_at": "t", "created_at": "c",
+             "tweet_url": None, "last_sent_at": None, "last_attempt_at": None,
+             "last_attempt_reason": None, "template_id": None, "is_recurring": True,
+             "recurrence": '{"freq": "weekly", "interval": 1}',
+             "cease_at": "2027-01-31 00:00:00+00", "has_dynamic": False},
         ]
 
     with patch.object(posts_db, "fetchrow", fake_fetchrow), \
@@ -657,7 +663,12 @@ async def test_list_posts_surfaces_recurring_dynamic_and_template_id():
         out = await posts_db.list_posts(NPUB)
 
     q = captured["query"]
-    assert "(recurrence IS NOT NULL) AS is_recurring" in q
+    assert "(recurrence IS NOT NULL) AS is_recurring, recurrence, cease_at" in q
+    # The calendar's data: a recurring row carries its pattern and its end.
+    tmpl = out["posts"][1]
+    assert tmpl["recurrence"] == {"freq": "weekly", "interval": 1}
+    assert tmpl["cease_at"] == "2027-01-31 00:00:00+00"
+    assert out["posts"][0]["recurrence"] is None and out["posts"][0]["cease_at"] is None
     assert '''doc->'blocks' @> '[{"dynamic":true}]'::jsonb''' in q
     assert "template_id::text AS template_id" in q
     row = out["posts"][0]
