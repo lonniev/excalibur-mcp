@@ -1,1 +1,0 @@
-- Resuming a paused recurring post now waits for its next slot. Before, every post paused while X was out of credits came back due at once and went out in one burst.

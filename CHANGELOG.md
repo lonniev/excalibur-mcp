@@ -5,6 +5,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 Changes not yet released live in `changelog.d/`, one file per change — see the README there for why, and `scripts/changelog.py` for what folds them in at release time.
 
+## [0.43.4] — 2026-11-22
+
+### Added
+
+- A Calendar page: a month of your posts by day, in your time zone — what was sent, what is coming, and the days a paused post would post if resumed — so a quiet day or a stopped week shows at a glance. `list_posts` rows now carry `recurrence` and `cease_at`.
+
+### Fixed
+
+- Resuming a paused recurring post now waits for its next slot. Before, every post paused while X was out of credits came back due at once and went out in one burst.
+
 ## [0.43.3] — 2026-11-21
 
 ### Changed
