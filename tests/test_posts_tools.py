@@ -312,8 +312,20 @@ async def test_restore_keeps_a_one_off_time_and_an_explicit_time():
 
 
 @pytest.mark.asyncio
+async def test_resuming_a_paused_post_waits_for_its_next_slot():
+    # Paused on X's 402 a week ago: resuming as-is would fire on the next tick.
+    week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).replace(hour=15, minute=0, second=0,
+                                                                        microsecond=0)
+    row = {**_archived(week_ago.isoformat(), {"freq": "weekly", "interval": 1}), "status": "paused"}
+    resumed = await _restore(row, {"status": "scheduled"})
+    nxt = datetime.fromisoformat(resumed["publish_at"])
+    assert nxt > datetime.now(timezone.utc)
+    assert (nxt.weekday(), nxt.hour) == (week_ago.weekday(), 15)
+
+
+@pytest.mark.asyncio
 async def test_restore_leaves_a_live_post_alone():
-    row = {**_archived("2020-10-13T10:00:00+00:00", {"freq": "daily"}), "status": "paused"}
+    row = {**_archived("2020-10-13T10:00:00+00:00", {"freq": "daily"}), "status": "scheduled"}
     resumed = await _restore(row, {"status": "scheduled"})
     assert "publish_at" not in resumed
 

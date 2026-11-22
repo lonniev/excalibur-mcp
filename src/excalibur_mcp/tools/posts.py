@@ -236,18 +236,19 @@ async def update(
 
 
 async def _restored(npub: str, pid: str, patch: dict[str, Any]) -> dict[str, Any]:
-    """Bring an archived recurring post back on its own rhythm.
+    """Bring an archived or paused recurring post back on its own rhythm.
 
-    An archived post still carries the publish time it had when it left. Put back
-    in play as-is, a time already past is due on the very next tick — a dozen
-    restored together would post in one burst. So a restore that names no time
-    of its own moves to the next slot of the post's recurrence. A one-off keeps
-    its time: when it should go out instead is the author's call, not ours.
+    An archived or paused post still carries the publish time it had when it
+    stopped. Put back in play as-is, a time already past is due on the very next
+    tick: two dozen resumed together after X ran out of credits would post in one
+    burst, which X reads as spam. So a resume that names no time of its own moves
+    to the next slot of the post's recurrence. A one-off keeps its time: when it
+    should go out instead is the author's call, not ours.
     """
     if patch.get("status") not in ("draft", "scheduled") or "publish_at" in patch:
         return patch
     cur = await posts_db.get_post(npub, pid)
-    if not cur or cur.get("status") != "archived":
+    if not cur or cur.get("status") not in ("archived", "paused"):
         return patch
     slot = cur.get("publish_at")
     if not isinstance(slot, datetime):
