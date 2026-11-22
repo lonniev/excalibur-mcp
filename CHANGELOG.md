@@ -5,6 +5,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 Changes not yet released live in `changelog.d/`, one file per change — see the README there for why, and `scripts/changelog.py` for what folds them in at release time.
 
+## [0.43.5] — 2026-11-22
+
+### Added
+
+- When X answers 402 (the operator's X app is out of API credits) or the LLM account behind `llm_api_key` runs dry, eXcalibur now DMs its own npub, which Pricing Studio shows. The DM asks for a top-up and says which posts paused. It repeats at most twice a day while the outage lasts, and sends one note when service is back. Before, the scheduler paused posts and sent fallback text without telling anyone.
+
 ## [0.43.4] — 2026-11-22
 
 ### Added
