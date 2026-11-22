@@ -70,6 +70,23 @@ def _as_list(value: Any) -> list[Any]:
     return []
 
 
+def _as_obj(value: Any) -> dict[str, Any] | None:
+    """Neon may hand JSONB back parsed or raw — normalize to a dict, or None.
+
+    The list's ``recurrence``: the calendar expands it into occurrences, and a
+    shape it cannot read is shown as no recurrence rather than guessed at.
+    """
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (ValueError, TypeError):
+            return None
+        return parsed if isinstance(parsed, dict) else None
+    return None
+
+
 # Columns returned for a full single-post read.
 _FULL_COLS = (
     "id::text AS post_id, npub, status, title, doc, render, text_cache, "
@@ -330,7 +347,7 @@ async def list_posts(
                publish_at, updated_at, created_at, tweet_url, last_sent_at,
                last_attempt_at, last_attempt_reason, last_attempt_detail,
                template_id::text AS template_id,
-               (recurrence IS NOT NULL) AS is_recurring,
+               (recurrence IS NOT NULL) AS is_recurring, recurrence, cease_at,
                COALESCE(doc->'blocks' @> '[{{"dynamic":true}}]'::jsonb, false) AS has_dynamic,
                -- Which blocks went out as the author's FALLBACK rather than as the
                -- post they wrote, and why. Without this the list can only say
@@ -377,6 +394,9 @@ async def list_posts(
             "last_attempt_detail": r.get("last_attempt_detail") or None,
             "template_id": r.get("template_id") or None,
             "is_recurring": bool(r.get("is_recurring")),
+            # The calendar lays a recurring post's coming occurrences on the month.
+            "recurrence": _as_obj(r.get("recurrence")),
+            "cease_at": str(r["cease_at"]) if r.get("cease_at") else None,
             "has_dynamic": bool(r.get("has_dynamic")),
             "fell_back": _as_list(r.get("fell_back")),
         }

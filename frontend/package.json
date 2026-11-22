@@ -10,7 +10,7 @@
     "lint": "eslint src --ext ts,tsx"
   },
   "dependencies": {
-    "@tollbooth-dpyc/web": "4.1.0",
+    "@tollbooth-dpyc/web": "4.2.0",
     "lucide-react": "^1.59.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",

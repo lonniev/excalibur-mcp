@@ -19,6 +19,7 @@ export default function Nav() {
     { href: "/new", label: t("ui.nav.compose") },
     { href: "/performance", label: t("ui.nav.performance") },
     { href: "/conversations", label: t("ui.nav.leads") },
+    { href: "/calendar", label: t("ui.nav.calendar") },
     { href: "/scheduler", label: t("ui.nav.scheduler") },
     { href: "/wallet", label: t("ui.nav.wallet") },
   ];

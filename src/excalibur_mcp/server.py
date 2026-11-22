@@ -800,8 +800,9 @@ async def list_posts(
     template fired. ``sent_hour`` (0–23) with ``time_zone`` (IANA) keeps only posts
     whose ``last_sent_at`` local wall hour in that zone matches — used by the
     Performance time-of-day chart deep-link. ``page`` is 0-indexed; ``page_size``
-    is 1..100. Each row carries ``is_recurring``, ``has_dynamic``, and
-    ``template_id`` (set on sent occurrences).
+    is 1..100. Each row carries ``is_recurring``, ``recurrence`` and ``cease_at``
+    (the pattern a recurring post repeats on, and when it stops), ``has_dynamic``,
+    and ``template_id`` (set on sent occurrences).
     Returns ``{posts:[…], total, page, page_size}`` reflecting the filtered set.
 
     Args:
