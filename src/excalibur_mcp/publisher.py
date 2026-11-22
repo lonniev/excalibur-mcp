@@ -35,6 +35,7 @@ from typing import Any
 import httpx
 from tollbooth.llm_route import classify_llm_failure
 
+from excalibur_mcp import pleas
 from excalibur_mcp.db import posts as posts_db
 from excalibur_mcp.db import scheduler_runs
 from excalibur_mcp.formatter import markdown_to_unicode
@@ -585,6 +586,8 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
         reason = f"x_api_error: {status}" if status else "x_api_error"
         detail = str(getattr(exc, "detail", "") or exc)
         if status in _X_NON_TRANSIENT:
+            # The operator's X app is out of credits: only its human can fix it.
+            await pleas.x_credits_spent(runtime)
             return await _pause(reason, detail=detail)
         return await _hold(reason, detail=detail)
     except _X_MAYBE_DELIVERED as exc:
@@ -620,6 +623,7 @@ async def publish_one(runtime: Any, post_id: str) -> dict[str, Any]:
     # occurrence.
     sent_at = _now()
     tweet_url = (result or {}).get("tweet_url") if isinstance(result, dict) else None
+    await pleas.x_posting(runtime)
 
     # Substitute the live X URL into each Nostr companion note and patch those
     # blocks in the occurrence snapshot — so a recurring firing's history shows the

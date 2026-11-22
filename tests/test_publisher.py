@@ -156,6 +156,7 @@ _DYNAMIC_DOC = {"blocks": [
 @pytest.mark.asyncio
 async def test_recurring_publication_snapshots_occurrence_and_advances(_stub_record):
     rt = _runtime()
+    rt.plea_resolved = AsyncMock()
     url = "https://x.com/i/status/tw1"
     client = SimpleNamespace(post_tweet=AsyncMock(return_value={"tweet_id": "tw1", "tweet_url": url}))
     with _claimed(doc={"blocks": []}, last_attempt_at="2026-07-30 20:30:20+00"), \
@@ -166,6 +167,8 @@ async def test_recurring_publication_snapshots_occurrence_and_advances(_stub_rec
 
     assert out["outcome"] == "posted" and out["tweet_url"] == url
     rt._apply_billing.assert_awaited_once()
+    # A post that lands clears an X-credits plea this instance made.
+    assert rt.plea_resolved.await_args.args[0] == "x-credits"
     # recurring → occurrence snapshot AND template advance, in ONE call. Two
     # awaits here is the bug: a publisher died between them and the post was
     # re-fired, tweeting the same slot twice.
@@ -464,6 +467,7 @@ async def test_402_pauses_post_and_refunds(_stub_mark_attempt, _stub_mark_paused
     so the work-lists stop returning it, and report — never leave it scheduled to
     re-fire and re-bill every tick."""
     rt = _runtime()
+    rt.plead = AsyncMock()
     client = SimpleNamespace(post_tweet=AsyncMock(side_effect=XAPIError(402, "subscription lapsed")))
     with _claimed(), \
          patch.object(publisher.posts_db, "mark_sent", AsyncMock()) as mark, \
@@ -474,6 +478,10 @@ async def test_402_pauses_post_and_refunds(_stub_mark_attempt, _stub_mark_paused
     _stub_mark_paused.assert_awaited_once()
     _stub_mark_attempt.assert_not_awaited()
     mark.assert_not_called()
+    # Only the operator's human can top up the X app: it is asked, by cause.
+    rt.plead.assert_awaited_once()
+    assert rt.plead.await_args.args[0] == "x-credits"
+    assert "console.x.com" in rt.plead.await_args.args[1]
 
 
 @pytest.mark.parametrize("status,detail", [(401, "Unauthorized"), (403, "Forbidden")])

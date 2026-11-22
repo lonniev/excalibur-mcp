@@ -51,6 +51,7 @@ from typing import Any
 
 import httpx
 
+from excalibur_mcp import pleas
 from excalibur_mcp.config import get_settings
 from excalibur_mcp.db import posts as posts_db
 from excalibur_mcp.db import scheduler_runs
@@ -466,6 +467,8 @@ async def resolve_one(runtime: Any, post_id: str) -> dict[str, Any]:
                 )
             resolved_text = fallback
             degraded.append({"block": i, "reason": why, "budget_s": round(budget, 1)})
+            if why in pleas.LLM_PLEA_REASONS:
+                await pleas.llm_down(runtime, why, "write a post's AI blocks")
             # Mark the BLOCK, not just this run's log line. The log row says a
             # resolve degraded; only the render can tell the publisher that the
             # words it is about to send are the author's consolation rather than
@@ -473,6 +476,8 @@ async def resolve_one(runtime: Any, post_id: str) -> dict[str, Any]:
             # firing and on any authored save (_PER_FIRING_BLOCK_KEYS).
             b = {**b, "fellBack": {"reason": why, "budget_s": round(budget, 1)}}
 
+        if why is None:
+            await pleas.llm_working(runtime)
         blocks[i] = {**b, "text": resolved_text, "resolved": True}
         # Persist THIS block before starting the next. What the owner paid for is
         # now durable; a crash costs only the blocks still outstanding.
