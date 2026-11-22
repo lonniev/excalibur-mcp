@@ -1,1 +1,0 @@
-- A Calendar page: a month of your posts by day, in your time zone — what was sent, what is coming, and the days a paused post would post if resumed — so a quiet day or a stopped week shows at a glance. `list_posts` rows now carry `recurrence` and `cease_at`.
