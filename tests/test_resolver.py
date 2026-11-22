@@ -174,6 +174,37 @@ class TestFailure:
         assert "Markets moving fast." in _stub_writes.done.await_args.args[1]
 
     @pytest.mark.asyncio
+    async def test_an_unfunded_llm_pleads_with_the_operators_human(self, _stub_writes):
+        rt = _runtime()
+        rt.plead = AsyncMock()
+        with _claimed(_doc(_STATIC, dict(_DYN))), \
+             patch("excalibur_mcp.resolve.resolve_block",
+                   AsyncMock(side_effect=RuntimeError("Insufficient credits"))):
+            out = await resolver.resolve_one(rt, "p1")
+        assert out["degraded"][0]["reason"] == "operator_llm_unfunded"
+        rt.plead.assert_awaited_once()
+        assert rt.plead.await_args.args[0] == "llm-credits"
+
+    @pytest.mark.asyncio
+    async def test_a_block_that_merely_failed_asks_no_one(self, _stub_writes):
+        rt = _runtime()
+        rt.plead = AsyncMock()
+        with _claimed(_doc(_STATIC, dict(_DYN))), \
+             patch("excalibur_mcp.resolve.resolve_block",
+                   AsyncMock(side_effect=RuntimeError("provider down"))):
+            await resolver.resolve_one(rt, "p1")
+        rt.plead.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_block_the_llm_wrote_clears_its_pleas(self, _stub_writes):
+        rt = _runtime()
+        rt.plea_resolved = AsyncMock()
+        with _claimed(_doc(_STATIC, dict(_DYN))), \
+             patch("excalibur_mcp.resolve.resolve_block", AsyncMock(return_value="$64,000")):
+            await resolver.resolve_one(rt, "p1")
+        assert {c.args[0] for c in rt.plea_resolved.await_args_list} == {"llm-credits", "llm-model", "llm-access"}
+
+    @pytest.mark.asyncio
     async def test_a_failed_block_with_no_fallback_refuses_and_names_why(self, _stub_writes):
         """Never post a gap — and never report the refusal as a bare category.
         The block's own reason used to be computed and dropped on the way out."""

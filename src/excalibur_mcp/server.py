@@ -44,7 +44,7 @@ from tollbooth.tool_identity import (
 )
 from tollbooth.upstream_payment import upstream_payment_situation
 
-from excalibur_mcp import __version__
+from excalibur_mcp import __version__, pleas
 from excalibur_mcp.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -1696,65 +1696,15 @@ def _empty_result_situation() -> AsyncJobSituation:
 async def _alert_operator_provider_down(
     situation: AsyncJobSituation, capability: str = "resolve dynamic post blocks",
 ) -> None:
-    """DM the operator (from the operator npub) that an AI capability is down
-    because the provider rejected the call — almost always an unfunded provider
-    account. A self-DM Pricing Studio surfaces, so the human running the operator
-    sees "feed me" without watching logs.
+    """Plead with the operator's human (a self-DM Pricing Studio shows) that an AI
+    capability is down because the provider rejected the call, almost always an
+    unfunded provider account. ``capability`` names what the patron was denied.
 
-    ``capability`` names what the patron was denied, because both AI tools reach
-    here and "dynamic blocks are falling back" is a confusing thing to read after
-    a refine failed.
-
-    Best-effort: relay I/O runs on a daemon thread so the patron's fast-fail
-    response is never delayed, and any failure is swallowed. Only definitive
-    (non-transient) provider-down situations reach here — a transient blip is not
-    a funding problem.
+    Only definitive (non-transient) provider-down situations reach here; a
+    transient blip is not a funding problem. The SDK's plea is fire-and-forget
+    and repeats at most twice a day per cause.
     """
-    try:
-        operator_npub = runtime.operator_npub()
-        courier = await runtime.courier()
-        exchange = getattr(courier, "_exchange", None)
-    except Exception:  # noqa: BLE001 — a courtesy alert never breaks the caller
-        return
-    if not operator_npub or exchange is None:
-        return
-
-    # No vendor console is named: which provider the key belongs to is the
-    # operator's configuration, and naming last year's lab would send them to the
-    # wrong billing page.
-    if situation.error_code == "operator_llm_unfunded":
-        body = (
-            f"⚡ eXcalibur can't {capability}\n\n"
-            "The account behind the operator's llm_api_key is out of credits. Top it "
-            "up with your model router and service resumes automatically — no "
-            "redeploy needed.\n\n"
-            "A patron just hit this. No fare was charged."
-        )
-    elif situation.error_code == "operator_llm_model_unknown":
-        body = (
-            f"⚡ eXcalibur can't {capability}\n\n"
-            "The provider no longer offers the model this service is configured for — "
-            "usually a marketplace renaming or retiring it. Point TOLLBOOTH_LLM_MODEL_* "
-            "at a current slug and restart. Retrying will not clear this on its own.\n\n"
-            "A patron just hit this. No fare was charged."
-        )
-    else:
-        body = (
-            f"⚡ eXcalibur can't {capability}\n\n"
-            "Your AI provider rejected this service's access (auth / misconfiguration). "
-            "Check the operator's llm_api_key, then service resumes.\n\n"
-            "A patron just hit this. No fare was charged."
-        )
-
-    def _run() -> None:
-        try:
-            exchange.send_dm(operator_npub, body)
-        except Exception:  # noqa: BLE001 — courtesy DM, non-blocking
-            logger.debug("operator provider-down DM failed (courtesy)", exc_info=True)
-
-    import threading
-
-    threading.Thread(target=_run, daemon=True).start()
+    await pleas.llm_down(runtime, situation.error_code, capability)
 
 
 async def _resolve_dynamic_runner(
