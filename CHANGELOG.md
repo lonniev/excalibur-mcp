@@ -5,6 +5,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 Changes not yet released live in `changelog.d/`, one file per change — see the README there for why, and `scripts/changelog.py` for what folds them in at release time.
 
+## [0.43.8] — 2026-11-26
+
+### Fixed
+
+- Sign-in takes a NIP-05 address (name@domain) as well as an npub or nsec (@tollbooth-dpyc/web 4.2.2).
+
 ## [0.43.7] — 2026-11-25
 
 ### Changed
