@@ -4,7 +4,7 @@
   "title": "eXcalibur",
   "description": "FastMCP server for posting formatted content to X (Twitter) — Tollbooth-monetized, DPYC-native",
   "websiteUrl": "https://excalibur.tollbooth-dpyc.com",
-  "version": "0.43.6",
+  "version": "0.43.7",
   "repository": {
     "url": "https://github.com/lonniev/excalibur-mcp",
     "source": "github"
