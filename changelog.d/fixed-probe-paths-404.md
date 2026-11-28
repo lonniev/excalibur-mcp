@@ -1,0 +1,1 @@
+- `/.well-known/*`, `/sse` and `/health` answer 404 unless the site ships a real file there. Before, they returned the page with a 200.
