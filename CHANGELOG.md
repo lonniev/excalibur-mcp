@@ -5,6 +5,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 Changes not yet released live in `changelog.d/`, one file per change — see the README there for why, and `scripts/changelog.py` for what folds them in at release time.
 
+## [0.44.0] — 2026-11-27
+
+### Added
+
+- Performance shows your last 20 posts as bars against a dashed "typical" line, and a breakout bar is cut with its views named.
+- The link-placement table is now a format mix: each format's share of your posts beside its median views.
+- New tiles for views per follower and pooled engagement rate; the Followers tile adds following, the ratio, and change over up to 30 days.
+- A daily trend card charts followers, following or median views over 30 or 90 days. eXcalibur now records your follower count once a day, since X keeps no history.
+
 ## [0.43.9] — 2026-11-26
 
 ### Changed
