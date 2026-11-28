@@ -37,6 +37,7 @@ _DOMAIN_TABLES: tuple[str, ...] = (
         "voice",
         "post_metrics_snapshot",
         "metrics_harvest_job",
+        "follower_snapshot",
         "conversation_queries",
         "conversations",
         "conversation_runs",
@@ -321,6 +322,16 @@ async def _ensure_domain_schema(vault: Any) -> None:
 
         f"CREATE INDEX IF NOT EXISTS metrics_harvest_owner_idx "
         f"ON {t('metrics_harvest_job')} (npub, status)",
+
+        # One follower reading per patron per UTC day. X reports only the
+        # current count, so growth exists only if it is written down here.
+        f"CREATE TABLE IF NOT EXISTS {t('follower_snapshot')} ("
+        "npub TEXT NOT NULL, "
+        "captured_on DATE NOT NULL, "
+        "followers INT NOT NULL, "
+        "following INT, "
+        "captured_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), "
+        "PRIMARY KEY (npub, captured_on))",
 
         # Conversation leads — X posts whose authors are asking something the
         # patron could answer. A saved query is the patron's own selector (no

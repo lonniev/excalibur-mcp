@@ -332,7 +332,7 @@ class XClient:
         return await self._get_me(include_public_metrics=False)
 
     async def get_me_with_metrics(self) -> dict:
-        """Like ``get_me`` plus ``followers_count`` from ``public_metrics``."""
+        """Like ``get_me`` plus ``followers_count`` / ``following_count`` from ``public_metrics``."""
         return await self._get_me(include_public_metrics=True)
 
     async def _get_me(self, *, include_public_metrics: bool) -> dict:
@@ -370,6 +370,8 @@ class XClient:
         pm = data.get("public_metrics") or {}
         if isinstance(pm, dict) and "followers_count" in pm:
             out["followers_count"] = pm.get("followers_count")
+        if isinstance(pm, dict) and "following_count" in pm:
+            out["following_count"] = pm.get("following_count")
         return out
 
     async def get_tweet_metrics(self, tweet_id: str) -> dict:

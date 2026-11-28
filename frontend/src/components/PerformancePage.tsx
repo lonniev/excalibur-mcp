@@ -2,11 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { createPortal } from "react-dom";
 import { Link, useNavigate } from "react-router-dom";
 import {
+  BarChart3,
   Bookmark,
   Camera,
   Clock,
+  Eye,
   FileText,
+  Flame,
   Info,
+  LineChart,
   Link2,
   MessageCircle,
   Quote,
@@ -23,7 +27,6 @@ import {
 } from "../lib/mcp";
 import {
   formatLinkClicks,
-  formatLinkPlacement,
   nextPerfSort,
   perfSortColumn,
   sortPerformancePosts,
@@ -38,6 +41,8 @@ import { QUOTES } from "../lib/quotes";
 import { quoteStyles } from "../lib/quoteStyles";
 import { RefreshButton } from "@tollbooth-dpyc/web/react";
 import { refreshStyles } from "../lib/packageStyles";
+import { followRatio, formatMix, lastPostsChart } from "../lib/performanceCharts";
+import { DailyTrend, FormatMixTable, LastPostsBars } from "./PerformanceCharts";
 
 const card = "rounded-xl border border-stone-200 dark:border-zinc-800 bg-white dark:bg-zinc-900";
 
@@ -58,6 +63,10 @@ const TIPS = {
   replyRate: "ui.performancePage.tipReplyRate",
   quoteToRepost: "ui.performancePage.tipQuoteToRepost",
   timeOfDay: "ui.performancePage.tipTimeOfDay",
+  last: "ui.performancePage.tipLast",
+  viewsPerFollower: "ui.performancePage.tipViewsPerFollower",
+  engagement: "ui.performancePage.tipEngagement",
+  trendDaily: "ui.performancePage.tipTrendDaily",
 } as const;
 
 const TIP_W = 256; // px — must match the w-64 on the panel
@@ -184,12 +193,15 @@ function StatCard({
   value,
   tip,
   unit,
+  sub,
 }: {
   icon: ReactNode;
   label: string;
   value: string;
   tip: string;
   unit?: string;
+  /** Context under the value: a baseline, a ratio, a change. */
+  sub?: ReactNode;
 }) {
   return (
     <div className={`${card} p-4 text-center`}>
@@ -209,8 +221,51 @@ function StatCard({
           </span>
         ) : null}
       </div>
+      {sub ? (
+        <div className="mt-1 text-[11px] tabular-nums text-stone-500 dark:text-zinc-400 space-y-0.5">{sub}</div>
+      ) : null}
     </div>
   );
+}
+
+/** Card shell shared by the chart sections: centered icon + tipped heading + intro. */
+function ChartCard({
+  icon,
+  title,
+  tip,
+  intro,
+  children,
+}: {
+  icon: ReactNode;
+  title: string;
+  tip: string;
+  intro?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className={`${card} p-4`}>
+      <div className="flex items-center justify-center gap-2 mb-1">
+        <span className="text-amber-600 dark:text-amber-400" aria-hidden>
+          {icon}
+        </span>
+        <Tip label={tip}>
+          <h2 className="text-sm font-medium">{title}</h2>
+        </Tip>
+      </div>
+      {intro ? (
+        <p className="text-xs text-stone-500 dark:text-zinc-400 mb-3 text-center">{intro}</p>
+      ) : (
+        <div className="mb-3" />
+      )}
+      {children}
+    </div>
+  );
+}
+
+/** Signed whole number: "+13", "−4", "0". */
+function fmtSigned(n: number): string {
+  const abs = Math.abs(n).toLocaleString(languageLocale());
+  return n > 0 ? `+${abs}` : n < 0 ? `−${abs}` : abs;
 }
 
 /** Tiny SVG sparkline from impression points (oldest → newest). */
@@ -494,14 +549,15 @@ export default function PerformancePage() {
   );
 
   const corpus = data?.corpus;
-  const cohorts = data?.cohorts?.link_placement ?? {};
-  const cohortEntries = Object.entries(cohorts)
-    .map(([place, raw]) => {
+  const linkCohorts = data?.cohorts?.link_placement;
+  const mixRows = useMemo(() => {
+    const buckets: Record<string, CohortBucket> = {};
+    for (const [place, raw] of Object.entries(linkCohorts ?? {})) {
       const b = cohortBucket(raw);
-      return b ? ([place, b] as const) : null;
-    })
-    .filter((e): e is readonly [string, CohortBucket] => e != null)
-    .sort((a, b) => b[1].median - a[1].median);
+      if (b) buckets[place] = b;
+    }
+    return formatMix(buckets);
+  }, [linkCohorts]);
   // #367 — recompute ToD in the patron zone from post instants. The API still
   // returns UTC-hour cohorts for other consumers; the chart must not relabel them.
   const todCohorts = useMemo(
@@ -510,6 +566,14 @@ export default function PerformancePage() {
   );
   const todBucketCount = Object.keys(todCohorts).length;
   const followers = data?.follower_count ?? null;
+  const following = data?.following_count ?? null;
+  const ratio = followRatio(followers, following);
+  const growth = data?.follower_growth_30d ?? null;
+  const history = data?.follower_history ?? [];
+  const lastChart = useMemo(
+    () => lastPostsChart(posts, corpus?.rolling_median_final ?? null),
+    [posts, corpus?.rolling_median_final],
+  );
 
   // Initial load: full-page quote loader. Refresh keeps the shell visible.
   const initialLoading = loading && data == null && !error;
@@ -540,7 +604,7 @@ export default function PerformancePage() {
         </div>
       ) : (
         <>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
         <StatCard
           icon={<FileText className="h-4 w-4" />}
           label={t("ui.performancePage.statPosts")}
@@ -565,54 +629,74 @@ export default function PerformancePage() {
           label={t("ui.performancePage.statFollowers")}
           value={fmtInt(followers)}
           tip={t(TIPS.followers)}
+          sub={
+            <>
+              {growth ? (
+                <div
+                  className={
+                    growth.delta > 0
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : growth.delta < 0
+                        ? "text-rose-600 dark:text-rose-400"
+                        : ""
+                  }
+                >
+                  {t("ui.performancePage.followerGrowth", { delta: fmtSigned(growth.delta), days: growth.days })}
+                </div>
+              ) : null}
+              {following != null && ratio != null ? (
+                <div>
+                  {t("ui.performancePage.followingRatio", {
+                    following: fmtInt(following),
+                    ratio: ratio.toFixed(1),
+                  })}
+                </div>
+              ) : null}
+            </>
+          }
+        />
+        <StatCard
+          icon={<Eye className="h-4 w-4" />}
+          label={t("ui.performancePage.statViewsPerFollower")}
+          value={fmtPct(corpus?.views_per_follower)}
+          tip={t(TIPS.viewsPerFollower)}
+        />
+        <StatCard
+          icon={<Flame className="h-4 w-4" />}
+          label={t("ui.performancePage.statEngagement")}
+          value={fmtPct(corpus?.engagement_rate)}
+          tip={t(TIPS.engagement)}
         />
       </div>
 
-      {cohortEntries.length > 1 && (
-        <div className={`${card} p-4`}>
-          <div className="flex items-center justify-center gap-2 mb-1">
-            <Link2 className="h-4 w-4 text-amber-600 dark:text-amber-400" aria-hidden />
-            <Tip label={t(TIPS.linkPlacement)}>
-              <h2 className="text-sm font-medium">{t("ui.performancePage.linkTitle")}</h2>
-            </Tip>
-          </div>
-          <p className="text-xs text-stone-500 dark:text-zinc-400 mb-3 text-center">
-            {t("ui.performancePage.linkIntro")}
-          </p>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-xs text-stone-400 dark:text-zinc-500 border-b border-stone-100 dark:border-zinc-800">
-                  <th className="py-1.5 pr-3 font-medium">{t("ui.performancePage.colPlacement")}</th>
-                  <th className="py-1.5 pr-3 font-medium">{t("ui.performancePage.colMedianImpressions")}</th>
-                  <th className="py-1.5 font-medium">n</th>
-                </tr>
-              </thead>
-              <tbody>
-                {cohortEntries.map(([place, b]) => {
-                  const provisional = b.n > 0 && b.n < 3;
-                  return (
-                    <tr
-                      key={place}
-                      className={`border-b border-stone-50 dark:border-zinc-900 last:border-0 ${
-                        provisional ? "text-stone-400 dark:text-zinc-500" : ""
-                      }`}
-                    >
-                      <td className="py-2 pr-3">{formatLinkPlacement(place)}</td>
-                      <td className="py-2 pr-3 tabular-nums">
-                        {fmtInt(b.median)}
-                        {provisional ? (
-                          <span className="ml-1.5 text-[10px] uppercase tracking-wide">{t("ui.performancePage.provisional")}</span>
-                        ) : null}
-                      </td>
-                      <td className="py-2 tabular-nums">{b.n > 0 ? b.n : "—"}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
+      <ChartCard
+        icon={<LineChart className="h-4 w-4" />}
+        title={t("ui.performancePage.trendTitle")}
+        tip={t(TIPS.trendDaily)}
+      >
+        <DailyTrend history={history} posts={posts} timeZone={timeZone} />
+      </ChartCard>
+
+      {lastChart.bars.length > 0 && (
+        <ChartCard
+          icon={<BarChart3 className="h-4 w-4" />}
+          title={t("ui.performancePage.lastTitle", { count: lastChart.bars.length })}
+          tip={t(TIPS.last)}
+          intro={t("ui.performancePage.lastIntro")}
+        >
+          <LastPostsBars chart={lastChart} timeZone={timeZone} />
+        </ChartCard>
+      )}
+
+      {mixRows.length > 0 && (
+        <ChartCard
+          icon={<Link2 className="h-4 w-4" />}
+          title={t("ui.performancePage.mixTitle")}
+          tip={t(TIPS.linkPlacement)}
+          intro={t("ui.performancePage.mixIntro")}
+        >
+          <FormatMixTable rows={mixRows} />
+        </ChartCard>
       )}
 
       {todBucketCount > 0 && (

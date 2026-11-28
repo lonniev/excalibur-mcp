@@ -661,7 +661,9 @@ def _performance_ui_source() -> str:
         p.read_text(encoding="utf-8")
         for p in (
             root / "components" / "PerformancePage.tsx",
+            root / "components" / "PerformanceCharts.tsx",
             root / "lib" / "performanceTable.ts",
+            root / "lib" / "performanceCharts.ts",
         )
     )
     # The page's English words live in the catalog since it was translated;
@@ -791,14 +793,16 @@ def test_performance_page_source_is_human_legible():
     # Item 11: rename the opaque heading; keep a precise tooltip. The question
     # form ("Where should the link go?") went with it — the page answers with a
     # median, so a heading that asks is a promise the panel does not keep.
-    assert "Link placement and reach" in text
+    # The placement cohorts are shown as the format mix (share + median per format).
+    assert "Format mix" in text
     assert "Where should the link go?" not in text
     assert "Link-placement cohort" not in text
 
-    # The panel needs two cohorts to compare. One median compares to nothing,
-    # and _detect_link_placement only ever emits `body` or `none`, so a corpus
-    # of all-linked posts would otherwise render a lone row forever.
-    assert "cohortEntries.length > 1" in text
+    # A lone format is still a fact worth showing (the mix is 100% one format),
+    # but its median compares to nothing — so it carries a note saying so
+    # instead of passing for a comparison.
+    assert "rows.length === 1" in text
+    assert "mixOnlyOne" in text
 
     # Unified Tip treatment (not bare title= on EV/BR alone) + Material glyphs.
     assert "function Tip" in text
@@ -871,7 +875,8 @@ def test_performance_page_ux_chart_loader_sort_no_link_col():
     # Per-row Link header gone; clicks retained; cohort panel retained.
     assert ">Link<" not in text and "\nLink\n" not in text
     assert "link_placement" in text  # still captured / aggregated
-    assert "Link placement and reach" in text
+    # The placement cohorts are shown as the format mix (share + median per format).
+    assert "Format mix" in text
     assert "Clicks" in text
     assert "url_link_clicks" in text
     # #360 — three-state placement + null≠zero clicks helpers drive the UI.
