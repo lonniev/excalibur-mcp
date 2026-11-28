@@ -6,7 +6,11 @@ on:
     tags: ["v*"]
 
 jobs:
+  listing:
+    uses: lonniev/dpyc-community/.github/workflows/dpyc-listing.yml@main
+
   publish:
+    needs: listing
     runs-on: ubuntu-latest
     permissions:
       id-token: write   # required for GitHub OIDC authentication
