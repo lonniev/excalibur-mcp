@@ -20,6 +20,7 @@ import statistics
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from excalibur_mcp.db import followers as followers_db
 from excalibur_mcp.db import metrics as metrics_db
 
 logger = logging.getLogger(__name__)
@@ -322,6 +323,7 @@ async def process_due_harvests(runtime: Any) -> dict[str, Any]:
                     "reason": str(reason),
                 })
             continue
+        await capture_daily_followers(owner, client)
         for j in owner_jobs:
             try:
                 out = await harvest_one(client, j)
@@ -360,6 +362,8 @@ async def process_due_harvests(runtime: Any) -> dict[str, Any]:
 # Breakout needs a stable personal baseline. Below this many posts with a final
 # reading, the median is too thin to discriminate — callers suppress to None.
 BREAKOUT_MIN_SAMPLE = 5
+# The trend card offers 30 and 90 days; keep a little over the longer one.
+FOLLOWER_HISTORY_DAYS = 92
 
 
 def escape_velocity(
@@ -468,6 +472,96 @@ def quote_to_repost_ratio(
     return _rate(quotes, reposts)
 
 
+def views_per_follower(
+    median_views: int | float | None, followers: int | float | None
+) -> float | None:
+    """Typical views per post ÷ followers — how far a post travels past them."""
+    return _rate(median_views, followers)
+
+
+def engagement_rate(rows: list[dict[str, Any]]) -> float | None:
+    """Likes + replies + reposts + quotes ÷ impressions, pooled over the rows.
+
+    Pooled, not a median of per-post rates: at small reach most posts have zero
+    engagement, so a per-post median reads 0 and hides the few that land.
+    """
+    views = 0
+    acts = 0
+    for r in rows:
+        imp = r.get("impressions")
+        if imp is None:
+            continue
+        try:
+            views += int(imp)
+            acts += sum(int(r.get(k) or 0) for k in ("likes", "replies", "reposts", "quotes"))
+        except (TypeError, ValueError):
+            continue
+    return _rate(acts, views)
+
+
+def follower_growth(history: list[dict[str, Any]], *, window_days: int = 30) -> dict[str, Any] | None:
+    """Change from the oldest reading inside ``window_days`` to the newest.
+
+    Reports the real span it covers (``days``), which is shorter than the window
+    until enough history exists. None with fewer than two readings.
+    """
+    if len(history) < 2:
+        return None
+    newest = history[-1]
+    try:
+        cutoff = datetime.fromisoformat(newest["date"]).date() - timedelta(days=window_days)
+    except (KeyError, TypeError, ValueError):
+        return None
+    inside = [h for h in history if datetime.fromisoformat(h["date"]).date() >= cutoff]
+    if len(inside) < 2:
+        return None
+    oldest = inside[0]
+    start, end = oldest.get("followers"), newest.get("followers")
+    if start is None or end is None:
+        return None
+    days = (
+        datetime.fromisoformat(newest["date"]).date()
+        - datetime.fromisoformat(oldest["date"]).date()
+    ).days
+    return {
+        "from_date": oldest["date"],
+        "to_date": newest["date"],
+        "days": days,
+        "delta": int(end) - int(start),
+        # Signed: a loss is a fact to report, so not _rate (non-negative only).
+        "percent": (int(end) - int(start)) / int(start) if int(start) > 0 else None,
+    }
+
+
+async def record_follower_reading(npub: str, me: dict[str, Any]) -> None:
+    """Write today's follower reading from a ``get_me_with_metrics`` result."""
+    fc = me.get("followers_count")
+    if fc is None:
+        return
+    fg = me.get("following_count")
+    try:
+        await followers_db.record_daily(
+            npub, followers=int(fc), following=None if fg is None else int(fg)
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("followers: record_daily failed for %s", npub[:16])
+
+
+async def capture_daily_followers(npub: str, client: Any) -> None:
+    """Once per UTC day per patron: read the follower count and keep it.
+
+    Best-effort — a missed day is a gap in the trend, never a failed sweep.
+    """
+    try:
+        if await followers_db.has_reading_today(npub):
+            return
+        me = await client.get_me_with_metrics()
+    except Exception:  # noqa: BLE001
+        logger.exception("followers: daily lookup failed for %s", npub[:16])
+        return
+    await record_follower_reading(npub, me)
+
+
 def time_of_day_cohort(rows: list[dict[str, Any]]) -> dict[str, dict[str, float | int]]:
     """Median impressions by UTC send hour (``HH`` keys) over the corpus.
 
@@ -509,16 +603,34 @@ def _median(values: list[int | float]) -> float | None:
     return float(statistics.median(values))
 
 
-async def compute_post_performance(npub: str, *, follower_count: int | None = None) -> dict[str, Any]:
+async def compute_post_performance(
+    npub: str,
+    *,
+    follower_count: int | None = None,
+    following_count: int | None = None,
+) -> dict[str, Any]:
     """Derived scores across a patron's harvested corpus.
 
     ``follower_count`` is retained as a display-only corpus stat (the FE still
     shows it). Breakout ratio no longer uses it — see ``breakout_ratio``.
     """
+    try:
+        follower_history = await followers_db.list_history(npub, days=FOLLOWER_HISTORY_DAYS)
+    except Exception:  # noqa: BLE001
+        logger.exception("followers: list_history failed for %s", npub[:16])
+        follower_history = []
+    followers_out = {
+        "follower_count": follower_count,
+        "following_count": following_count,
+        "follower_history": follower_history,
+        "follower_growth_30d": follower_growth(follower_history, window_days=30),
+    }
+
     snaps = await metrics_db.list_all_for_npub(npub)
     if not snaps:
         return {
             "npub": npub,
+            **followers_out,
             "posts": [],
             "cohorts": {"link_placement": {}, "time_of_day": {}},
             "corpus": {"snapshot_count": 0, "post_count": 0},
@@ -673,7 +785,7 @@ async def compute_post_performance(npub: str, *, follower_count: int | None = No
 
     return {
         "npub": npub,
-        "follower_count": follower_count,
+        **followers_out,
         "posts": posts_out,
         "cohorts": {
             "link_placement": link_placement_cohort(latest_rows),
@@ -688,6 +800,8 @@ async def compute_post_performance(npub: str, *, follower_count: int | None = No
             "rolling_median_final": rolling_med_final,
             "breakout_sample_size": len(final_impressions),
             "breakout_min_sample": BREAKOUT_MIN_SAMPLE,
+            "views_per_follower": views_per_follower(rolling_med_final, follower_count),
+            "engagement_rate": engagement_rate(latest_rows),
         },
     }
 

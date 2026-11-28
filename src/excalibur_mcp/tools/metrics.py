@@ -12,6 +12,7 @@ from excalibur_mcp.metrics_harvest import (
     compute_post_performance,
     normalize_link_placement,
     process_due_harvests,
+    record_follower_reading,
     render_performance_infographic,
     schedule_after_send,
     tweet_id_from_url,
@@ -127,9 +128,11 @@ async def post_performance(
 ) -> dict[str, Any]:
     """Patron: derived reach scores across the harvested corpus."""
     follower_count: int | None = None
-    # Best-effort followers for the corpus display card only — breakout ratio
-    # is personal-median based (#359) and does not need this. Never fail the
-    # tool on an OAuth miss.
+    following_count: int | None = None
+    # Best-effort followers for the display cards and views-per-follower —
+    # breakout ratio is personal-median based (#359) and does not need this.
+    # The same lookup records today's reading for the follower trend. Never
+    # fail the tool on an OAuth miss.
     try:
         from excalibur_mcp.server import _resolve_x_client
 
@@ -139,6 +142,10 @@ async def post_performance(
             fc = me.get("followers_count")
             if fc is not None:
                 follower_count = int(fc)
+            fg = me.get("following_count")
+            if fg is not None:
+                following_count = int(fg)
+            await record_follower_reading(npub, me)
         else:
             logger.info(
                 "post_performance: no X client for %s (%s)",
@@ -148,7 +155,9 @@ async def post_performance(
     except Exception:  # noqa: BLE001
         logger.exception("post_performance: follower lookup failed")
 
-    data = await compute_post_performance(npub, follower_count=follower_count)
+    data = await compute_post_performance(
+        npub, follower_count=follower_count, following_count=following_count
+    )
     return {"success": True, **data}
 
 

@@ -1121,10 +1121,33 @@ export interface CohortBucket {
   n: number;
 }
 
+/** One day's follower reading (first of that UTC day). */
+export interface FollowerReading {
+  /** YYYY-MM-DD (UTC). */
+  date: string;
+  followers: number | null;
+  following: number | null;
+}
+
+/** Change from the oldest reading inside 30 days to the newest. */
+export interface FollowerGrowth {
+  from_date: string;
+  to_date: string;
+  /** Real span covered — shorter than 30 until enough history exists. */
+  days: number;
+  delta: number;
+  /** Signed fraction (0.05 = +5%). */
+  percent: number | null;
+}
+
 export interface PostPerformanceResult {
   success?: boolean;
   npub?: string;
   follower_count?: number | null;
+  following_count?: number | null;
+  /** Daily follower readings, oldest first (≈90 days). */
+  follower_history?: FollowerReading[];
+  follower_growth_30d?: FollowerGrowth | null;
   posts?: PerformancePost[];
   cohorts?: {
     /** Median impressions + sample size by link placement. */
@@ -1144,6 +1167,10 @@ export interface PostPerformanceResult {
     breakout_sample_size?: number;
     /** Minimum sample before breakout_ratio is computed (else suppressed). */
     breakout_min_sample?: number;
+    /** Typical post's final reach ÷ followers. */
+    views_per_follower?: number | null;
+    /** Likes + replies + reposts + quotes ÷ impressions, pooled over posts. */
+    engagement_rate?: number | null;
   };
   error?: string;
 }

@@ -106,6 +106,16 @@ CREATE INDEX IF NOT EXISTS metrics_harvest_due_idx
     ON metrics_harvest_job (due_at)
     WHERE status IN ('pending', 'harvesting');
 
+-- One follower reading per patron per UTC day (X keeps no history).
+CREATE TABLE IF NOT EXISTS follower_snapshot (
+    npub         TEXT NOT NULL,
+    captured_on  DATE NOT NULL,
+    followers    INT NOT NULL,
+    following    INT,
+    captured_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (npub, captured_on)
+);
+
 -- Conversation leads: a patron's saved X search selectors (no domain vocabulary
 -- lives server-side) and the scored questioners each run found.
 CREATE TABLE IF NOT EXISTS conversation_queries (

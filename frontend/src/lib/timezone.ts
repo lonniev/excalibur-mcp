@@ -27,7 +27,8 @@ export function formatPostedShort(iso: string | null | undefined, timeZone: stri
 
 export type TodBucket = { median: number; n: number };
 
-function medianOf(values: number[]): number {
+/** Median of a list; 0 for an empty one. */
+export function medianOf(values: number[]): number {
   if (values.length === 0) return 0;
   const s = values.slice().sort((a, b) => a - b);
   const mid = Math.floor(s.length / 2);
